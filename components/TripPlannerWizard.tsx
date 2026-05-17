@@ -6,7 +6,7 @@ import {
   MapPin, Calendar as CalendarIcon, Users, Plane, DollarSign, Hotel, Bus, Star,
   ChevronRight, ChevronLeft, Check, Minus, Plus, Sparkles, Briefcase,
   Wifi, Coffee, UtensilsCrossed, Dumbbell, CarFront, Train, ArrowRight, BedDouble,
-  Compass, AlertTriangle, Lightbulb
+  Compass, AlertTriangle, Lightbulb, Pencil
 } from 'lucide-react';
 import AirportAutocomplete from './AirportAutocomplete';
 import { Calendar } from '@/components/ui/calendar';
@@ -103,6 +103,9 @@ const STEPS = [
 export default function TripPlannerWizard({ onComplete, isLoading, initialStep = 0, initialData }: TripPlannerWizardProps) {
   const [step, setStep] = useState(initialStep);
   const [direction, setDirection] = useState(1);
+  // 'range' = initial picking (click from, then to), 'idle' = both set,
+  // 'editDeparture' = picking departure only, 'editReturn' = picking return only
+  const [datePickMode, setDatePickMode] = useState<'range' | 'idle' | 'editDeparture' | 'editReturn'>('range');
 
   const [data, setData] = useState<PlannerData>({
     origin: '',
@@ -398,19 +401,30 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
           d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` : '';
 
         if (data.tripType === 'round_trip') {
-          // ── Round Trip: range calendar (2 months side by side) ──
+          // ── Round Trip: range calendar with picking/idle modes ──
           const rangeValue: DateRange = {
             from: parseDate(data.departureDate),
             to: parseDate(data.returnDate),
           };
 
+          // Auto-enter idle mode when both dates are set during initial range pick
+          const bothDatesSet = !!rangeValue.from && !!rangeValue.to;
+          const effectiveMode = (datePickMode === 'range' && bothDatesSet) ? 'idle' : datePickMode;
+
+          // Determine which date card is "active" (being edited)
+          const depActive = effectiveMode === 'range' || effectiveMode === 'editDeparture';
+          const retActive = effectiveMode === 'editReturn';
+
           return (
             <div className="space-y-6">
-              {/* Date labels */}
-              <div className="flex gap-6">
-                <div className="flex-1 bg-muted border border-border rounded-2xl py-4 px-5 flex items-center gap-3">
+              {/* Date label cards */}
+              <div className="flex gap-4">
+                {/* Departure card */}
+                <div className={`flex-1 rounded-2xl py-4 px-5 flex items-center gap-3 transition-all border ${
+                  depActive ? 'bg-foreground/5 border-foreground/30' : 'bg-muted border-border'
+                }`}>
                   <CalendarIcon className="w-5 h-5 text-muted-foreground flex-shrink-0" />
-                  <div>
+                  <div className="flex-1 min-w-0">
                     <p className="text-[0.65rem] small-caps tracking-widest text-muted-foreground">Departure</p>
                     <p className="text-sm font-medium">
                       {rangeValue.from
@@ -418,10 +432,23 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                         : <span className="text-muted-foreground">Pick a date</span>}
                     </p>
                   </div>
+                  {effectiveMode === 'idle' && (
+                    <button
+                      type="button"
+                      onClick={() => setDatePickMode('editDeparture')}
+                      className="p-2 rounded-xl border border-border text-muted-foreground hover:text-foreground hover:border-foreground/30 hover:bg-foreground/5 transition-all flex-shrink-0"
+                      title="Change departure date"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                 </div>
-                <div className="flex-1 bg-muted border border-border rounded-2xl py-4 px-5 flex items-center gap-3">
+                {/* Return card */}
+                <div className={`flex-1 rounded-2xl py-4 px-5 flex items-center gap-3 transition-all border ${
+                  retActive ? 'bg-foreground/5 border-foreground/30' : 'bg-muted border-border'
+                }`}>
                   <CalendarIcon className="w-5 h-5 text-muted-foreground flex-shrink-0" />
-                  <div>
+                  <div className="flex-1 min-w-0">
                     <p className="text-[0.65rem] small-caps tracking-widest text-muted-foreground">Return</p>
                     <p className="text-sm font-medium">
                       {rangeValue.to
@@ -429,25 +456,82 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                         : <span className="text-muted-foreground">Pick a date</span>}
                     </p>
                   </div>
+                  {effectiveMode === 'idle' && (
+                    <button
+                      type="button"
+                      onClick={() => setDatePickMode('editReturn')}
+                      className="p-2 rounded-xl border border-border text-muted-foreground hover:text-foreground hover:border-foreground/30 hover:bg-foreground/5 transition-all flex-shrink-0"
+                      title="Change return date"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                 </div>
               </div>
 
-              {/* Range calendar */}
+              {/* Editing hint */}
+              {(effectiveMode === 'editDeparture' || effectiveMode === 'editReturn') && (
+                <p className="text-xs text-center text-muted-foreground">
+                  Select a new <span className="font-medium text-foreground">{effectiveMode === 'editDeparture' ? 'departure' : 'return'}</span> date
+                </p>
+              )}
+
+              {/* Calendar */}
               <div className="flex justify-center">
-                <Calendar
-                  mode="range"
-                  selected={rangeValue}
-                  onSelect={(range: DateRange | undefined) => {
-                    update({
-                      departureDate: toStr(range?.from),
-                      returnDate: toStr(range?.to),
-                    });
-                  }}
-                  numberOfMonths={2}
-                  disabled={{ before: today }}
-                  defaultMonth={parseDate(data.departureDate) || today}
-                  className="rounded-2xl border border-border bg-card p-4"
-                />
+                {(effectiveMode === 'range' || effectiveMode === 'idle') ? (
+                  /* Range mode or idle — show range calendar */
+                  <Calendar
+                    mode="range"
+                    selected={rangeValue}
+                    onSelect={(range: DateRange | undefined) => {
+                      update({
+                        departureDate: toStr(range?.from),
+                        returnDate: toStr(range?.to),
+                      });
+                      // Auto-idle when both dates are now set
+                      if (range?.from && range?.to) {
+                        setDatePickMode('idle');
+                      }
+                    }}
+                    numberOfMonths={2}
+                    disabled={{ before: today }}
+                    defaultMonth={parseDate(data.departureDate) || today}
+                    className="rounded-2xl border border-border bg-card p-4"
+                  />
+                ) : (
+                  /* Edit single date mode — show single-pick calendar */
+                  <Calendar
+                    mode="single"
+                    selected={
+                      effectiveMode === 'editDeparture'
+                        ? parseDate(data.departureDate)
+                        : parseDate(data.returnDate)
+                    }
+                    onSelect={(date: Date | undefined) => {
+                      if (!date) return;
+                      if (effectiveMode === 'editDeparture') {
+                        // Don't allow departure after return
+                        const ret = parseDate(data.returnDate);
+                        if (ret && date > ret) return;
+                        update({ departureDate: toStr(date) });
+                      } else {
+                        // Don't allow return before departure
+                        const dep = parseDate(data.departureDate);
+                        if (dep && date < dep) return;
+                        update({ returnDate: toStr(date) });
+                      }
+                      setDatePickMode('idle');
+                    }}
+                    numberOfMonths={2}
+                    disabled={{ before: today }}
+                    defaultMonth={
+                      (effectiveMode === 'editDeparture'
+                        ? parseDate(data.departureDate)
+                        : parseDate(data.returnDate)) || today
+                    }
+                    className="rounded-2xl border border-border bg-card p-4"
+                  />
+                )}
               </div>
             </div>
           );
