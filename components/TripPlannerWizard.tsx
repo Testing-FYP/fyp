@@ -167,6 +167,20 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
 
   const progress = ((step + 1) / STEPS.length) * 100;
 
+  // Clear the default departure date for round trip when first entering Step 2,
+  // so the range picker starts fully empty. Only fires when departure is still
+  // the auto-default (today) and return is empty (i.e. user hasn't picked yet).
+  useEffect(() => {
+    if (step === 1 && data.tripType === 'round_trip' && !data.returnDate) {
+      const todayStr = new Date().toISOString().split('T')[0];
+      if (data.departureDate === todayStr) {
+        update({ departureDate: '' });
+        setDatePickMode('range');
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step]);
+
   // Auto-compute nights from dates (user can still override manually)
   const nightsAutoSet = useRef(false);
   useEffect(() => {
