@@ -2,9 +2,10 @@
 
 import { useState, useRef } from 'react';
 import { motion } from 'motion/react';
-import { Sparkles, RotateCcw } from 'lucide-react';
+import { Compass, Sparkles, RotateCcw } from 'lucide-react';
 import TripPlannerWizard, { PlannerData } from '@/components/TripPlannerWizard';
 import TripPlannerResults from '@/components/TripPlannerResults';
+import SurpriseMeDiscovery from '@/components/SurpriseMeDiscovery';
 import Image from 'next/image';
 
 export default function Home() {
@@ -14,6 +15,7 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [plannerData, setPlannerData] = useState<PlannerData | null>(null);
   const [editStep, setEditStep] = useState<number>(0);
+  const [plannerMode, setPlannerMode] = useState<'classic' | 'surprise'>('classic');
   const resultsRef = useRef<HTMLDivElement>(null);
 
   const handleComplete = async (data: PlannerData) => {
@@ -82,13 +84,26 @@ export default function Home() {
     setResults(null);
     setPlannerData(null);
     setEditStep(0);
+    setPlannerMode('classic');
     setError(null);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleNavigateToStep = (stepIndex: number) => {
     setEditStep(stepIndex);
+    setPlannerMode('classic');
     setResults(null);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleSurpriseDestination = (data: Partial<PlannerData>) => {
+    setPlannerData(prev => ({
+      ...(prev || {}),
+      ...data,
+    } as PlannerData));
+    setEditStep(7);
+    setPlannerMode('classic');
+    setError(null);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -134,14 +149,47 @@ export default function Home() {
       {/* Wizard or Results */}
       <section className="max-w-6xl mx-auto px-6 py-16">
         {!results ? (
-          <div className="max-w-2xl mx-auto">
-            <TripPlannerWizard onComplete={handleComplete} isLoading={isLoading} initialStep={editStep} initialData={plannerData || undefined} />
+          <div>
+            <div className="mx-auto mb-12 flex w-full max-w-xl rounded-2xl border border-border bg-muted p-1">
+              <button
+                type="button"
+                onClick={() => setPlannerMode('classic')}
+                className={`flex flex-1 items-center justify-center gap-2 rounded-xl px-4 py-3 text-xs font-black uppercase tracking-[0.14em] transition ${
+                  plannerMode === 'classic'
+                    ? 'bg-foreground text-background shadow-sm'
+                    : 'text-muted-foreground hover:bg-background hover:text-foreground'
+                }`}
+              >
+                <Compass className="h-4 w-4" />
+                Build My Trip
+              </button>
+              <button
+                type="button"
+                onClick={() => setPlannerMode('surprise')}
+                className={`flex flex-1 items-center justify-center gap-2 rounded-xl px-4 py-3 text-xs font-black uppercase tracking-[0.14em] transition ${
+                  plannerMode === 'surprise'
+                    ? 'bg-foreground text-background shadow-sm'
+                    : 'text-muted-foreground hover:bg-background hover:text-foreground'
+                }`}
+              >
+                <Sparkles className="h-4 w-4" />
+                Surprise Me
+              </button>
+            </div>
+
+            {plannerMode === 'classic' ? (
+              <div className="max-w-2xl mx-auto">
+                <TripPlannerWizard onComplete={handleComplete} isLoading={isLoading} initialStep={editStep} initialData={plannerData || undefined} />
+              </div>
+            ) : (
+              <SurpriseMeDiscovery onDestinationSelect={handleSurpriseDestination} />
+            )}
 
             {error && (
               <motion.div
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="mt-8 p-6 bg-red-500/10 border border-red-500/20 rounded-2xl text-red-500 text-center text-sm"
+                className="mx-auto mt-8 max-w-2xl p-6 bg-red-500/10 border border-red-500/20 rounded-2xl text-red-500 text-center text-sm"
               >
                 {error}
               </motion.div>
