@@ -11,6 +11,7 @@ export async function searchSerpApiFlights(params: {
   cabinClass: string;
   directOnly?: boolean;
   baggageCount?: number;
+  departureToken?: string;
 }) {
   if (!SERPAPI_KEY) {
     throw new Error('SERPAPI_API_KEY is not set');
@@ -52,6 +53,7 @@ export async function searchSerpApiFlights(params: {
   if (params.children > 0) searchParams.set('children', String(params.children));
   if (params.baggageCount && params.baggageCount > 0) searchParams.set('bags', String(params.baggageCount));
   if (params.directOnly) searchParams.set('stops', '1');
+  if (params.departureToken) searchParams.set('departure_token', params.departureToken);
 
   const response = await fetch(`https://serpapi.com/search.json?${searchParams.toString()}`);
   if (!response.ok) {

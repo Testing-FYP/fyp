@@ -482,6 +482,103 @@ function normalizeSerpApiItinerary(itinerary: any, returnDate: string, cabinClas
   };
 }
 
+function getSerpApiItineraries(response: any) {
+  return [
+    ...(Array.isArray(response?.best_flights) ? response.best_flights : []),
+    ...(Array.isArray(response?.other_flights) ? response.other_flights : []),
+  ];
+}
+
+function mergeReturnSliceIntoOffer(outboundOffer: any, returnItinerary: any, cabinClass: string, passengers: any[]) {
+  const returnOffer = normalizeSerpApiItinerary(returnItinerary, '', cabinClass, passengers);
+  const returnSlice = returnOffer.slices?.[0];
+  if (!returnSlice) return outboundOffer;
+
+  return {
+    ...outboundOffer,
+    slices: [outboundOffer.slices[0], returnSlice].filter(Boolean),
+    total_amount: returnOffer.total_amount || outboundOffer.total_amount,
+    display_price: returnOffer.display_price || outboundOffer.display_price,
+    booking_token: returnOffer.booking_token || outboundOffer.booking_token,
+    return_departure_token: returnOffer.departure_token,
+    return_owner: returnOffer.owner,
+  };
+}
+
+function formatIsoDurationForLog(duration: string) {
+  const hours = Number(String(duration || '').match(/(\d+)H/)?.[1] || 0);
+  const minutes = Number(String(duration || '').match(/(\d+)M/)?.[1] || 0);
+  const days = Number(String(duration || '').match(/(\d+)D/)?.[1] || 0);
+  const totalMinutes = days * 1440 + hours * 60 + minutes;
+  return totalMinutes > 0 ? formatFlightDuration(totalMinutes) : 'duration N/A';
+}
+
+function logNormalizedFlightCard(flight: any, flightIndex: number) {
+  const slices = Array.isArray(flight?.slices) ? flight.slices : [];
+  const segmentCount = slices.reduce((total: number, slice: any) => total + (Array.isArray(slice.segments) ? slice.segments.length : 0), 0);
+  const priceLabel = flight.total_amount ? `$${flight.total_amount}` : 'price unavailable';
+
+  console.log(
+    `  ${flightIndex + 1}. ${flight.owner?.name || 'Unknown airline'} | ${priceLabel} | ${flight.trip_type || 'unknown trip'} | ${segmentCount} segment(s) | ${slices.length} slice(s)`
+  );
+
+  slices.forEach((slice: any, sliceIndex: number) => {
+    const segments = Array.isArray(slice?.segments) ? slice.segments : [];
+    const firstSegment = segments[0];
+    const lastSegment = segments[segments.length - 1];
+    const legLabel = slices.length > 1 ? (sliceIndex === 0 ? 'Outbound' : 'Return') : 'One-way';
+    const originCode = firstSegment?.origin?.iata_code || 'DEP';
+    const destinationCode = lastSegment?.destination?.iata_code || 'ARR';
+    const departureTime = firstSegment?.departing_at ? formatFlightTime(firstSegment.departing_at) : 'N/A';
+    const arrivalTime = lastSegment?.arriving_at ? formatFlightTime(lastSegment.arriving_at) : 'N/A';
+    const stopLabel = segments.length <= 1 ? 'Nonstop' : `${segments.length - 1} transfer${segments.length === 2 ? '' : 's'}`;
+
+    console.log(`     ${legLabel}: ${originCode} -> ${destinationCode} | ${departureTime} -> ${arrivalTime} | ${formatIsoDurationForLog(slice?.duration)} | ${stopLabel}`);
+
+    segments.forEach((segment: any, segmentIndex: number) => {
+      const carrier = segment?.marketing_carrier?.name || 'Airline';
+      const flightNumber = segment?.marketing_carrier_flight_number || 'N/A';
+      const segmentRoute = `${segment?.origin?.iata_code || 'DEP'} -> ${segment?.destination?.iata_code || 'ARR'}`;
+      const amenities = [
+        ...(Array.isArray(segment?.amenities) ? segment.amenities : []),
+        ...(Array.isArray(segment?.airfare_details) ? segment.airfare_details : []),
+      ].filter(Boolean).join(' | ') || 'N/A';
+
+      console.log(
+        `       Segment ${segmentIndex + 1}: ${carrier} ${flightNumber} | ${segmentRoute} | ${formatIsoDurationForLog(segment?.duration)} | ${segment?.aircraft_name || 'Aircraft TBA'} | ${segment?.cabin_class || 'economy'} | Legroom: ${segment?.legroom || 'N/A'} | Carbon: ${segment?.carbon_emissions || 'N/A'}`
+      );
+      console.log(`         Amenities: ${amenities}`);
+    });
+
+    const layovers = Array.isArray(slice?.layovers) ? slice.layovers : [];
+    layovers.forEach((layover: any, layoverIndex: number) => {
+      console.log(
+        `       Transfer ${layoverIndex + 1}: ${layover.airportName || 'Layover airport'}${layover.airportCode ? ` (${layover.airportCode})` : ''} for ${layover.duration || formatFlightDuration(layover.durationMinutes || 0)}${layover.overnight ? ' | overnight' : ''}`
+      );
+    });
+  });
+}
+
+function selectOutboundByCarrier(outboundFlights: any[]) {
+  const carrierMap = new Map<string, any>();
+  const pricedFirst = [...outboundFlights].sort((a: any, b: any) => {
+    const aPrice = parseFloat(a.total_amount);
+    const bPrice = parseFloat(b.total_amount);
+    const safeA = Number.isFinite(aPrice) && aPrice > 0 ? aPrice : Number.POSITIVE_INFINITY;
+    const safeB = Number.isFinite(bPrice) && bPrice > 0 ? bPrice : Number.POSITIVE_INFINITY;
+    return safeA - safeB;
+  });
+
+  for (const offer of pricedFirst) {
+    if (!offer?.departure_token) continue;
+    const firstSegment = offer?.slices?.[0]?.segments?.[0];
+    const carrierKey = firstSegment?.marketing_carrier?.iata_code || offer?.owner?.name || offer.id;
+    if (!carrierMap.has(carrierKey)) carrierMap.set(carrierKey, offer);
+  }
+
+  return Array.from(carrierMap.values());
+}
+
 function logSerpApiAirports(airports: any[]) {
   if (!Array.isArray(airports) || airports.length === 0) {
     console.log('✈️ SerpApi airports: none returned');
@@ -884,10 +981,7 @@ export async function POST(request: Request) {
           }
         }
 
-        const itineraries = [
-          ...(Array.isArray(serpApiResults.best_flights) ? serpApiResults.best_flights : []),
-          ...(Array.isArray(serpApiResults.other_flights) ? serpApiResults.other_flights : []),
-        ];
+        const itineraries = getSerpApiItineraries(serpApiResults);
 
         logSerpApiItineraries('best_flights + other_flights', itineraries, returnDate || '');
 
@@ -895,17 +989,62 @@ export async function POST(request: Request) {
           .map((itinerary: any) => normalizeSerpApiItinerary(itinerary, returnDate || '', cabinClass, passengers))
           .filter((offer: any) => offer.slices.length > 0);
 
+        if (tripType === 'round_trip' && returnDate) {
+          console.log('✈️ Fetching return legs via SerpApi departure_token for round-trip results...');
+          const outboundFlights = flights;
+          const returnLookupOffers = selectOutboundByCarrier(outboundFlights);
+          console.log(`  ✈️ Return lookup outbound carriers: ${returnLookupOffers.length}`);
+          flights = returnLookupOffers.length > 0 ? await Promise.all(returnLookupOffers.map(async (offer: any) => {
+            if (!offer.departure_token) {
+              console.log(`  ✈️ Return leg skipped for ${offer.owner?.name || 'flight'}: missing departure_token`);
+              return offer;
+            }
+
+            try {
+              const returnResults = await searchGoogleFlights({
+                origin,
+                destination,
+                departureDate,
+                returnDate,
+                tripType,
+                adults,
+                children,
+                cabinClass,
+                directOnly,
+                baggageCount,
+                departureToken: offer.departure_token,
+              });
+              const returnItineraries = getSerpApiItineraries(returnResults);
+              const mergedOffers = returnItineraries
+                .map((returnItinerary: any) => mergeReturnSliceIntoOffer(offer, returnItinerary, cabinClass, passengers))
+                .filter((mergedOffer: any) => mergedOffer.slices?.length > 1)
+                .slice(0, 6);
+              if (mergedOffers.length === 0) {
+                console.log(`  ✈️ Return leg unavailable for ${offer.owner?.name || 'flight'}`);
+                return [offer];
+              }
+              console.log(`  ✈️ Built ${mergedOffers.length} round-trip option(s) from one outbound and one return request`);
+              const mergedOffer = mergedOffers[0];
+              const returnSegments = mergedOffer.slices?.[1]?.segments || [];
+              const firstReturn = returnSegments[0];
+              const lastReturn = returnSegments[returnSegments.length - 1];
+              console.log(
+                `  ✈️ Return leg attached: ${firstReturn?.origin?.iata_code || 'RET'} → ${lastReturn?.destination?.iata_code || 'ARR'} | ${mergedOffer.slices?.[1]?.duration || 'duration N/A'}`
+              );
+              return mergedOffers;
+            } catch (returnErr: any) {
+              console.warn(`  ✈️ Return leg lookup failed for ${offer.owner?.name || 'flight'}:`, returnErr.message);
+              return [offer];
+            }
+          })).then((items: any[]) => items.flat()) : outboundFlights;
+        }
+
         if (directOnly) {
           flights = flights.filter(f => f.slices.every((s: any) => s.segments.length === 1));
         }
 
         console.log('✈️ Normalized SerpApi flights returned to handler:', flights.length);
-        flights.forEach((flight: any, flightIndex: number) => {
-          const segmentCount = flight.slices.reduce((total: number, slice: any) => total + (Array.isArray(slice.segments) ? slice.segments.length : 0), 0);
-          console.log(
-            `  ${flightIndex + 1}. ${flight.owner?.name || 'Unknown airline'} | $${flight.total_amount} | ${flight.trip_type || 'unknown trip'} | ${segmentCount} segment(s) | ${flight.slices.length} slice(s)`
-          );
-        });
+        flights.forEach((flight: any, flightIndex: number) => logNormalizedFlightCard(flight, flightIndex));
       } catch (flightErr: any) {
         console.error('SerpApi flight search error:', flightErr.message);
       }
@@ -917,8 +1056,14 @@ export async function POST(request: Request) {
     console.log('═══════════ STEP 3: FLIGHT SEARCH ═══════════');
     console.log('✈️ Flights API response — total results:', flights.length);
     if (flights.length > 0) {
-      const prices = flights.map((f: any) => parseFloat(f.total_amount));
-      console.log('✈️ Price range: $' + Math.min(...prices).toFixed(0) + ' to $' + Math.max(...prices).toFixed(0));
+      const prices = flights
+        .map((f: any) => parseFloat(f.total_amount))
+        .filter((price: number) => Number.isFinite(price) && price > 0);
+      if (prices.length > 0) {
+        console.log('✈️ Price range: $' + Math.min(...prices).toFixed(0) + ' to $' + Math.max(...prices).toFixed(0));
+      } else {
+        console.log('✈️ Price range: unavailable');
+      }
       console.log('✈️ First flight:', flights[0]?.owner?.name || 'unknown airline', '| $' + flights[0]?.total_amount);
       console.log('✈️ All normalized flights logged above from SerpApi raw response');
     } else {

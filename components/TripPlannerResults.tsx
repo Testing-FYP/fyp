@@ -15,9 +15,9 @@ import {
   Compass,
   Crown,
   Hotel,
-  Info,
   Leaf,
   MapPin,
+  PlaneLanding,
   PlaneTakeoff,
   ShieldAlert,
   Sparkles,
@@ -77,6 +77,16 @@ function formatDate(value: string) {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+function formatShortDate(value: string) {
+  if (!value) return 'Date TBA';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const day = String(date.getDate()).padStart(2, '0');
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const year = date.getFullYear();
+  return `${day}-${month}-${year}`;
+}
+
 function formatTime(value: string) {
   if (!value) return 'Time TBA';
   const date = new Date(value);
@@ -118,7 +128,7 @@ function CabinClassBadge({ cabin }: { cabin: string }) {
   const Icon = isPremium ? Crown : Armchair;
 
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-muted px-2.5 py-1 text-xs font-black uppercase tracking-[0.12em] text-muted-foreground">
+    <span className="inline-flex items-center gap-1.5 rounded-xl border border-foreground/15 bg-background px-3 py-1.5 text-sm font-black text-foreground shadow-sm">
       <Icon className="h-3.5 w-3.5" />
       {cabinLabel(cabin)}
     </span>
@@ -143,6 +153,10 @@ function getDestinationDisplay(results: any, plannerData: any) {
 
 function getFlightEndpoints(flight: any) {
   const slice = flight?.slices?.[0];
+  return getSliceEndpoints(slice);
+}
+
+function getSliceEndpoints(slice: any) {
   const segments = slice?.segments || [];
   const first = segments[0] || {};
   const last = segments[segments.length - 1] || first;
@@ -185,6 +199,23 @@ function getLayovers(slice: any) {
   }).filter((layover: any) => layover.durationMinutes > 0);
 }
 
+function getFlightSegmentNumbers(flight: any) {
+  const slices = Array.isArray(flight?.slices) ? flight.slices : [];
+  const numbers = slices.flatMap((slice: any) =>
+    (slice?.segments || []).map((segment: any) => segment?.marketing_carrier_flight_number).filter(Boolean)
+  );
+  return Array.from(new Set(numbers));
+}
+
+function getSliceRouteCodes(slice: any) {
+  const segments = Array.isArray(slice?.segments) ? slice.segments : [];
+  if (segments.length === 0) return [];
+  return [
+    segments[0]?.origin?.iata_code || 'DEP',
+    ...segments.map((segment: any) => segment?.destination?.iata_code || 'ARR'),
+  ];
+}
+
 function getHotelDistanceKm(hotel: any, results: any) {
   const center = results?._debug?.geocodedCenter;
   const lat = asNumber(hotel?.lat ?? hotel?.gpsCoordinates?.latitude);
@@ -218,15 +249,16 @@ function getHotelImageUrl(image: any) {
   return image?.thumbnail || image?.original_image || image?.url || '';
 }
 
-function Badge({ children, tone = 'neutral' }: { children: ReactNode; tone?: 'neutral' | 'amber' | 'green' | 'red' }) {
+function Badge({ children, tone = 'neutral', strong = false }: { children: ReactNode; tone?: 'neutral' | 'amber' | 'green' | 'red' | 'blue'; strong?: boolean }) {
   const tones = {
-    neutral: 'border-border bg-muted text-muted-foreground',
-    amber: 'border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300',
-    green: 'border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
-    red: 'border-red-500/25 bg-red-500/10 text-red-700 dark:text-red-300',
+    neutral: strong ? 'border-foreground/15 bg-background text-foreground shadow-sm' : 'border-border bg-muted text-muted-foreground',
+    amber: strong ? 'border-amber-500/35 bg-amber-500/15 text-amber-800 shadow-sm dark:text-amber-200' : 'border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300',
+    green: strong ? 'border-emerald-500/35 bg-emerald-500/15 text-emerald-800 shadow-sm dark:text-emerald-200' : 'border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
+    red: strong ? 'border-red-500/35 bg-red-500/15 text-red-800 shadow-sm dark:text-red-200' : 'border-red-500/25 bg-red-500/10 text-red-700 dark:text-red-300',
+    blue: strong ? 'border-sky-500/35 bg-sky-500/15 text-sky-800 shadow-sm dark:text-sky-200' : 'border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-300',
   };
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-bold ${tones[tone]}`}>
+    <span className={`inline-flex items-center gap-1.5 rounded-xl border ${strong ? 'px-3 py-1.5 text-sm font-black' : 'px-2.5 py-1 text-[11px] font-bold'} ${tones[tone]}`}>
       {children}
     </span>
   );
@@ -249,11 +281,11 @@ function HotelStars({ hotel }: { hotel: any }) {
   if (!starCount) return <Badge>Class unavailable</Badge>;
 
   return (
-    <span aria-label={`${starCount} star hotel`} className="inline-flex items-center gap-1 rounded-lg border border-amber-500/25 bg-amber-500/10 px-2.5 py-1">
+    <span aria-label={`${starCount} star hotel`} className="inline-flex items-center gap-1 rounded-xl border border-amber-500/35 bg-amber-500/15 px-3 py-1.5 shadow-sm">
       {Array.from({ length: 5 }).map((_, index) => (
         <Star
           key={index}
-          className={`h-3.5 w-3.5 ${index < starCount ? 'fill-amber-400 text-amber-500' : 'text-amber-500/25'}`}
+          className={`h-4 w-4 ${index < starCount ? 'fill-amber-400 text-amber-500' : 'text-amber-500/25'}`}
         />
       ))}
     </span>
@@ -334,9 +366,9 @@ export function TripHeader({ results, plannerData }: { results: any; plannerData
       <div className="relative grid gap-8 p-6 sm:p-8 lg:grid-cols-[1.25fr_0.75fr]">
         <div>
           <div className="flex flex-wrap gap-2">
-            <Badge tone="amber">Recommended</Badge>
-            <Badge>{cabinLabel(plannerData?.cabinClass || 'economy')}</Badge>
-            <Badge>{(plannerData?.tripType || 'one_way').replace(/_/g, ' ')}</Badge>
+            <Badge tone="amber" strong>Recommended</Badge>
+            <Badge strong>{cabinLabel(plannerData?.cabinClass || 'economy')}</Badge>
+            <Badge strong>{(plannerData?.tripType || 'one_way').replace(/_/g, ' ')}</Badge>
           </div>
           <h1 className="mt-5 text-5xl title-text leading-none text-foreground">{route}</h1>
           <p className="mt-3 text-lg font-semibold text-muted-foreground">{destination}</p>
@@ -439,11 +471,13 @@ export function BudgetBreakdown({ breakdown, plannerData }: { breakdown: any; pl
 }
 
 export function FlightCard({ flight, index, travelerCount = 1 }: { flight: any; index: number; travelerCount?: number }) {
+  const [activeSliceIndex, setActiveSliceIndex] = useState(0);
   const { slice, segments, first, last } = getFlightEndpoints(flight);
+  const slices = Array.isArray(flight?.slices) && flight.slices.length > 0 ? flight.slices : [slice].filter(Boolean);
+  const activeSlice = slices[Math.min(activeSliceIndex, slices.length - 1)] || slices[0];
   const price = getFlightPrice(flight);
   const perTravelerPrice = price && travelerCount > 1 ? price / travelerCount : null;
-  const direct = segments.length <= 1;
-  const layovers = getLayovers(slice);
+  const direct = slices.every((item: any) => (item?.segments || []).length <= 1);
   const carrier = first?.marketing_carrier?.name || flight?.owner?.name || 'Airline pending';
   const carrierCode = first?.marketing_carrier?.iata_code || flight?.owner?.iata_code || '';
   const carrierLogo =
@@ -454,6 +488,7 @@ export function FlightCard({ flight, index, travelerCount = 1 }: { flight: any; 
     flight?.owner?.logo_url ||
     '';
   const flightNumber = first?.marketing_carrier_flight_number || 'Flight TBA';
+  const flightNumbers = getFlightSegmentNumbers(flight);
   const cabin = first?.cabin_class || flight?.cabin_class || 'economy';
   const amenities = [
     ...(first?.amenities || []),
@@ -487,13 +522,13 @@ export function FlightCard({ flight, index, travelerCount = 1 }: { flight: any; 
           </div>
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              {index === 0 ? <Badge tone="green"><Sparkles className="h-3 w-3" />Best Value</Badge> : null}
-              {index === 0 ? <Badge tone="amber">Cheapest</Badge> : <Badge>Available</Badge>}
-              {direct ? <Badge>Fastest</Badge> : null}
+              {index === 0 ? <Badge tone="green" strong><Sparkles className="h-4 w-4" />Best Value</Badge> : null}
+              {index === 0 ? <Badge tone="amber" strong>Cheapest</Badge> : <Badge tone="blue" strong>Available</Badge>}
+              {direct ? <Badge tone="blue" strong>Fastest</Badge> : null}
             </div>
             <h3 className="mt-3 text-xl font-black text-foreground">{carrier}</h3>
             <p className="mt-1 text-sm font-semibold text-muted-foreground">
-              {flightNumber}{carrierCode ? ` / ${carrierCode}` : ''}
+              {(flightNumbers.length ? flightNumbers.join(' + ') : flightNumber)}{carrierCode ? ` / ${carrierCode}` : ''}
             </p>
           </div>
         </div>
@@ -511,12 +546,83 @@ export function FlightCard({ flight, index, travelerCount = 1 }: { flight: any; 
         </div>
       </div>
 
-      <div className="mt-5 grid gap-4 rounded-2xl bg-muted p-4 md:grid-cols-[1fr_auto_1fr] md:items-center">
+      <div className="mt-5 space-y-4">
+        {slices.length > 1 ? (
+          <div className="grid gap-2 rounded-2xl border border-border bg-muted p-1 sm:grid-cols-2">
+            {slices.map((flightSlice: any, sliceIndex: number) => {
+              const label = sliceIndex === 0 ? 'Outbound' : 'Return';
+              const Icon = sliceIndex === 0 ? PlaneTakeoff : PlaneLanding;
+              const route = getSliceRouteCodes(flightSlice).join(' -> ');
+              const active = activeSliceIndex === sliceIndex;
+
+              return (
+                <button
+                  key={flightSlice?.id || sliceIndex}
+                  type="button"
+                  onClick={() => setActiveSliceIndex(sliceIndex)}
+                  className={`flex items-center justify-between gap-3 rounded-xl px-4 py-3 text-left transition ${
+                    active ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
+                  }`}
+                >
+                  <span className="flex items-center gap-2 text-sm font-black">
+                    <Icon className="h-4 w-4" />
+                    {label}
+                  </span>
+                  <span className="text-xs font-bold">{route}</span>
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+
+        <FlightLeg
+          slice={activeSlice}
+          label={slices.length > 1 ? (activeSliceIndex === 0 ? 'Outbound' : 'Return') : 'One-way'}
+        />
+      </div>
+
+    </article>
+  );
+}
+
+function FlightLeg({ slice, label }: { slice: any; label: string }) {
+  const { segments, first, last } = getSliceEndpoints(slice);
+  const layovers = getLayovers(slice);
+  const routeCodes = getSliceRouteCodes(slice);
+
+  return (
+    <div className="rounded-2xl border border-border bg-muted p-4">
+      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-2">
+          <Badge strong>{label}</Badge>
+          <span className="inline-flex items-center gap-2 rounded-xl border border-foreground/15 bg-background px-3 py-1.5 text-sm font-black text-foreground shadow-sm">
+            <CalendarDays className="h-4 w-4 text-muted-foreground" />
+            {formatShortDate(first?.departing_at)}
+          </span>
+        </div>
+        <span className="text-xs font-black uppercase tracking-[0.14em] text-muted-foreground">
+          {segments.length <= 1 ? 'Nonstop' : `${segments.length - 1} transfer${segments.length === 2 ? '' : 's'}`}
+        </span>
+      </div>
+
+      <div className="mb-4 rounded-2xl border border-border bg-card px-4 py-3">
+        <p className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">Flight path</p>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          {routeCodes.map((code, index) => (
+            <div key={`${code}-${index}`} className="flex items-center gap-2">
+              <span className="rounded-lg border border-border bg-background px-2.5 py-1 text-sm font-black text-foreground">{code}</span>
+              {index < routeCodes.length - 1 ? <span className="h-px w-8 bg-border" /> : null}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-[1fr_auto_1fr] md:items-center">
         <AirportTime code={first?.origin?.iata_code} name={first?.origin_name || first?.origin?.name} time={formatTime(first?.departing_at)} label="Depart" />
         <div className="hidden items-center gap-3 text-muted-foreground md:flex">
           <div className="h-px w-16 bg-border" />
           <div className="rounded-full border border-border bg-card px-3 py-1 text-xs font-black">
-            {formatDuration(slice?.duration || getDurationMinutes(flight))}
+            {formatDuration(slice?.duration)}
           </div>
           <div className="h-px w-16 bg-border" />
         </div>
@@ -540,20 +646,65 @@ export function FlightCard({ flight, index, travelerCount = 1 }: { flight: any; 
         </div>
       ) : null}
 
-      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Detail icon={Clock3} label="Duration" value={formatDuration(slice?.duration || getDurationMinutes(flight))} />
-        <Detail icon={PlaneTakeoff} label="Aircraft" value={first?.aircraft_name || 'Aircraft TBA'} />
-        <Detail icon={BedDouble} label="Legroom" value={first?.legroom || 'Legroom TBA'} />
+      <div className="mt-4 space-y-3">
+        {segments.map((segment: any, segmentIndex: number) => (
+          <FlightSegmentDetails
+            key={segment?.id || `${label}-segment-${segmentIndex}`}
+            segment={segment}
+            segmentIndex={segmentIndex}
+            totalSegments={segments.length}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function FlightSegmentDetails({ segment, segmentIndex, totalSegments }: { segment: any; segmentIndex: number; totalSegments: number }) {
+  const carrier = segment?.marketing_carrier?.name || 'Airline';
+  const flightNumber = segment?.marketing_carrier_flight_number || 'Flight number TBA';
+  const amenities = [
+    ...(segment?.amenities || []),
+    ...(segment?.airfare_details || []),
+    ...(segment?.extensions || []),
+  ].filter(Boolean);
+  const amenitiesText = amenities.join(' ').toLowerCase();
+  const hasUsb = amenitiesText.includes('usb');
+  const hasWifi = amenitiesText.includes('wi-fi') || amenitiesText.includes('wifi');
+  const hasVideo = amenitiesText.includes('video') || amenitiesText.includes('stream');
+  const carbon = segment?.carbon_emissions || segment?.carbonEmissions;
+
+  return (
+    <div className="rounded-2xl border border-border bg-card p-4">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">
+            {totalSegments > 1 ? `Segment ${segmentIndex + 1}` : 'Flight details'}
+          </p>
+          <p className="mt-1 text-sm font-black text-foreground">
+            {carrier} {flightNumber}
+          </p>
+        </div>
+        <p className="text-xs font-bold text-muted-foreground">
+          {segment?.origin?.iata_code || 'DEP'} {'->'} {segment?.destination?.iata_code || 'ARR'}
+        </p>
+      </div>
+
+      <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <Detail icon={Clock3} label="Flight time" value={formatDuration(segment?.duration)} />
+        <Detail icon={PlaneTakeoff} label="Aircraft" value={segment?.aircraft_name || 'Aircraft TBA'} />
+        <Detail icon={Ticket} label="Cabin" value={cabinLabel(segment?.cabin_class || 'economy')} />
+        <Detail icon={BedDouble} label="Legroom" value={segment?.legroom || 'Legroom TBA'} />
         <Detail icon={Leaf} label="Carbon" value={carbon ? `${carbon}` : 'Estimate unavailable'} />
       </div>
 
-      <div className="mt-4 flex flex-wrap gap-2">
+      <div className="mt-3 flex flex-wrap gap-2">
         <Amenity enabled={hasUsb} icon={Usb} label="USB" />
         <Amenity enabled={hasWifi} icon={Wifi} label="Wi-Fi" />
         <Amenity enabled={hasVideo} icon={Video} label="Video" />
-        {!hasUsb && !hasWifi && !hasVideo ? <Badge>Limited amenity data</Badge> : null}
+        {!hasUsb && !hasWifi && !hasVideo ? <Badge strong>Limited amenity data</Badge> : null}
       </div>
-    </article>
+    </div>
   );
 }
 
@@ -625,7 +776,7 @@ export function HotelCard({ hotel, suspicious, distanceKm }: { hotel: any; suspi
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <div className="flex flex-wrap gap-2">
-                {suspicious ? <Badge tone="amber"><AlertTriangle className="h-3 w-3" />Location check</Badge> : <Badge tone="green"><BadgeCheck className="h-3 w-3" />Recommended</Badge>}
+                {suspicious ? <Badge tone="amber" strong><AlertTriangle className="h-4 w-4" />Location check</Badge> : <Badge tone="green" strong><BadgeCheck className="h-4 w-4" />Recommended</Badge>}
                 <HotelStars hotel={hotel} />
               </div>
               <h3 className="mt-3 text-xl font-black text-foreground">{hotel?.name || 'Hotel name unavailable'}</h3>
@@ -644,7 +795,7 @@ export function HotelCard({ hotel, suspicious, distanceKm }: { hotel: any; suspi
                 ) : null}
               </div>
             ) : (
-              <Badge tone="red">Price unavailable</Badge>
+              <Badge tone="red" strong>Price unavailable</Badge>
             )}
           </div>
 
@@ -661,7 +812,7 @@ export function HotelCard({ hotel, suspicious, distanceKm }: { hotel: any; suspi
           </div>
 
           <div className="mt-4 flex flex-wrap gap-2">
-            {amenities.length ? amenities.map((amenity: string) => <Badge key={amenity}>{amenity}</Badge>) : <Badge tone="red">Amenities unavailable</Badge>}
+            {amenities.length ? amenities.map((amenity: string) => <Badge key={amenity} strong>{amenity}</Badge>) : <Badge tone="red" strong>Amenities unavailable</Badge>}
           </div>
 
           <div className="mt-4 grid gap-4 border-t border-border pt-4 md:grid-cols-2">
@@ -691,8 +842,8 @@ export function TransportCard({ transport }: { transport: any }) {
           </div>
           <div>
             <div className="flex flex-wrap gap-2">
-              <Badge tone="amber">Cheapest</Badge>
-              <Badge tone="green">Recommended</Badge>
+              <Badge tone="amber" strong>Cheapest</Badge>
+              <Badge tone="green" strong>Recommended</Badge>
             </div>
             <h3 className="mt-3 text-xl font-black text-foreground">{transport?.operator || 'Ground transport'}</h3>
             <p className="mt-1 text-sm font-semibold capitalize text-muted-foreground">
@@ -722,14 +873,14 @@ export function PlaceCard({ place }: { place: any }) {
         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
           <MapPin className="h-5 w-5" />
         </div>
-        <Badge tone={hasCoordinates ? 'green' : 'red'}>{hasCoordinates ? place?.distance || 'Mapped' : 'Coordinates unavailable'}</Badge>
+        <Badge tone={hasCoordinates ? 'green' : 'red'} strong>{hasCoordinates ? place?.distance || 'Mapped' : 'Coordinates unavailable'}</Badge>
       </div>
       <h3 className="mt-4 text-lg font-black text-foreground">{place?.name || 'Place unavailable'}</h3>
       <p className="mt-2 min-h-16 text-sm leading-relaxed text-muted-foreground">{place?.description || 'Description unavailable from the current data source.'}</p>
       <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-border pt-4">
-        <Badge tone="amber"><Star className="h-3 w-3" />{place?.rating ? `${place.rating}` : 'Rating N/A'}</Badge>
-        <Badge>{place?.reviewsCount ? `${place.reviewsCount.toLocaleString()} reviews` : 'Reviews N/A'}</Badge>
-        <Badge tone="green">{formatMoney(place?.estimatedCost ?? 0, 'Cost varies')}</Badge>
+        <Badge tone="amber" strong><Star className="h-4 w-4" />{place?.rating ? `${place.rating}` : 'Rating N/A'}</Badge>
+        <Badge strong>{place?.reviewsCount ? `${place.reviewsCount.toLocaleString()} reviews` : 'Reviews N/A'}</Badge>
+        <Badge tone="green" strong>{formatMoney(place?.estimatedCost ?? 0, 'Cost varies')}</Badge>
       </div>
     </article>
   );
@@ -744,7 +895,7 @@ export function UpsellCard({ option, onSelect, disabled }: { option: any; onSele
       className="group rounded-3xl border border-border bg-card p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-xl disabled:cursor-not-allowed disabled:opacity-60"
     >
       <div className="flex items-center justify-between gap-4">
-        <Badge tone="amber">+{formatMoney(option?.extraAmount || 0)}</Badge>
+        <Badge tone="amber" strong>+{formatMoney(option?.extraAmount || 0)}</Badge>
         <ChevronRight className="h-5 w-5 text-muted-foreground transition group-hover:translate-x-1" />
       </div>
       <h3 className="mt-4 text-lg font-black text-foreground">{option?.title || 'Upgrade option'}</h3>
@@ -795,8 +946,6 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
     return pricedFlights;
   }, [results?.flights, flightFilter]);
 
-  const hiddenUnpricedFlightCount = (results?.flights || []).filter((flight: any) => getFlightPrice(flight) === null).length;
-
   const hotels = useMemo(() => {
     const withFlags = [...(results?.hotels || [])].map(hotel => ({
       hotel,
@@ -830,6 +979,15 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
     { id: 'places', label: 'Places', count: results?.placesToVisit?.length || 0 },
     { id: 'upgrades', label: 'Upgrades', count: results?.upsellOptions?.length || 3 },
   ];
+
+  const flightCards = flights.map((flight: any, index: number) => (
+    <FlightCard
+      key={flight?.id || `${flight?.owner?.name || 'flight'}-${index}`}
+      flight={flight}
+      index={index}
+      travelerCount={travelerCount}
+    />
+  ));
 
   return (
     <motion.div
@@ -877,14 +1035,8 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
               ]}
             />
           </SectionHeader>
-          {hiddenUnpricedFlightCount > 0 ? (
-            <div className="flex items-center gap-2 rounded-2xl border border-border bg-muted px-4 py-3 text-sm text-muted-foreground">
-              <Info className="h-4 w-4" />
-              {hiddenUnpricedFlightCount} flight{hiddenUnpricedFlightCount === 1 ? '' : 's'} hidden because no valid price was returned.
-            </div>
-          ) : null}
-          {flights.length ? flights.map((flight, index) => <FlightCard key={flight?.id || index} flight={flight} index={index} travelerCount={travelerCount} />) : (
-            <EmptyState icon={PlaneTakeoff} title="No priced flight results returned" body="Flights with missing, null, or zero prices are hidden until the provider returns a valid fare." />
+          {flightCards.length > 0 ? flightCards : (
+            <EmptyState icon={PlaneTakeoff} title="No current fares available" body="Try adjusting the dates, cabin, route, or traveler count to refresh available flight options." />
           )}
         </motion.section>
       )}
