@@ -195,10 +195,6 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
   }, [data.departureDate, data.returnDate, data.tripType]);
 
   // ── Smart Budget Suggestion ──
-  const [cheapestFlightPrice, setCheapestFlightPrice] = useState<number | null>(null);
-  const [isEstimate, setIsEstimate] = useState(false);
-  const [priceLoading, setPriceLoading] = useState(false);
-  const lastPriceKey = useRef('');
   const autoFilledRef = useRef<number | null>(null);
 
   // Destination cost estimates from Gemini
@@ -220,9 +216,10 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
   // Derive the destination city name from the IATA code for display
   const destinationCity = data.destination || '';
 
+  const estimatedFlightPrice = (CABIN_FALLBACK[data.cabinClass] || 300) * totalTravelers;
+
   const suggestedBudget = useMemo(() => {
-    if (cheapestFlightPrice === null) return null;
-    const flightCost = cheapestFlightPrice;
+    const flightCost = estimatedFlightPrice;
     const hotelCost = (HOTEL_NIGHTLY[data.hotelStars] || 160) * nights * data.hotelRooms;
     const meals = costEstimates?.dailyMeals ?? 50;
     const transport = costEstimates?.dailyTransport ?? 20;
@@ -239,7 +236,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
     console.log('   🛍️ Daily misc:', misc * totalTravelers * nights, `($${misc}/person × ${totalTravelers} × ${nights} nights)`);
     console.log('   💰 Total suggestion:', rounded);
     return rounded;
-  }, [cheapestFlightPrice, data.hotelStars, data.hotelRooms, nights, totalTravelers, costEstimates]);
+  }, [estimatedFlightPrice, data.hotelStars, data.hotelRooms, nights, totalTravelers, costEstimates]);
 
   const cabinLabel = ({ economy: 'Economy', premium_economy: 'Premium Economy', business: 'Business', first: 'First Class' } as Record<string, string>)[data.cabinClass] || data.cabinClass;
 
@@ -248,54 +245,6 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
     : data.flightBudget + data.hotelBudget + data.transportBudget + data.dailyExpenseBudget;
 
   const isBelowSuggestion = suggestedBudget !== null && currentBudgetTotal < suggestedBudget;
-
-  // Fetch real flight price when user reaches budget step
-  useEffect(() => {
-    if (step !== 7) return;
-    const key = `${data.origin}|${data.destination}|${data.departureDate}|${data.returnDate}|${data.tripType}|${data.cabinClass}|${data.adults}|${data.children}`;
-    if (key === lastPriceKey.current) return;
-    lastPriceKey.current = key;
-    let cancelled = false;
-    (async () => {
-      setPriceLoading(true);
-      try {
-        const res = await fetch('/api/planner/price-check', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            origin: data.origin, destination: data.destination,
-            departureDate: data.departureDate, returnDate: data.returnDate,
-            tripType: data.tripType, adults: data.adults, children: data.children,
-            cabinClass: data.cabinClass,
-          }),
-        });
-        const json = await res.json();
-        if (!cancelled) {
-          if (json.cheapestPrice) {
-            console.log('💰 PRICE CHECK — got real price from Duffel:', json.cheapestPrice);
-            setCheapestFlightPrice(json.cheapestPrice);
-            setIsEstimate(false);
-          } else {
-            // Duffel returned no price — use fallback estimates
-            const fallback = (CABIN_FALLBACK[data.cabinClass] || 300) * totalTravelers;
-            console.log('💰 PRICE CHECK — using fallback estimates, reason:', json.error || 'no offers returned');
-            setCheapestFlightPrice(fallback);
-            setIsEstimate(true);
-          }
-        }
-      } catch (err: any) {
-        // Network or fetch error — use fallback estimates
-        if (!cancelled) {
-          const fallback = (CABIN_FALLBACK[data.cabinClass] || 300) * totalTravelers;
-          console.log('💰 PRICE CHECK — using fallback estimates, reason:', err?.message || 'fetch failed');
-          setCheapestFlightPrice(fallback);
-          setIsEstimate(true);
-        }
-      }
-      if (!cancelled) setPriceLoading(false);
-    })();
-    return () => { cancelled = true; };
-  }, [step, data.origin, data.destination, data.departureDate, data.returnDate, data.tripType, data.cabinClass, data.adults, data.children, totalTravelers]);
 
   // Fetch destination-specific cost estimates from Gemini
   useEffect(() => {
@@ -750,7 +699,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
             )}
 
             {/* Cost breakdown card */}
-            {(priceLoading || costLoading) && (
+            {costLoading && (
               <div className="space-y-3 py-5 px-6 rounded-3xl bg-muted border border-border animate-pulse">
                 <div className="h-3 bg-border/50 rounded w-2/3 mx-auto" />
                 <div className="space-y-2 pt-2">
@@ -766,7 +715,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
               </div>
             )}
 
-            {!priceLoading && !costLoading && suggestedBudget !== null && (
+            {!costLoading && suggestedBudget !== null && (
               <div className="space-y-4">
                 {/* Breakdown card */}
                 <div className="py-5 px-6 rounded-3xl bg-muted border border-border space-y-3">
@@ -775,8 +724,8 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                   </div>
                   <div className="space-y-2.5">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs text-muted-foreground flex items-center gap-2">✈️ Flights {isEstimate ? '(est.)' : '(real)'}</span>
-                      <span className="text-xs font-bold text-foreground font-mono">${cheapestFlightPrice?.toLocaleString()}</span>
+                      <span className="text-xs text-muted-foreground flex items-center gap-2">✈️ Flights (est.)</span>
+                      <span className="text-xs font-bold text-foreground font-mono">${estimatedFlightPrice.toLocaleString()}</span>
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-muted-foreground flex items-center gap-2">🏨 Hotels ({nights} night{nights !== 1 ? 's' : ''} × {data.hotelRooms} room{data.hotelRooms !== 1 ? 's' : ''})</span>
@@ -803,13 +752,13 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                 </div>
                 {/* Suggestion line */}
                 <div className="text-center text-[10px] text-muted-foreground/50 uppercase tracking-wider font-bold">
-                  Suggested: ${suggestedBudget.toLocaleString()} — {isEstimate && costEstimates?.isEstimate ? 'estimated based on your cabin class and hotel rating' : 'based on real flight prices and destination costs'}
+                  Suggested: ${suggestedBudget.toLocaleString()} — estimated based on your cabin class, hotel rating, and destination costs
                 </div>
               </div>
             )}
 
             {/* Under-budget warning */}
-            {!priceLoading && !costLoading && isBelowSuggestion && (
+            {!costLoading && isBelowSuggestion && (
               <div className="space-y-3">
                 <div className="flex items-start gap-3 py-4 px-5 rounded-2xl bg-amber-500/10 border border-amber-500/20">
                   <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
@@ -1149,3 +1098,4 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
     </div>
   );
 }
+

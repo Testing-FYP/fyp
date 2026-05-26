@@ -103,7 +103,7 @@ export default function Home() {
             alt="AI Trip Planner"
             fill
             priority
-            className="object-cover opacity-50 grayscale dark:invert dark:opacity-30"
+            className="object-cover opacity-50 dark:opacity-30"
             referrerPolicy="no-referrer"
           />
         </div>

@@ -16,7 +16,7 @@ export default function BusCard({ offer }: BusCardProps) {
       className="glass-card group overflow-hidden rounded-[32px] border border-border hover:border-foreground/10 transition-all duration-500"
     >
       <div className="flex flex-col md:flex-row h-full">
-        <div className="relative w-full md:w-1/3 h-64 md:h-auto overflow-hidden grayscale dark:invert">
+        <div className="relative w-full md:w-1/3 h-64 md:h-auto overflow-hidden">
           <Image 
             src={`https://picsum.photos/seed/${offer.id}/800/600`} 
             alt={offer.operator} 

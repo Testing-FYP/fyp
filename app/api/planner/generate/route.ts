@@ -1,8 +1,10 @@
 import { NextResponse } from 'next/server';
-import { duffel } from '@/lib/duffel';
 import { GoogleGenAI, Type } from '@google/genai';
+import { searchSerpApiFlights as searchGoogleFlights } from '../../google-api/google-flights';
+import { searchSerpApiHotels as searchGoogleHotels } from '../../google-api/google-hotels';
 
 const LOCATIONIQ_KEY = 'pk.35eee2d341d3d4fca912eeafc74ba5a4';
+const SERPAPI_KEY = process.env.SERPAPI_API_KEY || '';
 
 // ──────────────────────────────────────────────────────────────
 // LocationIQ Helpers
@@ -66,33 +68,6 @@ function haversineDistance(lat1Str: string, lon1Str: string, lat2Str: string, lo
 }
 
 /**
- * Resolve a destination IATA code to its city name, airport name, country name, and ISO country code using the Duffel API.
- */
-async function resolveIATAToCity(iataCode: string): Promise<{ cityName: string; countryName: string; airportName: string; countryCode: string } | null> {
-  try {
-    const suggestions = await duffel.suggestions.list({ query: iataCode });
-    const match = suggestions.data?.find((s: any) => s.iata_code === iataCode);
-    if (match) {
-      // Extract the 2-letter ISO country code from various possible Duffel response shapes
-      const cc = (match as any).city?.country?.iata_code
-        || (match as any).country?.iata_code
-        || (match as any).iata_country_code
-        || '';
-      return {
-        cityName: match.city_name || match.name || iataCode,
-        countryName: (match as any).city?.country_name || (match as any).country_name || '',
-        airportName: match.name || `${iataCode} Airport`,
-        countryCode: cc.toLowerCase(),
-      };
-    }
-    return { cityName: iataCode, countryName: '', airportName: `${iataCode} Airport`, countryCode: '' };
-  } catch (err) {
-    console.warn('Duffel IATA resolve failed:', err);
-    return { cityName: iataCode, countryName: '', airportName: `${iataCode} Airport`, countryCode: '' };
-  }
-}
-
-/**
  * Geocode a CITY NAME (not IATA code) to lat/lon using LocationIQ.
  * This ensures we get city-center coordinates, not airport coordinates.
  */
@@ -113,7 +88,7 @@ async function geocodeCity(cityName: string, countryName: string = ''): Promise<
 }
 
 /**
- * Geocode a place name using LocationIQ (with country code restriction) + Nominatim fallback.
+ * Geocode a place name using SerpApi Google Maps local results + Nominatim fallback.
  * Returns coordinates only if they are within maxDistKm of the destination.
  */
 async function geocodePlaceName(
@@ -123,73 +98,112 @@ async function geocodePlaceName(
   countryCode: string = '',
   destLat: string = '',
   destLon: string = ''
-): Promise<{ lat: string; lon: string } | null> {
-  const MAX_DIST = 100; // km — reject if further than this
+): Promise<{
+  lat: string;
+  lon: string;
+  rating?: number;
+  reviewsCount?: number;
+  address?: string;
+  placeType?: string;
+  source?: string;
+} | null> {
+  const MAX_DIST = 100; // km - reject if further than this
 
-  // Helper to check if coords are close enough to destination
   const isCloseEnough = (lat: string, lon: string): boolean => {
-    if (!destLat || !destLon) return true; // can't check, accept
+    if (!destLat || !destLon) return true;
     const dist = haversineDistance(destLat, destLon, lat, lon);
     return dist <= MAX_DIST;
   };
 
-  // ── Attempt 1: LocationIQ with country code ──
-  const liqQuery = countryName
+  // Attempt 1: SerpApi Google Maps local results
+  const placeQuery = countryName
     ? `${placeName}, ${cityName}, ${countryName}`
     : `${placeName}, ${cityName}`;
-  try {
-    const countryParam = countryCode ? `&countrycodes=${countryCode}` : '';
-    const url = `https://us1.locationiq.com/v1/search?key=${LOCATIONIQ_KEY}&q=${encodeURIComponent(liqQuery)}&format=json&limit=1${countryParam}`;
-    const res = await locationIqFetch(url, `place "${placeName}"`);
-    if (res) {
-      const data = await res.json();
-      if (Array.isArray(data) && data.length > 0) {
-        const { lat, lon } = data[0];
-        if (isCloseEnough(lat, lon)) {
-          console.log(`  📍 LocationIQ: "${placeName}" → lat=${lat}, lon=${lon} (OK)`);
-          return { lat, lon };
+
+  if (SERPAPI_KEY) {
+    try {
+      const searchParams = new URLSearchParams({
+        engine: 'google_maps',
+        type: 'search',
+        q: placeQuery,
+        api_key: SERPAPI_KEY,
+        no_cache: 'true',
+      });
+
+      if (countryCode) searchParams.set('gl', countryCode.toLowerCase());
+      if (destLat && destLon) searchParams.set('ll', `@${destLat},${destLon},13z`);
+
+      const res = await fetch(`https://serpapi.com/search.json?${searchParams.toString()}`);
+      if (!res.ok) {
+        console.warn(`  SerpApi Google Maps HTTP ${res.status} for place "${placeName}"`);
+      } else {
+        const data = await res.json();
+        const localResults = Array.isArray(data?.local_results) ? data.local_results : [];
+        const first = localResults[0];
+        const lat = first?.gps_coordinates?.latitude;
+        const lon = first?.gps_coordinates?.longitude;
+
+        if (lat !== undefined && lon !== undefined) {
+          const latStr = String(lat);
+          const lonStr = String(lon);
+          if (isCloseEnough(latStr, lonStr)) {
+            console.log(`  SerpApi Maps: "${placeName}" -> lat=${latStr}, lon=${lonStr} (OK)`);
+            return {
+              lat: latStr,
+              lon: lonStr,
+              rating: typeof first?.rating === 'number' ? first.rating : undefined,
+              reviewsCount: typeof first?.reviews === 'number' ? first.reviews : undefined,
+              address: typeof first?.address === 'string' ? first.address : undefined,
+              placeType: typeof first?.type === 'string' ? first.type : undefined,
+              source: 'serpapi_maps',
+            };
+          }
+
+          const dist = haversineDistance(destLat, destLon, latStr, lonStr);
+          console.log(`  SerpApi Maps: "${placeName}" -> lat=${latStr}, lon=${lonStr} -> ${dist.toFixed(0)} km (TOO FAR, trying Nominatim)`);
         } else {
-          const dist = haversineDistance(destLat, destLon, lat, lon);
-          console.log(`  ⚠️ LocationIQ: "${placeName}" → lat=${lat}, lon=${lon} → ${dist.toFixed(0)} km (TOO FAR, trying Nominatim)`);
+          console.warn(`  SerpApi Maps returned no coordinates for place "${placeName}"`);
         }
       }
+    } catch (err) {
+      console.warn(`  SerpApi Maps lookup failed for place "${placeName}":`, err);
     }
-  } catch { /* continue to Nominatim */ }
+  } else {
+    console.warn(`  SERPAPI_API_KEY missing, skipping SerpApi lookup for "${placeName}"`);
+  }
 
-  // ── Attempt 2: Nominatim fallback ──
+  // Attempt 2: Nominatim fallback
   const nomQuery = countryName
     ? `${placeName}, ${cityName}, ${countryName}`
     : `${placeName}, ${cityName}`;
+
   try {
-    await new Promise(r => setTimeout(r, 1000)); // Nominatim rate limit: 1 req/sec
+    await new Promise(r => setTimeout(r, 1000));
     const countryParam = countryCode ? `&countrycodes=${countryCode}` : '';
     const res = await fetch(
       `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(nomQuery)}&format=json&limit=1${countryParam}`,
       { headers: { 'User-Agent': 'TravelPlannerWebsite/1.0' } }
     );
+
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data) && data.length > 0) {
         const { lat, lon } = data[0];
         const dist = destLat && destLon ? haversineDistance(destLat, destLon, lat, lon) : 0;
-        console.log(`  📍 NOMINATIM FALLBACK: "${placeName}" → lat=${lat}, lon=${lon} → ${dist.toFixed(1)} km`);
+        console.log(`  NOMINATIM FALLBACK: "${placeName}" -> lat=${lat}, lon=${lon} -> ${dist.toFixed(1)} km`);
         if (isCloseEnough(lat, lon)) {
-          return { lat, lon };
-        } else {
-          console.log(`  ❌ Nominatim result also too far (${dist.toFixed(0)} km)`);
+          return { lat, lon, source: 'nominatim' };
         }
+        console.log(`  Nominatim result too far (${dist.toFixed(0)} km)`);
       }
     }
-  } catch { /* both failed */ }
+  } catch {
+    // both failed
+  }
 
-  console.log(`  ❌ REJECTED — both geocoders failed for: "${placeName}"`);
+  console.log(`  REJECTED - both geocoders failed for: "${placeName}"`);
   return null;
 }
-
-/**
- * Find nearby POIs by tag within a radius of the given coordinates.
- * Uses LocationIQ's Nearby API.
- */
 async function findNearby(lat: string, lon: string, tag: string, radiusMeters: number = 20000, limit: number = 10): Promise<any[]> {
   try {
     const url = `https://us1.locationiq.com/v1/nearby?key=${LOCATIONIQ_KEY}&lat=${lat}&lon=${lon}&tag=${tag}&radius=${radiusMeters}&limit=${limit}&format=json`;
@@ -205,121 +219,569 @@ async function findNearby(lat: string, lon: string, tag: string, radiusMeters: n
   return [];
 }
 
-/**
- * Reverse-geocode a lat/lon to verify it falls within the expected city.
- * Returns the city/town name from the coordinates.
- */
-async function reverseGeocode(lat: string, lon: string): Promise<string> {
-  try {
-    const res = await fetch(
-      `https://us1.locationiq.com/v1/reverse?key=${LOCATIONIQ_KEY}&lat=${lat}&lon=${lon}&format=json&addressdetails=1`
-    );
-    if (!res.ok) return '';
-    const data = await res.json();
-    return data?.address?.city || data?.address?.town || data?.address?.county || data?.address?.state || '';
-  } catch {
-    return '';
+function minutesToIsoDuration(minutes: number): string {
+  const safeMinutes = Math.max(0, Math.round(minutes || 0));
+  const days = Math.floor(safeMinutes / 1440);
+  const hours = Math.floor((safeMinutes % 1440) / 60);
+  const mins = safeMinutes % 60;
+
+  let duration = 'PT';
+  if (days > 0) duration += `${days}D`;
+  if (hours > 0) duration += `${hours}H`;
+  if (mins > 0 || duration === 'PT') duration += `${mins}M`;
+  return duration;
+}
+
+function timeToDateKey(timeValue: string): string {
+  return timeValue ? timeValue.split(' ')[0] : '';
+}
+
+function formatFlightDuration(minutes: number): string {
+  const safeMinutes = Math.max(0, Math.round(minutes || 0));
+  const hours = Math.floor(safeMinutes / 60);
+  const mins = safeMinutes % 60;
+  if (hours > 0 && mins > 0) return `${hours}h ${mins}m`;
+  if (hours > 0) return `${hours}h`;
+  return `${mins}m`;
+}
+
+function formatFlightTime(timeValue: string): string {
+  return timeValue || 'N/A';
+}
+
+function splitSerpApiSegmentsByTrip(itinerary: any, returnDate: string): any[][] {
+  const rawSegments = Array.isArray(itinerary?.flights) ? itinerary.flights : [];
+  if (rawSegments.length === 0) return [];
+
+  const normalizedSegments = rawSegments.map((segment: any) => ({
+    departing_at: toIsoTimeString(segment?.departure_airport?.time || ''),
+  }));
+
+  const returnIndex = returnDate
+    ? normalizedSegments.findIndex((segment: any) => timeToDateKey(segment.departing_at) >= returnDate)
+    : -1;
+
+  if (returnIndex > 0) {
+    return [rawSegments.slice(0, returnIndex), rawSegments.slice(returnIndex)];
+  }
+
+  return [rawSegments];
+}
+
+function logSerpApiSegment(segment: any, segmentIndex: number) {
+  const departureAirport = segment?.departure_airport || {};
+  const arrivalAirport = segment?.arrival_airport || {};
+  const durationMinutes = Number(segment?.duration || 0);
+  const notes: string[] = [];
+
+  if (segment?.overnight) notes.push('overnight');
+  if (segment?.often_delayed_by_over_30_min) notes.push('often delayed >30 min');
+  if (segment?.plane_and_crew_by) notes.push(`plane and crew by ${segment.plane_and_crew_by}`);
+
+  console.log(
+    `      Segment ${segmentIndex + 1}: ${segment?.airline || 'Airline'} ${segment?.flight_number || ''}`.trim()
+  );
+  console.log(
+    `        ${departureAirport?.id || 'DEP'} ${departureAirport?.name || 'Departure airport'} at ${formatFlightTime(departureAirport?.time || '')}` +
+      ` → ${arrivalAirport?.id || 'ARR'} ${arrivalAirport?.name || 'Arrival airport'} at ${formatFlightTime(arrivalAirport?.time || '')}`
+  );
+  console.log(
+    `        Duration: ${formatFlightDuration(durationMinutes)} | Cabin: ${segment?.travel_class || 'N/A'} | Aircraft: ${segment?.airplane || 'N/A'}`
+  );
+  console.log(
+    `        Legroom: ${segment?.legroom || 'N/A'} | Airfare details: ${segment?.extensions?.join(' | ') || 'N/A'}`
+  );
+
+  if (segment?.ticket_also_sold_by?.length) {
+    console.log(`        Also sold by: ${segment.ticket_also_sold_by.join(', ')}`);
+  }
+
+  if (notes.length > 0) {
+    console.log(`        Notes: ${notes.join(' | ')}`);
   }
 }
 
-// ──────────────────────────────────────────────────────────────
-// Xotelo Helpers — Real hotel pricing from Booking.com/Agoda/Expedia
-// ──────────────────────────────────────────────────────────────
+function logSerpApiLayover(layover: any, layoverIndex: number) {
+  if (!layover) return;
 
-const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY || '';
+  const notes: string[] = [];
+  if (layover?.overnight) notes.push('overnight');
 
-/**
- * Search Xotelo for a hotel by name + city. Returns the best-matching hotel_key
- * and metadata (image, address, TripAdvisor URL) or null if not found.
- */
-async function xoteloSearchHotel(
-  hotelName: string,
-  cityName: string
-): Promise<{ hotel_key: string; name: string; image: string; url: string; street_address: string } | null> {
-  if (!RAPIDAPI_KEY) return null;
-  try {
-    const query = `${hotelName} ${cityName}`;
-    const res = await fetch(
-      `https://xotelo-hotel-prices.p.rapidapi.com/api/search?query=${encodeURIComponent(query)}&location_type=accommodation`,
-      {
-        headers: {
-          'x-rapidapi-key': RAPIDAPI_KEY,
-          'x-rapidapi-host': 'xotelo-hotel-prices.p.rapidapi.com',
-        },
-      }
-    );
-    if (!res.ok) {
-      console.warn(`  ⚠️ Xotelo search HTTP ${res.status} for "${query}"`);
-      return null;
-    }
-    const data = await res.json();
-    const results = data?.result?.data || data?.result || [];
-    if (Array.isArray(results) && results.length > 0) {
-      // Pick the first (best) match
-      const best = results[0];
+  console.log(
+    `        Layover ${layoverIndex + 1}: ${layover?.name || 'Layover airport'} (${layover?.id || 'N/A'}) for ${formatFlightDuration(Number(layover?.duration || 0))}` +
+      `${notes.length > 0 ? ` | ${notes.join(' | ')}` : ''}`
+  );
+}
+
+function toIsoTimeString(timeValue: string): string {
+  if (!timeValue) return '';
+  const normalized = timeValue.includes('T') ? timeValue : timeValue.replace(' ', 'T');
+  return normalized.length === 16 ? `${normalized}:00` : normalized;
+}
+
+function buildAirportRef(airport: any) {
+  return {
+    iata_code: airport?.id || '',
+    name: airport?.name || airport?.id || '',
+    city_name: airport?.city || airport?.name || airport?.id || '',
+  };
+}
+
+const AIRLINE_IATA_BY_NAME: Record<string, string> = {
+  'flynas': 'XY',
+  'royal jordanian': 'RJ',
+  'saudia': 'SV',
+  'etihad': 'EY',
+  'air cairo': 'SM',
+  'emirates': 'EK',
+  'qatar airways': 'QR',
+  'turkish airlines': 'TK',
+  'flydubai': 'FZ',
+  'air arabia': 'G9',
+  'jazeera airways': 'J9',
+  'kuwait airways': 'KU',
+  'gulf air': 'GF',
+  'egyptair': 'MS',
+  'oman air': 'WY',
+  'wizz air': 'W6',
+  'pegasus airlines': 'PC',
+  'lufthansa': 'LH',
+  'british airways': 'BA',
+  'air france': 'AF',
+  'klm': 'KL',
+};
+
+function extractAirlineIata(segment: any): string {
+  const flightNumber = String(segment?.flight_number || '').trim().toUpperCase();
+  const flightCodeMatch = flightNumber.match(/^([A-Z0-9]{2})\s*\d+/);
+  if (flightCodeMatch?.[1]) return flightCodeMatch[1];
+
+  const airlineName = String(segment?.airline || '').trim().toLowerCase();
+  return AIRLINE_IATA_BY_NAME[airlineName] || '';
+}
+
+function buildAirlineLogoUrl(segment: any): string {
+  if (segment?.airline_logo) return segment.airline_logo;
+  const iataCode = extractAirlineIata(segment);
+  return iataCode ? `https://images.kiwi.com/airlines/64/${iataCode}.png` : '';
+}
+
+function normalizeSerpApiSegment(segment: any, index: number, cabinClass: string) {
+  const departureAirport = segment?.departure_airport || {};
+  const arrivalAirport = segment?.arrival_airport || {};
+  const extensions = Array.isArray(segment?.extensions) ? segment.extensions : [];
+  const carbonKg = segment?.carbon_emissions?.this_flight
+    ? `${Math.round(Number(segment.carbon_emissions.this_flight) / 1000)} kg`
+    : '';
+  const airlineIata = extractAirlineIata(segment);
+  const airlineLogoUrl = buildAirlineLogoUrl(segment);
+  return {
+    id: `${departureAirport.id || 'dep'}-${arrivalAirport.id || 'arr'}-${index}`,
+    departing_at: toIsoTimeString(departureAirport.time || ''),
+    arriving_at: toIsoTimeString(arrivalAirport.time || ''),
+    duration: minutesToIsoDuration(Number(segment?.duration || 0)),
+    origin: buildAirportRef(departureAirport),
+    destination: buildAirportRef(arrivalAirport),
+    origin_name: departureAirport.name || departureAirport.id || '',
+    destination_name: arrivalAirport.name || arrivalAirport.id || '',
+    origin_terminal: '-',
+    destination_terminal: '-',
+    aircraft_name: segment?.airplane || 'Aircraft',
+    marketing_carrier: {
+      name: segment?.airline || 'Airline',
+      iata_code: airlineIata,
+      logo_symbol_url: airlineLogoUrl,
+      logo_url: airlineLogoUrl,
+    },
+    marketing_carrier_flight_number: segment?.flight_number || '',
+    cabin_class: (segment?.travel_class || cabinClass || 'economy').toLowerCase(),
+    legroom: segment?.legroom || '',
+    amenities: extensions,
+    airfare_details: extensions,
+    carbon_emissions: carbonKg,
+    notes: [
+      segment?.overnight ? 'overnight' : '',
+      segment?.often_delayed_by_over_30_min ? 'often delayed over 30 min' : '',
+    ].filter(Boolean),
+  };
+}
+
+function normalizeSerpApiLayover(layover: any) {
+  const durationMinutes = Number(layover?.duration || 0);
+  return {
+    airportName: layover?.name || 'Layover airport',
+    airportCode: layover?.id || '',
+    duration: formatFlightDuration(durationMinutes),
+    durationMinutes,
+    overnight: !!layover?.overnight,
+  };
+}
+
+function normalizeSerpApiItinerary(itinerary: any, returnDate: string, cabinClass: string, passengers: any[]) {
+  const rawSegments = Array.isArray(itinerary?.flights) ? itinerary.flights : [];
+  const rawLayovers = Array.isArray(itinerary?.layovers) ? itinerary.layovers : [];
+  const normalizedSegments = rawSegments.map((segment: any, index: number) => normalizeSerpApiSegment(segment, index, cabinClass));
+  const firstRawSegment = rawSegments[0] || {};
+  const ownerIata = extractAirlineIata(firstRawSegment);
+  const ownerLogoUrl = buildAirlineLogoUrl(firstRawSegment);
+
+  const returnIndex = returnDate
+    ? normalizedSegments.findIndex((segment: any) => timeToDateKey(segment.departing_at) >= returnDate)
+    : -1;
+
+  const sliceGroups = returnIndex > 0
+    ? [normalizedSegments.slice(0, returnIndex), normalizedSegments.slice(returnIndex)]
+    : [normalizedSegments];
+
+  const slices = sliceGroups.filter(group => group.length > 0).map((segments, sliceIndex) => {
+    const firstSegment = segments[0];
+    const lastSegment = segments[segments.length - 1];
+    const groupStartIndex = normalizedSegments.indexOf(firstSegment);
+    const layovers = segments
+      .slice(0, -1)
+      .map((_: any, segmentIndex: number) => rawLayovers[groupStartIndex + segmentIndex])
+      .filter(Boolean)
+      .map(normalizeSerpApiLayover);
+    const totalDurationMinutes = firstSegment?.departing_at && lastSegment?.arriving_at
+      ? Math.max(0, Math.round((new Date(lastSegment.arriving_at).getTime() - new Date(firstSegment.departing_at).getTime()) / 60000))
+      : 0;
+
+    return {
+      id: `${itinerary?.departure_token || itinerary?.booking_token || itinerary?.price || 'serp'}-${sliceIndex}`,
+      duration: minutesToIsoDuration(totalDurationMinutes),
+      segments,
+      layovers,
+    };
+  });
+
+  const totalIncludedBaggage = 0;
+
+  const hasPrice = typeof itinerary?.price === 'number' && Number.isFinite(itinerary.price) && itinerary.price > 0;
+
+  return {
+    id: itinerary?.booking_token || itinerary?.departure_token || `${itinerary?.price || 'serp'}-${Math.random().toString(36).slice(2, 8)}`,
+    slices,
+    passengers: passengers.length > 0 ? passengers : [{ type: 'adult' }],
+    total_amount: hasPrice ? String(itinerary.price) : '',
+    display_price: hasPrice ? Number(itinerary.price) : null,
+    baggage_metadata: { carry_on: 1, checked: totalIncludedBaggage },
+    estimated_baggage_fee: 0,
+    total_included_baggage: totalIncludedBaggage,
+    owner: {
+      name: itinerary?.flights?.[0]?.airline || 'Google Flights',
+      iata_code: ownerIata,
+      logo_symbol_url: ownerLogoUrl,
+      logo_url: ownerLogoUrl,
+    },
+    currency: 'USD',
+    trip_type: itinerary?.type || (slices.length > 1 ? 'Round trip' : 'One way'),
+    booking_token: itinerary?.booking_token,
+    departure_token: itinerary?.departure_token,
+    airline_logo: itinerary?.airline_logo || ownerLogoUrl,
+    price_insights: itinerary?.price_insights,
+  };
+}
+
+function logSerpApiAirports(airports: any[]) {
+  if (!Array.isArray(airports) || airports.length === 0) {
+    console.log('✈️ SerpApi airports: none returned');
+    return;
+  }
+
+  console.log(`✈️ SerpApi airports: ${airports.length} route group(s)`);
+  airports.forEach((group: any, groupIndex: number) => {
+    const departureAirports = Array.isArray(group?.departure) ? group.departure : [];
+    const arrivalAirports = Array.isArray(group?.arrival) ? group.arrival : [];
+
+    console.log(`  Route group ${groupIndex + 1}: ${departureAirports.length} departure option(s), ${arrivalAirports.length} arrival option(s)`);
+
+    departureAirports.forEach((airport: any, airportIndex: number) => {
+      console.log(
+        `    DEP ${airportIndex + 1}: ${airport?.airport?.id || 'N/A'} | ${airport?.airport?.name || 'N/A'} | ${airport?.city || 'N/A'}, ${airport?.country || 'N/A'} (${airport?.country_code || 'N/A'})`
+      );
+    });
+
+    arrivalAirports.forEach((airport: any, airportIndex: number) => {
+      console.log(
+        `    ARR ${airportIndex + 1}: ${airport?.airport?.id || 'N/A'} | ${airport?.airport?.name || 'N/A'} | ${airport?.city || 'N/A'}, ${airport?.country || 'N/A'} (${airport?.country_code || 'N/A'})`
+      );
+    });
+  });
+}
+
+function extractArrivalAirportMetadata(airports: any[], destinationIata: string) {
+  const routeGroups = Array.isArray(airports) ? airports : [];
+  for (const group of routeGroups) {
+    const arrivals = Array.isArray(group?.arrival) ? group.arrival : [];
+    const exact = arrivals.find((arrival: any) => arrival?.airport?.id === destinationIata);
+    const arrival = exact || arrivals[0];
+    if (arrival?.airport) {
       return {
-        hotel_key: best.hotel_key,
-        name: best.name || hotelName,
-        image: best.image || '',
-        url: best.url || '',
-        street_address: best.street_address || '',
+        iata: arrival.airport.id || destinationIata,
+        airportName: arrival.airport.name || `${destinationIata} Airport`,
+        city: arrival.city || destinationIata,
+        country: arrival.country || '',
+        countryCode: arrival.country_code || '',
       };
     }
-  } catch (err: any) {
-    console.warn(`  ⚠️ Xotelo search error for "${hotelName}":`, err.message);
   }
   return null;
 }
 
-/**
- * Fetch real-time hotel rates from Xotelo (free endpoint, no key needed).
- * Returns the cheapest per-night rate in USD, or null if unavailable.
- */
-async function xoteloGetRates(
-  hotelKey: string,
-  checkIn: string,
-  checkOut: string,
-  nights: number
-): Promise<{ perNight: number; totalRate: number; provider: string } | null> {
-  try {
-    const res = await fetch(
-      `https://data.xotelo.com/api/rates?hotel_key=${encodeURIComponent(hotelKey)}&chk_in=${checkIn}&chk_out=${checkOut}&currency=USD`
-    );
-    if (!res.ok) {
-      console.warn(`  ⚠️ Xotelo rates HTTP ${res.status} for ${hotelKey}`);
-      return null;
-    }
-    const data = await res.json();
-    const rates = data?.result?.rates;
-    if (Array.isArray(rates) && rates.length > 0) {
-      // Find the cheapest total rate
-      const cheapest = rates.reduce((min: any, r: any) => (r.rate < min.rate ? r : min), rates[0]);
-      const totalWithTax = (cheapest.rate || 0) + (cheapest.tax || 0);
-      const perNight = nights > 0 ? Math.round(totalWithTax / nights) : totalWithTax;
-      return {
-        perNight,
-        totalRate: totalWithTax,
-        provider: cheapest.name || cheapest.code || 'Unknown',
-      };
-    }
-  } catch (err: any) {
-    console.warn(`  ⚠️ Xotelo rates error for ${hotelKey}:`, err.message);
+function logSerpApiItineraries(label: string, itineraries: any[], returnDate: string) {
+  const safeItineraries = Array.isArray(itineraries) ? itineraries : [];
+  console.log(`✈️ SerpApi ${label}: ${safeItineraries.length} itinerary result(s)`);
+
+  safeItineraries.forEach((itinerary: any, itineraryIndex: number) => {
+    const segmentGroups = splitSerpApiSegmentsByTrip(itinerary, returnDate);
+    const layovers = Array.isArray(itinerary?.layovers) ? itinerary.layovers : [];
+    const totalDurationMinutes = Number(itinerary?.total_duration || 0);
+
+    console.log(`  ${itineraryIndex + 1}. ${itinerary?.airline || itinerary?.flights?.[0]?.airline || 'Airline'} | ${itinerary?.type || 'N/A'} | $${itinerary?.price ?? 'N/A'} | total ${formatFlightDuration(totalDurationMinutes)}`);
+
+    segmentGroups.forEach((segments, groupIndex) => {
+      const isReturn = segmentGroups.length > 1 && groupIndex === 1;
+      const groupLabel = segmentGroups.length > 1 ? (isReturn ? 'Return leg' : 'Outbound leg') : 'Trip leg';
+      console.log(`     ${groupLabel}:`);
+
+      segments.forEach((segment: any, segmentIndex: number) => {
+        logSerpApiSegment(segment, segmentIndex);
+
+        const nextSegment = segments[segmentIndex + 1];
+        if (nextSegment) {
+          const layover = layovers[segmentIndex];
+          if (layover) {
+            logSerpApiLayover(layover, segmentIndex);
+          } else {
+            const arrivalTime = new Date(toIsoTimeString(segment?.arrival_airport?.time || '')).getTime();
+            const nextDepartureTime = new Date(toIsoTimeString(nextSegment?.departure_airport?.time || '')).getTime();
+            if (!Number.isNaN(arrivalTime) && !Number.isNaN(nextDepartureTime) && nextDepartureTime >= arrivalTime) {
+              const gapMinutes = Math.round((nextDepartureTime - arrivalTime) / 60000);
+              console.log(
+                `        Layover ${segmentIndex + 1}: ${segment?.arrival_airport?.name || 'Connecting airport'} for ${formatFlightDuration(gapMinutes)}`
+              );
+            }
+          }
+        }
+      });
+    });
+  });
+}
+
+function formatHotelPrice(priceValue: any): string {
+  if (typeof priceValue === 'number') return `$${priceValue}`;
+  if (typeof priceValue === 'string' && priceValue.trim()) return priceValue;
+  return 'N/A';
+}
+
+function formatStarLabel(stars: any): string {
+  if (typeof stars === 'number') return `${stars}-star hotel`;
+  if (typeof stars === 'string' && stars.trim()) return stars;
+  return 'N/A';
+}
+
+function normalizeHotelTransportation(transportations: any[]) {
+  return Array.isArray(transportations) ? transportations : [];
+}
+
+function logHotelProperty(property: any, index: number) {
+  const images = Array.isArray(property?.images) ? property.images : [];
+  const nearbyPlaces = Array.isArray(property?.nearby_places) ? property.nearby_places : [];
+  const amenities = Array.isArray(property?.amenities) ? property.amenities : [];
+  const ratings = Array.isArray(property?.ratings) ? property.ratings : [];
+  const reviewsBreakdown = Array.isArray(property?.reviews_breakdown) ? property.reviews_breakdown : [];
+  const essentialInfo = Array.isArray(property?.essential_info) ? property.essential_info : [];
+  const excludedAmenities = Array.isArray(property?.excluded_amenities) ? property.excluded_amenities : [];
+  const dealText = property?.deal_description || property?.deal || '';
+  const ratePerNight = property?.rate_per_night?.extracted_lowest ?? property?.rate_per_night?.lowest ?? property?.extracted_price ?? property?.price;
+  const totalRate = property?.total_rate?.extracted_lowest ?? property?.total_rate?.lowest ?? '';
+  const propertyType = property?.type || 'hotel';
+  const hotelClass = property?.hotel_class || formatStarLabel(property?.extracted_hotel_class);
+  const overallRating = property?.overall_rating ?? 'N/A';
+  const reviewCount = property?.reviews ?? 'N/A';
+  const locationRating = property?.location_rating ?? 'N/A';
+
+  console.log(`  ${index + 1}. ${property?.name || 'Unnamed hotel'}`);
+  console.log(`     Type: ${propertyType} | Class: ${hotelClass} | Rating: ${overallRating} | Reviews: ${reviewCount} | Location rating: ${locationRating}`);
+  console.log(`     Price: ${formatHotelPrice(ratePerNight)}/night | Total stay: ${formatHotelPrice(totalRate)}`);
+
+  if (property?.description) {
+    console.log(`     Description: ${property.description}`);
   }
-  return null;
+
+  if (property?.address) {
+    console.log(`     Address: ${property.address}`);
+  }
+
+  if (property?.link) {
+    console.log(`     Website: ${property.link}`);
+  }
+
+  if (property?.serpapi_property_details_link) {
+    console.log(`     SerpApi details: ${property.serpapi_property_details_link}`);
+  }
+
+  if (property?.property_token) {
+    console.log(`     Property token: ${property.property_token}`);
+  }
+
+  if (property?.check_in_time || property?.check_out_time) {
+    console.log(`     Check-in/out: ${property?.check_in_time || 'N/A'} / ${property?.check_out_time || 'N/A'}`);
+  }
+
+  if (property?.gps_coordinates?.latitude && property?.gps_coordinates?.longitude) {
+    console.log(`     GPS: ${property.gps_coordinates.latitude}, ${property.gps_coordinates.longitude}`);
+  }
+
+  if (dealText) {
+    console.log(`     Deal: ${dealText}`);
+  }
+
+  if (images.length > 0) {
+    console.log(`     Photos: ${images.length} image(s)`);
+    images.slice(0, 5).forEach((image: any, imageIndex: number) => {
+      console.log(`       Photo ${imageIndex + 1}: ${image?.thumbnail || image?.original_image || 'N/A'}`);
+    });
+  }
+
+  if (amenities.length > 0) {
+    console.log(`     Amenities: ${amenities.join(', ')}`);
+  }
+
+  if (excludedAmenities.length > 0) {
+    console.log(`     Excluded amenities: ${excludedAmenities.join(', ')}`);
+  }
+
+  if (essentialInfo.length > 0) {
+    console.log(`     Essential info: ${essentialInfo.join(' | ')}`);
+  }
+
+  if (nearbyPlaces.length > 0) {
+    console.log('     Nearby places:');
+    nearbyPlaces.slice(0, 5).forEach((place: any, placeIndex: number) => {
+      const transportations = normalizeHotelTransportation(place?.transportations);
+      console.log(`       ${placeIndex + 1}. ${place?.name || 'Nearby place'}`);
+      transportations.forEach((transportation: any) => {
+        console.log(`          ${transportation?.type || 'Transport'}: ${transportation?.duration || 'N/A'}`);
+      });
+    });
+  }
+
+  if (ratings.length > 0) {
+    console.log('     Rating breakdown:');
+    ratings.forEach((rating: any) => {
+      console.log(`       ${rating?.stars || '?'} stars: ${rating?.count ?? 'N/A'}`);
+    });
+  }
+
+  if (reviewsBreakdown.length > 0) {
+    console.log('     Review breakdown:');
+    reviewsBreakdown.slice(0, 8).forEach((breakdown: any) => {
+      console.log(
+        `       ${breakdown?.name || 'Category'} | positive ${breakdown?.positive ?? 'N/A'} | negative ${breakdown?.negative ?? 'N/A'} | neutral ${breakdown?.neutral ?? 'N/A'}`
+      );
+    });
+  }
+}
+
+function mapSerpApiHotelToResult(property: any, fallbackIndex: number, destinationCity: string) {
+  const extractedPrice = property?.rate_per_night?.extracted_lowest ?? property?.extracted_price ?? property?.price ?? 0;
+  const totalRate = property?.total_rate?.extracted_lowest ?? extractedPrice;
+  const starRating = property?.extracted_hotel_class || property?.hotel_class || 3;
+  const hotelClass = formatStarLabel(property?.hotel_class || (typeof starRating === 'number' ? `${starRating}-star hotel` : ''));
+  const amenities = Array.isArray(property?.amenities) ? property.amenities : [];
+  const nearbyPlaces = Array.isArray(property?.nearby_places) ? property.nearby_places : [];
+  const images = Array.isArray(property?.images) ? property.images : [];
+
+  return {
+    id: property?.property_token || property?.serpapi_property_details_link || `serp-h-${fallbackIndex}`,
+    type: property?.type || 'hotel',
+    name: property?.name || `Hotel ${fallbackIndex + 1}`,
+    price: Number(extractedPrice) || 0,
+    totalPrice: Number(totalRate) || Number(extractedPrice) || 0,
+    rating: Number(starRating) || 3,
+    overallRating: property?.overall_rating ?? null,
+    reviews: property?.reviews ?? null,
+    description: property?.description || `Real-time hotel listing in ${destinationCity}.`,
+    location: property?.address || destinationCity,
+    amenities,
+    nearbyPlaces,
+    images,
+    lat: property?.gps_coordinates?.latitude || null,
+    lon: property?.gps_coordinates?.longitude || null,
+    source: 'serpapi',
+    verified: true,
+    hotelClass,
+    deal: property?.deal_description || property?.deal || '',
+    address: property?.address || '',
+    website: property?.link || '',
+    propertyToken: property?.property_token || '',
+    serpapiPropertyDetailsLink: property?.serpapi_property_details_link || '',
+    checkInTime: property?.check_in_time || '',
+    checkOutTime: property?.check_out_time || '',
+    locationRating: property?.location_rating ?? null,
+    reviewBreakdown: Array.isArray(property?.reviews_breakdown) ? property.reviews_breakdown : [],
+    excludedAmenities: Array.isArray(property?.excluded_amenities) ? property.excluded_amenities : [],
+    essentialInfo: Array.isArray(property?.essential_info) ? property.essential_info : [],
+    gpsCoordinates: property?.gps_coordinates || null,
+    raw: property,
+  };
 }
 
 // ──────────────────────────────────────────────────────────────
 // Main API Handler
 // ──────────────────────────────────────────────────────────────
 
+function isHotelInDestination(
+  property: any,
+  destinationCity: string,
+  destinationCountry: string,
+  destinationCode: string,
+  destLat: string,
+  destLon: string
+) {
+  const lat = property?.gps_coordinates?.latitude;
+  const lon = property?.gps_coordinates?.longitude;
+
+  if (lat !== undefined && lon !== undefined && destLat && destLon) {
+    const distanceKm = haversineDistance(destLat, destLon, String(lat), String(lon));
+    const MAX_HOTEL_DISTANCE_KM = 80;
+    if (distanceKm <= MAX_HOTEL_DISTANCE_KM) return true;
+    console.log(
+      `  🏨 Rejected hotel outside destination radius: "${property?.name || 'Unnamed'}" (${distanceKm.toFixed(0)} km from ${destinationCode})`
+    );
+    return false;
+  }
+
+  const haystack = [
+    property?.name,
+    property?.address,
+    property?.description,
+    property?.location,
+  ].filter(Boolean).join(' ').toLowerCase();
+
+  const city = destinationCity.toLowerCase();
+  const country = destinationCountry.toLowerCase();
+  const code = destinationCode.toLowerCase();
+  const keep =
+    (city.length > 2 && haystack.includes(city)) ||
+    (country.length > 2 && haystack.includes(country)) ||
+    (code.length > 2 && haystack.includes(code));
+
+  if (!keep) {
+    console.log(`  🏨 Rejected hotel without destination match or GPS: "${property?.name || 'Unnamed'}"`);
+  }
+  return keep;
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
     const {
       origin, destination, tripType, departureDate, returnDate,
-      adults, children, cabinClass, includeBaggage, baggageCount, directOnly,
+      adults, children, cabinClass, baggageCount, directOnly,
       budgetMode, totalBudget, flightBudget, hotelBudget, transportBudget, dailyExpenseBudget,
-      hotelStars, hotelRooms, hotelBeds, hotelAmenities, nearAirport, nights,
+      hotelStars, hotelRooms, hotelBeds, hotelAmenities, nights,
       includeFlight = true, includeHotel = true, includeTransport, transportTypes, transportPriority,
       vibes,
     } = body;
@@ -343,25 +805,23 @@ export async function POST(request: Request) {
     console.log('═══════════════════════════════════════════════════\n');
 
     // ────────────────────────────────────────────────────────
-    // STEP 1: Resolve IATA code to real city/airport name
+    // STEP 1: Resolve destination labels without calling a non-Google flight API
     // ────────────────────────────────────────────────────────
-    const destInfo = await resolveIATAToCity(destination);
-    const destinationCity = destInfo?.cityName || destination;
-    const destinationCountry = destInfo?.countryName || '';
-    const airportName = destInfo?.airportName || `${destination} Airport`;
-    const countryCode = destInfo?.countryCode || '';
+    let destinationCity = destination;
+    let destinationCountry = '';
+    let airportName = `${destination} Airport`;
+    let countryCode = '';
 
     // ────────────────────────────────────────────────────────
     // STEP 2: Geocode the EXACT destination (airport or city)
-    //         Bug 6 fix: geocode the full airport name from Duffel
     // ────────────────────────────────────────────────────────
-    // Use the FULL airport name (e.g. "Milan Malpensa Airport") for precise geocoding
-    const airportGeo = await geocodeCity(airportName, destinationCountry);
-    const cityGeo = await geocodeCity(destinationCity, destinationCountry);
+    // Use an airport label first because the user selected an airport code.
+    let airportGeo = await geocodeCity(airportName, destinationCountry);
+    let cityGeo = await geocodeCity(destinationCity, destinationCountry);
     // Prefer airport coordinates since the user selected an airport code
-    const geo = airportGeo || cityGeo;
-    const geoLat = geo?.lat || '';
-    const geoLon = geo?.lon || '';
+    let geo = airportGeo || cityGeo;
+    let geoLat = geo?.lat || '';
+    let geoLon = geo?.lon || '';
     // Label used in distance strings — shows the IATA code for clarity
     const destinationLabel = destination; // e.g. "MXP", "CDG", "JFK"
 
@@ -374,67 +834,80 @@ export async function POST(request: Request) {
     console.log('═══════════════════════════════════════════════════════\n');
 
     // ────────────────────────────────────────────────────────
-    // STEP 3: Search flights via Duffel
+    // STEP 3: Search flights via SerpApi Google Flights
     // ────────────────────────────────────────────────────────
     let flights: any[] = [];
     if (includeFlight) {
-      const slices: any[] = [{ origin, destination, departure_date: departureDate }];
-      if (tripType === 'round_trip' && returnDate) {
-        slices.push({ origin: destination, destination: origin, departure_date: returnDate });
-      }
-
       const passengers = [
         ...Array(adults).fill(null).map(() => ({ type: 'adult' as const })),
         ...Array(children).fill(null).map(() => ({ type: 'child' as const })),
       ];
 
       try {
-        const offerRequest = await duffel.offerRequests.create({
-          slices: slices as any,
-          passengers,
-          ...(cabinClass && cabinClass !== 'economy' && { cabin_class: cabinClass }),
+        const serpApiResults = await searchGoogleFlights({
+          origin,
+          destination,
+          departureDate,
+          returnDate,
+          tripType,
+          adults,
+          children,
+          cabinClass,
+          directOnly,
+          baggageCount,
         });
 
-        const offers = await duffel.offers.list({
-          offer_request_id: offerRequest.data.id,
-          sort: 'total_amount',
-        });
+        console.log('✈️ SerpApi raw response keys:', Object.keys(serpApiResults || {}));
+        logSerpApiAirports(serpApiResults?.airports || []);
 
-        flights = (offers.data || []).slice(0, 10).map((offer: any) => {
-          const detailedSlices = offer.slices.map((slice: any) => ({
-            ...slice,
-            segments: slice.segments.map((seg: any) => ({
-              ...seg,
-              origin_name: seg.origin?.name || seg.origin?.city_name || seg.origin?.iata_code,
-              destination_name: seg.destination?.name || seg.destination?.city_name || seg.destination?.iata_code,
-              origin_terminal: seg.origin_terminal || '-',
-              destination_terminal: seg.destination_terminal || '-',
-              aircraft_name: seg.aircraft?.name || 'Aircraft',
-              marketing_carrier_name: seg.marketing_carrier?.name || 'Airline',
-              marketing_carrier_flight_number: seg.marketing_carrier_flight_number || '',
-              cabin_class: seg.passengers?.[0]?.cabin_class_marketing_name || seg.cabin_class || cabinClass || 'economy',
-            })),
-          }));
+        const arrivalMeta = extractArrivalAirportMetadata(serpApiResults?.airports || [], destination);
+        if (arrivalMeta) {
+          const changed =
+            arrivalMeta.city !== destinationCity ||
+            arrivalMeta.country !== destinationCountry ||
+            arrivalMeta.airportName !== airportName ||
+            arrivalMeta.countryCode !== countryCode;
 
-          const totalIncludedBaggage = offer.passengers.reduce((acc: number, p: any) => {
-            return acc + (p.allowed_baggage?.filter((b: any) => b.type === 'checked').length || 0);
-          }, 0);
+          destinationCity = arrivalMeta.city || destinationCity;
+          destinationCountry = arrivalMeta.country || destinationCountry;
+          airportName = arrivalMeta.airportName || airportName;
+          countryCode = arrivalMeta.countryCode || countryCode;
 
-          return {
-            ...offer,
-            slices: detailedSlices,
-            display_price: parseFloat(offer.total_amount),
-            baggage_metadata: { carry_on: 1, checked: totalIncludedBaggage },
-            estimated_baggage_fee: 0,
-            total_included_baggage: totalIncludedBaggage,
-          };
-        });
+          if (changed) {
+            airportGeo = await geocodeCity(airportName, destinationCountry);
+            cityGeo = await geocodeCity(destinationCity, destinationCountry);
+            geo = airportGeo || cityGeo;
+            geoLat = geo?.lat || '';
+            geoLon = geo?.lon || '';
+            console.log('📍 Destination refined from flight metadata:', destinationCity, '|', airportName, '|', destinationCountry, '|', countryCode);
+            console.log('🌍 Refined destination coordinates:', geoLat, geoLon, '| Source:', airportGeo ? 'AIRPORT geocode' : 'CITY geocode');
+          }
+        }
+
+        const itineraries = [
+          ...(Array.isArray(serpApiResults.best_flights) ? serpApiResults.best_flights : []),
+          ...(Array.isArray(serpApiResults.other_flights) ? serpApiResults.other_flights : []),
+        ];
+
+        logSerpApiItineraries('best_flights + other_flights', itineraries, returnDate || '');
+
+        flights = itineraries
+          .map((itinerary: any) => normalizeSerpApiItinerary(itinerary, returnDate || '', cabinClass, passengers))
+          .filter((offer: any) => offer.slices.length > 0);
 
         if (directOnly) {
           flights = flights.filter(f => f.slices.every((s: any) => s.segments.length === 1));
         }
+
+        console.log('✈️ Normalized SerpApi flights returned to handler:', flights.length);
+        flights.forEach((flight: any, flightIndex: number) => {
+          const segmentCount = flight.slices.reduce((total: number, slice: any) => total + (Array.isArray(slice.segments) ? slice.segments.length : 0), 0);
+          console.log(
+            `  ${flightIndex + 1}. ${flight.owner?.name || 'Unknown airline'} | $${flight.total_amount} | ${flight.trip_type || 'unknown trip'} | ${segmentCount} segment(s) | ${flight.slices.length} slice(s)`
+          );
+        });
       } catch (flightErr: any) {
-        console.error('Flight search error:', flightErr.message);
+        console.error('SerpApi flight search error:', flightErr.message);
       }
     } else {
       console.log('✈️ Flights SKIPPED — user toggled off includeFlight');
@@ -447,151 +920,127 @@ export async function POST(request: Request) {
       const prices = flights.map((f: any) => parseFloat(f.total_amount));
       console.log('✈️ Price range: $' + Math.min(...prices).toFixed(0) + ' to $' + Math.max(...prices).toFixed(0));
       console.log('✈️ First flight:', flights[0]?.owner?.name || 'unknown airline', '| $' + flights[0]?.total_amount);
+      console.log('✈️ All normalized flights logged above from SerpApi raw response');
     } else {
       console.log('✈️ No flights found');
     }
     console.log('════════════════════════════════════════════\n');
 
     // ────────────────────────────────────────────────────────
-    // STEP 4: Fetch REAL nearby hotels from LocationIQ
-    //         Anchored to CITY CENTER coordinates
+    // STEP 4: Fetch REAL hotels from SerpApi Google Hotels
+    //         Anchored to the destination city and travel dates
     // ────────────────────────────────────────────────────────
     let hotels: any[] = [];
     if (includeHotel) {
-      if (geoLat && geoLon) {
-        // Search within 20km of city center for hotels
-        const nearbyHotels = await findNearby(geoLat, geoLon, 'hotel', 20000, 20);
+      try {
+        const hotelQuery = [destinationCity, destinationCountry, 'hotels'].filter(Boolean).join(' ');
+        const checkInDate = departureDate;
+        const checkOutDate = (() => {
+          const outDate = new Date(departureDate);
+          const hotelNights = typeof nights === 'number' && nights > 0 ? nights : 0;
+          outDate.setDate(outDate.getDate() + hotelNights);
+          return outDate.toISOString().split('T')[0];
+        })();
 
-        const estimateStars = (place: any): number => {
-          const name = (place.display_name || '').toLowerCase();
-          // 5★ — ultra-luxury brands
-          if (name.includes('ritz') || name.includes('palace') || name.includes('four seasons') || name.includes('mandarin') || name.includes('bulgari') || name.includes('aman') || name.includes('peninsula') || name.includes('waldorf') || name.includes('rosewood') || name.includes('bvlgari')) return 5;
-          // 4★ — major upscale brands
-          if (name.includes('hilton') || name.includes('grand') || name.includes('marriott') || name.includes('sheraton') || name.includes('hyatt') || name.includes('westin') || name.includes('radisson') || name.includes('novotel') || name.includes('sofitel') || name.includes('crowne plaza') || name.includes('courtyard') || name.includes('pullman') || name.includes('intercontinental') || name.includes('renaissance') || name.includes('doubletree') || name.includes('wyndham') || name.includes('delta hotels') || name.includes('le meridien') || name.includes('autograph')) return 4;
-          // 3★ — midscale brands
-          if (name.includes('ibis') || name.includes('holiday inn') || name.includes('best western') || name.includes('ramada') || name.includes('quality inn') || name.includes('comfort inn') || name.includes('hampton')) return 3;
-          // 2★ — budget/economy
-          if (name.includes('inn') || name.includes('motel') || name.includes('budget') || name.includes('express') || name.includes('lodge') || name.includes('guesthouse') || name.includes('hostel')) return 2;
-          return 3;
-        };
+        console.log(`\n🏨 SERPAPI HOTEL SEARCH — query="${hotelQuery}" | ${checkInDate} → ${checkOutDate} | travelers: ${adults} adult(s), ${children} child(ren)`);
 
-        // Hardcoded fallback prices per star tier (used if Gemini doesn't return pricing)
-        const FALLBACK_PRICES: Record<number, number> = { 2: 100, 3: 160, 4: 280, 5: 450 };
-        const estimatePrice = (stars: number): number => FALLBACK_PRICES[stars] || 160;
+        const serpApiHotelResults = await searchGoogleHotels({
+          query: hotelQuery,
+          checkInDate,
+          checkOutDate,
+          adults,
+          children,
+          countryCode: countryCode || 'us',
+        });
 
-        const generateAmenities = (stars: number): string[] => {
-          const base = ['wifi'];
-          if (stars >= 3) base.push('breakfast', 'coffee');
-          if (stars >= 4) base.push('gym', 'pool', 'shuttle');
-          if (stars >= 5) base.push('spa', 'toiletries');
-          return base;
-        };
+        console.log('🏨 SerpApi hotel raw response keys:', Object.keys(serpApiHotelResults || {}));
+        console.log('🏨 SerpApi hotel status:', serpApiHotelResults?.search_metadata?.status || 'N/A');
+        console.log('🏨 SerpApi total results:', serpApiHotelResults?.search_information?.total_results ?? 'N/A');
+        if (serpApiHotelResults?.search_information?.hotels_results_state) {
+          console.log('🏨 Results state:', serpApiHotelResults.search_information.hotels_results_state);
+        }
 
-        // Map and validate each hotel — ensure it's actually in the destination city
-        const hotelCandidates = nearbyHotels
-          .filter((h: any) => h.display_name)
-          .filter((h: any) => /[a-zA-Z]/.test((h.display_name || '').split(',')[0]))
-          .map((h: any, idx: number) => {
-            const stars = estimateStars(h);
-            const amenities = generateAmenities(stars);
-            const distanceKm = h.distance ? (parseFloat(h.distance) / 1000).toFixed(1) : '';
-            const fullName = h.display_name || `Hotel ${idx + 1}`;
-            const cleanName = fullName.split(',')[0].trim();
-            const locationParts = fullName.split(',').slice(1, 3).join(',').trim();
+        const hotelProperties = Array.isArray(serpApiHotelResults?.properties) ? serpApiHotelResults.properties : [];
+        const hotelAds = Array.isArray(serpApiHotelResults?.ads) ? serpApiHotelResults.ads : [];
+        const allHotelResults = [...hotelProperties, ...hotelAds].slice(0, 20);
 
-            return {
-              id: `liq-h-${idx}`,
-              type: 'hotel',
-              name: cleanName,
-              price: estimatePrice(stars),
-              rating: stars,
-              description: `Located ${distanceKm ? distanceKm + ' km from ' + destinationCity + ' center' : 'in ' + destinationCity}. ${cleanName} offers quality accommodation in ${destinationCity}.`,
-              location: locationParts || `${destinationCity} City Area`,
-              amenities,
-              lat: h.lat,
-              lon: h.lon,
-              distanceKm: distanceKm ? parseFloat(distanceKm) : 0,
-              source: 'locationiq',
-              verified: true,
-            };
-          });
+        console.log(`🏨 SerpApi properties/ads returned: ${allHotelResults.length} result(s)`);
 
-        // Filter by star preference and sort by distance (closest first)
-        hotels = hotelCandidates
-          .filter(h => h.rating >= hotelStars)
-          .sort((a, b) => a.distanceKm - b.distanceKm)
-          .slice(0, 6);
+        hotels = allHotelResults
+          .filter((property: any) => property?.name)
+          .filter((property: any) => isHotelInDestination(property, destinationCity, destinationCountry, destination, geoLat, geoLon))
+          .filter((property: any) => {
+            const classValue = property?.extracted_hotel_class || property?.hotel_class;
+            if (!hotelStars) return true;
+            if (typeof classValue === 'number') return classValue >= hotelStars;
+            if (typeof classValue === 'string') {
+              const match = classValue.match(/(\d)/);
+              return match ? Number(match[1]) >= hotelStars : true;
+            }
+            return true;
+          })
+          .map((property: any, idx: number) => mapSerpApiHotelToResult(property, idx, destinationCity))
+          .slice(0, 10);
 
-        // Sort by amenity match if user specified amenities
         if (hotelAmenities && hotelAmenities.length > 0) {
           hotels.sort((a: any, b: any) => {
-            const aMatch = hotelAmenities.filter((am: string) => a.amenities.includes(am)).length;
-            const bMatch = hotelAmenities.filter((am: string) => b.amenities.includes(am)).length;
+            const aMatch = hotelAmenities.filter((am: string) => a.amenities.some((item: string) => item.toLowerCase().includes(am.toLowerCase()))).length;
+            const bMatch = hotelAmenities.filter((am: string) => b.amenities.some((item: string) => item.toLowerCase().includes(am.toLowerCase()))).length;
             return bMatch - aMatch;
           });
         }
 
-        // ── STEP 4b: Fetch REAL prices from Xotelo (Booking.com/Agoda/Expedia) ──
-        // For each hotel found by LocationIQ, search Xotelo to find its TripAdvisor
-        // hotel_key, then fetch real-time rates from OTAs.
-        if (RAPIDAPI_KEY && departureDate && nights > 0) {
-          // Compute check-out date from departure + nights
-          const chkIn = departureDate;
-          const chkOutDate = new Date(departureDate);
-          chkOutDate.setDate(chkOutDate.getDate() + nights);
-          const chkOut = chkOutDate.toISOString().split('T')[0];
-
-          console.log(`\n🏷️ XOTELO PRICING — searching ${hotels.length} hotels (${chkIn} → ${chkOut}, ${nights} nights)`);
-
-          // Process hotels sequentially to avoid rate limiting
-          for (const hotel of hotels) {
-            try {
-              // Step 1: Search Xotelo to find this hotel's TripAdvisor key
-              const xoteloMatch = await xoteloSearchHotel(hotel.name, destinationCity);
-              if (!xoteloMatch) {
-                console.log(`  ❌ Xotelo: no match for "${hotel.name}" — keeping fallback price $${hotel.price}/night`);
-                hotel.priceSource = 'estimate';
-                continue;
-              }
-              console.log(`  🔍 Xotelo: "${hotel.name}" → matched "${xoteloMatch.name}" (key: ${xoteloMatch.hotel_key})`);
-
-              // Enrich hotel with Xotelo metadata (image, TripAdvisor URL)
-              if (xoteloMatch.image) hotel.image = xoteloMatch.image;
-              if (xoteloMatch.url) hotel.tripAdvisorUrl = xoteloMatch.url;
-              if (xoteloMatch.street_address) hotel.location = xoteloMatch.street_address;
-
-              // Step 2: Fetch real-time rates for this hotel
-              const rates = await xoteloGetRates(xoteloMatch.hotel_key, chkIn, chkOut, nights);
-              if (rates) {
-                console.log(`  💰 Xotelo: "${hotel.name}" → $${rates.perNight}/night (${rates.provider}) | Total: $${rates.totalRate} for ${nights} nights`);
-                hotel.price = rates.perNight;
-                hotel.totalPrice = rates.totalRate;
-                hotel.priceSource = 'xotelo';
-                hotel.priceProvider = rates.provider;
-              } else {
-                console.log(`  ⚠️ Xotelo: no rates available for "${hotel.name}" — keeping fallback price $${hotel.price}/night`);
-                hotel.priceSource = 'estimate';
-              }
-
-              // Small delay between requests to be respectful to the API
-              await new Promise(r => setTimeout(r, 300));
-            } catch (err: any) {
-              console.warn(`  ⚠️ Xotelo pricing failed for "${hotel.name}":`, err.message);
-              hotel.priceSource = 'estimate';
-            }
-          }
-
-          const xoteloCount = hotels.filter((h: any) => h.priceSource === 'xotelo').length;
-          console.log(`🏷️ XOTELO RESULT: ${xoteloCount}/${hotels.length} hotels got real prices\n`);
+        if (hotels.length > 0) {
+          console.log(`🏨 SERPAPI HOTEL CARD LOGS — ${hotels.length} hotel(s)`);
+          hotels.forEach((hotel: any, index: number) => logHotelProperty(hotel.raw || hotel, index));
+        } else {
+          console.log('🏨 No SerpApi hotel results matched the current filters');
         }
+      } catch (hotelErr: any) {
+        console.error('SerpApi hotel search error:', hotelErr.message);
       }
 
-      // Fallback hotels — clearly labeled as being in the destination city
       if (hotels.length === 0) {
         hotels = [
-          { id: 'h1', type: 'hotel', name: `Grand ${destinationCity} Resort`, price: 450, rating: 5, description: `Premium luxury hotel in the heart of ${destinationCity}. Includes complimentary breakfast, high-speed WiFi, pool, and luxury toiletries.`, location: `${destinationCity} City Center`, amenities: ['breakfast', 'wifi', 'pool', 'toiletries', 'spa', 'gym'], verified: false },
-          { id: 'h2', type: 'hotel', name: `${destinationCity} Metropolitan Suites`, price: 280, rating: 4, description: `Modern downtown hotel in ${destinationCity} with panoramic views. Features high-speed WiFi, in-room coffee, and fitness center.`, location: `Downtown ${destinationCity}`, amenities: ['wifi', 'coffee', 'gym', 'breakfast'], verified: false },
-          { id: 'h3', type: 'hotel', name: `${destinationCity} Boutique Hotel`, price: 190, rating: 3, description: `Charming boutique hotel in ${destinationCity}: free WiFi, in-room coffee, and complimentary breakfast.`, location: `${destinationCity} Historic District`, amenities: ['wifi', 'coffee', 'breakfast'], verified: false },
+          {
+            id: 'h1',
+            type: 'hotel',
+            name: `Grand ${destinationCity} Resort`,
+            price: 450,
+            totalPrice: 450,
+            rating: 5,
+            description: `Premium luxury hotel in the heart of ${destinationCity}. Includes complimentary breakfast, high-speed WiFi, pool, and luxury toiletries.`,
+            location: `${destinationCity} City Center`,
+            amenities: ['Breakfast', 'WiFi', 'Pool', 'Toiletries', 'Spa', 'Gym'],
+            verified: false,
+            source: 'fallback',
+          },
+          {
+            id: 'h2',
+            type: 'hotel',
+            name: `${destinationCity} Metropolitan Suites`,
+            price: 280,
+            totalPrice: 280,
+            rating: 4,
+            description: `Modern downtown hotel in ${destinationCity} with panoramic views. Features high-speed WiFi, in-room coffee, and fitness center.`,
+            location: `Downtown ${destinationCity}`,
+            amenities: ['WiFi', 'Coffee', 'Gym', 'Breakfast'],
+            verified: false,
+            source: 'fallback',
+          },
+          {
+            id: 'h3',
+            type: 'hotel',
+            name: `${destinationCity} Boutique Hotel`,
+            price: 190,
+            totalPrice: 190,
+            rating: 3,
+            description: `Charming boutique hotel in ${destinationCity}: free WiFi, in-room coffee, and complimentary breakfast.`,
+            location: `${destinationCity} Historic District`,
+            amenities: ['WiFi', 'Coffee', 'Breakfast'],
+            verified: false,
+            source: 'fallback',
+          },
         ].filter(h => h.rating >= hotelStars);
       }
     } else {
@@ -600,8 +1049,33 @@ export async function POST(request: Request) {
 
     // ═══════════ STEP 4: HOTEL SEARCH ═══════════
     console.log('═══════════ STEP 4: HOTEL SEARCH ═══════════');
-    console.log('🏨 Hotels found:', hotels.length, '| Source:', hotels.length > 0 && hotels[0].source === 'locationiq' ? 'LocationIQ GPS' : 'Fallback mock data');
-    hotels.forEach((h: any, i: number) => console.log(`   ${i + 1}. "${h.name}" | ${h.rating}⭐ | $${h.price}/night | ${h.priceSource === 'xotelo' ? '✅ REAL (' + h.priceProvider + ')' : '📊 Estimate'} | ${h.location}`));
+    console.log('🏨 Hotels found:', hotels.length, '| Source:', hotels.length > 0 ? hotels[0].source : 'none');
+    hotels.forEach((h: any, i: number) => {
+      console.log(`   ${i + 1}. "${h.name}" | ${h.rating}⭐ | $${h.price}/night | ${h.location}`);
+      if (h.address) console.log(`      Address: ${h.address}`);
+      if (h.hotelClass) console.log(`      Class: ${h.hotelClass}`);
+      if (h.overallRating !== null && h.overallRating !== undefined) console.log(`      Rating: ${h.overallRating}`);
+      if (h.reviews !== null && h.reviews !== undefined) console.log(`      Reviews: ${h.reviews}`);
+      if (h.deal) console.log(`      Deal: ${h.deal}`);
+      if (h.locationRating !== null && h.locationRating !== undefined) console.log(`      Location rating: ${h.locationRating}`);
+      if (h.checkInTime || h.checkOutTime) console.log(`      Check-in/out: ${h.checkInTime || 'N/A'} / ${h.checkOutTime || 'N/A'}`);
+      if (Array.isArray(h.amenities) && h.amenities.length > 0) console.log(`      Amenities: ${h.amenities.join(', ')}`);
+      if (Array.isArray(h.nearbyPlaces) && h.nearbyPlaces.length > 0) {
+        console.log('      Nearby places:');
+        h.nearbyPlaces.slice(0, 4).forEach((place: any, placeIndex: number) => {
+          console.log(`        ${placeIndex + 1}. ${place?.name || 'Nearby place'}`);
+          normalizeHotelTransportation(place?.transportations).forEach((transportation: any) => {
+            console.log(`           ${transportation?.type || 'Transport'}: ${transportation?.duration || 'N/A'}`);
+          });
+        });
+      }
+      if (Array.isArray(h.images) && h.images.length > 0) {
+        console.log(`      Photos: ${h.images.length}`);
+        h.images.slice(0, 4).forEach((image: any, imageIndex: number) => {
+          console.log(`        Photo ${imageIndex + 1}: ${image?.thumbnail || image?.original_image || 'N/A'}`);
+        });
+      }
+    });
     console.log('════════════════════════════════════════════\n');
 
     // ────────────────────────────────────────────────────────
@@ -697,7 +1171,6 @@ export async function POST(request: Request) {
     let aiSummary = null;
     let placesToVisit: any[] = [];
     let upsellOptions: any[] = [];
-    let geminiHotelPricing: Record<string, number> | null = null;
 
     try {
       // Build context from REAL LocationIQ data
@@ -785,7 +1258,7 @@ Please provide a JSON response with:
 1. "aiSummary" - An object with "title" (catchy trip title mentioning ${destinationCity}) and "description" (2-3 sentence persuasive trip summary about visiting ${destinationCity})
 2. "placesToVisit" - Array of 12 objects (extra buffer for filtering). Each MUST be a UNIQUE real place in ${destinationCity}, ${destinationCountry}.${hasVibes ? ` CRITICAL: Each place MUST match one of these vibes: ${vibes.join(', ')}. Do NOT return aviation museums, transport museums, aircraft exhibitions, or motorcycle museums. ONLY return places matching the selected vibes.` : ''} NO duplicates allowed. Each object has "name" (the full real name of the place, minimum 4 characters), "description" (1-2 sentences about this specific place), and "estimatedCost" (estimated daily cost in USD as a number)
 3. "upsellOptions" - Array of 3 objects, each with "extraAmount" (number, like 100, 250, 500), "title" (what you get), and "description" (1 sentence explanation of the upgrade)
-4. "estimatedHotelPricePerNight" - An object mapping star rating to estimated average nightly hotel price in USD for ${destinationCity} specifically. Keys are "2", "3", "4", "5". Example for a cheap city: {"2": 40, "3": 80, "4": 150, "5": 280}. Example for an expensive city: {"2": 120, "3": 200, "4": 350, "5": 600}. Use your knowledge of real hotel pricing in ${destinationCity}.`;
+`;
 
       // ═══════════ STEP 6: GEMINI PROMPT CONSTRUCTION ═══════════
       console.log('\n═══════════ STEP 6: GEMINI PROMPT CONSTRUCTION ═══════════');
@@ -846,15 +1319,6 @@ Please provide a JSON response with:
                   required: ['extraAmount', 'title', 'description'],
                 },
               },
-              estimatedHotelPricePerNight: {
-                type: Type.OBJECT,
-                properties: {
-                  '2': { type: Type.NUMBER },
-                  '3': { type: Type.NUMBER },
-                  '4': { type: Type.NUMBER },
-                  '5': { type: Type.NUMBER },
-                },
-              },
             },
             required: ['aiSummary', 'placesToVisit', 'upsellOptions'],
           },
@@ -866,7 +1330,6 @@ Please provide a JSON response with:
 
       let response: any;
       let aiResult: any = {};
-      let usedKeyLabel = 'primary';
       const primaryKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
       const secondaryKey = process.env.GEMINI_API_KEY_2;
       const groqKey = process.env.GROQ_API_KEY;
@@ -888,7 +1351,6 @@ Please provide a JSON response with:
             const aiSecondary = new GoogleGenAI({ apiKey: secondaryKey });
             response = await aiSecondary.models.generateContent(geminiRequestConfig);
             aiResult = typeof response.text === 'string' ? JSON.parse(response.text || '{}') : {};
-            usedKeyLabel = 'secondary';
             console.log('🔑 Gemini call succeeded with SECONDARY key');
           } catch (secondaryErr: any) {
             console.error('❌ Gemini SECONDARY key also failed:', secondaryErr.message);
@@ -924,7 +1386,6 @@ Please provide a JSON response with:
                 const groqData = await groqResponse.json();
                 const groqContent = groqData.choices?.[0]?.message?.content || '{}';
                 aiResult = JSON.parse(groqContent);
-                usedKeyLabel = 'groq';
                 console.log('✅ Groq call succeeded');
               } catch (groqErr: any) {
                 console.error('❌ Groq also failed:', groqErr.message);
@@ -967,7 +1428,6 @@ Please provide a JSON response with:
               const groqData = await groqResponse.json();
               const groqContent = groqData.choices?.[0]?.message?.content || '{}';
               aiResult = JSON.parse(groqContent);
-              usedKeyLabel = 'groq';
               console.log('✅ Groq call succeeded');
             } catch (groqErr: any) {
               console.error('❌ Groq also failed:', groqErr.message);
@@ -992,11 +1452,7 @@ Please provide a JSON response with:
       aiSummary = aiResult.aiSummary || null;
       upsellOptions = aiResult.upsellOptions || [];
 
-      // Stash Gemini's destination-aware hotel pricing for use after this try block
-      if (aiResult.estimatedHotelPricePerNight && typeof aiResult.estimatedHotelPricePerNight === 'object') {
-        geminiHotelPricing = aiResult.estimatedHotelPricePerNight;
-        console.log('🏨 Gemini estimatedHotelPricePerNight:', JSON.stringify(geminiHotelPricing));
-      }
+      // (No hotel pricing requested from Gemini anymore)
 
       // ── STEP A: Validate place names (reject broken/empty names like "AS") ──
       const rawPlaces: any[] = (aiResult.placesToVisit || []).filter((p: any) => {
@@ -1065,38 +1521,55 @@ Please provide a JSON response with:
       }
 
       // ── STEP D: Geocode each place, compute distance, validate ──
-      const MAX_DISTANCE_KM = 100;
       if (geoLat && geoLon) {
+        // Try geocoding top candidates, but keep places even if geocoding fails.
+        const geocodeCandidates = dedupedPlaces;
         const geocodeResults = await Promise.all(
-          dedupedPlaces.slice(0, 12).map(async (place) => {
+          geocodeCandidates.map(async (place) => {
             const coords = await geocodePlaceName(place.name, destinationCity, destinationCountry, countryCode, geoLat, geoLon);
             if (coords) {
               const dist = haversineDistance(geoLat, geoLon, coords.lat, coords.lon);
-              console.log(`  📍 PLACE COORDS: "${place.name}" → lat=${coords.lat}, lon=${coords.lon} → distance: ${dist.toFixed(1)} km`);
+              console.log(`  PLACE COORDS: "${place.name}" -> lat=${coords.lat}, lon=${coords.lon} -> distance: ${dist.toFixed(1)} km`);
               return {
                 ...place,
                 lat: coords.lat,
                 lon: coords.lon,
                 distance: `${dist.toFixed(1)} km from ${destinationLabel}`,
+                rating: (coords as any).rating,
+                reviewsCount: (coords as any).reviewsCount,
+                address: (coords as any).address,
+                placeType: (coords as any).placeType,
+                geoSource: (coords as any).source || 'unknown',
+                _geoOk: true,
+                _geoDistanceKm: dist,
               };
             }
-            // Both geocoders failed or returned coords too far away
-            return null;
+            return {
+              ...place,
+              geoStatus: 'missing_coordinates',
+              _geoOk: false,
+            };
           })
         );
-        // Remove nulls (failed geocode or too far) and internal fields, take first 6
-        placesToVisit = geocodeResults
-          .filter((p): p is NonNullable<typeof p> => p !== null)
-          .slice(0, 6)
-          .map(({ _vibeScore, ...rest }: any) => rest);
+
+        const geocoded = geocodeResults
+          .filter((p: any) => p._geoOk)
+          .sort((a: any, b: any) => (a._geoDistanceKm || 0) - (b._geoDistanceKm || 0));
+        const notGeocoded = geocodeResults.filter((p: any) => !p._geoOk);
+
+        // Prioritize geocoded places first, then backfill with non-geocoded results.
+        placesToVisit = [...geocoded, ...notGeocoded]
+          .map(({ _vibeScore, _geoOk, _geoDistanceKm, ...rest }: any) => rest);
+
+        console.log(`  Geocode summary: ${geocoded.length} with coordinates, ${notGeocoded.length} without coordinates (kept as fallback)`);
       } else {
-        placesToVisit = dedupedPlaces.slice(0, 6).map(({ _vibeScore, ...rest }: any) => rest);
+        placesToVisit = dedupedPlaces.map(({ _vibeScore, ...rest }: any) => rest);
       }
 
       // ═══════════ STEP 8: PLACES GEOCODING + FILTERING ═══════════
       console.log('\n═══════════ STEP 8: PLACES GEOCODING + FILTERING ═══════════');
       console.log('✅ Final places after all filtering:', placesToVisit.length);
-      placesToVisit.forEach((p: any, i: number) => console.log(`   ${i + 1}. "${p.name}" — ${p.distance || 'no distance'} | lat=${p.lat || 'N/A'} lon=${p.lon || 'N/A'}`));
+      placesToVisit.forEach((p: any, i: number) => console.log(`   ${i + 1}. "${p.name}" — ${p.distance || 'no distance'} | lat=${p.lat || 'N/A'} lon=${p.lon || 'N/A'} | rating=${p.rating || 'N/A'} (${p.reviewsCount || 0} reviews)`));
       console.log('════════════════════════════════════════════════════════════\n');
     } catch (aiErr: any) {
       console.warn('\n❌ AI analysis failed — using FALLBACK code path:', aiErr.message);
@@ -1106,7 +1579,7 @@ Please provide a JSON response with:
         description: `We've curated the best options for your ${tripType.replace('_', ' ')} trip to ${destinationCity}. Browse through the flights, hotels, and activities below to build your perfect itinerary.`,
       };
       if (nearbyAttractions.length > 0) {
-        placesToVisit = nearbyAttractions.slice(0, 6).map(a => ({
+        placesToVisit = nearbyAttractions.map(a => ({
           name: a.name,
           description: `A popular ${a.type} in ${destinationCity}, ${a.distance}. A must-visit during your trip.`,
           estimatedCost: Math.floor(Math.random() * 50) + 10,
@@ -1124,21 +1597,7 @@ Please provide a JSON response with:
       ];
     }
 
-    // ────────────────────────────────────────────────────────
-    // STEP 8b: Re-price hotels using Gemini's destination-aware estimates
-    // ────────────────────────────────────────────────────────
-    if (geminiHotelPricing) {
-      console.log('🏨 Re-pricing hotels with Gemini estimates:', JSON.stringify(geminiHotelPricing));
-      hotels.forEach((h: any) => {
-        const geminiPrice = geminiHotelPricing![String(h.rating)];
-        if (typeof geminiPrice === 'number' && geminiPrice > 0) {
-          h.price = geminiPrice;
-        }
-        // else: keep the hardcoded fallback price already assigned at Step 4
-      });
-    } else {
-      console.log('🏨 No Gemini hotel pricing — using hardcoded fallback prices');
-    }
+    // NOTE: We do not request or apply AI-provided hotel pricing anymore; keep hotel prices from SerpApi/fallback.
 
     // ────────────────────────────────────────────────────────
     // STEP 8c: Calculate budget breakdown (after hotel re-pricing)
@@ -1197,7 +1656,7 @@ Please provide a JSON response with:
         geocodedCenter: geo ? { lat: geoLat, lon: geoLon, displayName: geo.displayName } : null,
         nearbyHotelsFound: hotels.length,
         nearbyAttractionsFound: nearbyAttractions.length,
-        hotelSource: hotels.length > 0 && hotels[0].source === 'locationiq' ? 'LocationIQ GPS' : 'Fallback',
+        hotelSource: hotels.length > 0 ? hotels[0].source : 'none',
       },
     };
 
@@ -1218,3 +1677,6 @@ Please provide a JSON response with:
     return NextResponse.json({ error: error.message || 'Failed to generate trip plan' }, { status: 500 });
   }
 }
+
+
+

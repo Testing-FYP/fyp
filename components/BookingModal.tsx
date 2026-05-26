@@ -152,7 +152,7 @@ export default function BookingModal({ offer, onClose }: BookingModalProps) {
                         <div className="grid gap-6">
                           {offer.bundled_hotel && (
                             <div className="flex gap-6 p-6 rounded-3xl bg-muted border border-border">
-                              <div className="relative w-24 h-24 rounded-2xl overflow-hidden shrink-0 grayscale dark:invert">
+                              <div className="relative w-24 h-24 rounded-2xl overflow-hidden shrink-0">
                                 <Image 
                                   src={`https://picsum.photos/seed/${offer.bundled_hotel.id}/300/300`} 
                                   alt={offer.bundled_hotel.name}
@@ -179,7 +179,7 @@ export default function BookingModal({ offer, onClose }: BookingModalProps) {
                           )}
                           {offer.bundled_bus && (
                             <div className="flex gap-6 p-6 rounded-3xl bg-muted border border-border">
-                              <div className="relative w-24 h-24 rounded-2xl overflow-hidden shrink-0 grayscale dark:invert">
+                              <div className="relative w-24 h-24 rounded-2xl overflow-hidden shrink-0">
                                 <Image 
                                   src={`https://picsum.photos/seed/${offer.bundled_bus.id}/300/300`} 
                                   alt={offer.bundled_bus.operator}

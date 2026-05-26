@@ -16,7 +16,7 @@ export default function HotelCard({ offer }: HotelCardProps) {
       className="glass-card group overflow-hidden rounded-[32px] border border-border hover:border-foreground/10 transition-all duration-500"
     >
       <div className="flex flex-col md:flex-row h-full">
-        <div className="relative w-full md:w-1/3 h-64 md:h-auto overflow-hidden grayscale dark:invert">
+        <div className="relative w-full md:w-1/3 h-64 md:h-auto overflow-hidden">
           <Image 
             src={`https://picsum.photos/seed/${offer.id}/800/600`} 
             alt={offer.name} 
@@ -69,7 +69,7 @@ export default function HotelCard({ offer }: HotelCardProps) {
             <div className="flex -space-x-2">
               {[1, 2, 3].map((i) => (
                 <div key={i} className="w-8 h-8 rounded-full border-2 border-background bg-muted overflow-hidden">
-                  <Image src={`https://i.pravatar.cc/100?img=${i + 10}`} alt="User" width={32} height={32} className="grayscale" />
+                  <Image src={`https://i.pravatar.cc/100?img=${i + 10}`} alt="User" width={32} height={32} />
                 </div>
               ))}
               <div className="w-8 h-8 rounded-full border-2 border-background bg-muted flex items-center justify-center text-[10px] text-muted-foreground">
