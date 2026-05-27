@@ -24,21 +24,20 @@ The website solves the problem of fragmented travel planning by consolidating fl
 | **Frontend Framework** | Next.js 15 (App Router, React 19, TypeScript) |
 | **Backend Server** | Node.js / Express 4 (separate process on port 5000) |
 | **Primary Database** | Microsoft SQL Server (via `mssql` npm package) — used by the Express backend |
-| **Secondary Database** | PostgreSQL (via Prisma ORM) — used by Next.js API routes for itinerary saving |
 | **Authentication** | JWT (jsonwebtoken + bcryptjs) — custom implementation on Express backend |
 | **Styling** | Tailwind CSS 4, shadcn/ui (radix-nova style), CSS custom properties (oklch color system), dark/light mode |
 | **UI Components** | shadcn/ui (button, calendar), Radix UI primitives, Lucide React icons |
 | **Animations** | Motion (formerly Framer Motion) v12 |
 | **AI / LLM** | Google Gemini 2.5 Flash (`@google/genai`), Groq (Llama 3.3 70B) as fallback |
 | **Flight Search** | SerpApi Google Flights (primary), Duffel API (legacy/secondary) |
-| **Hotel Search** | SerpApi Google Hotels (primary), Amadeus API (legacy/secondary) |
+| **Hotel Search** | SerpApi Google Hotels (primary)|
 | **Geocoding** | LocationIQ, Nominatim (OpenStreetMap), SerpApi Google Maps |
 | **Charts** | Recharts, D3.js |
 | **Forms** | react-hook-form with Zod resolvers (`@hookform/resolvers`) |
 | **Date Handling** | date-fns, react-day-picker |
 | **File Uploads** | Multer (avatar uploads on Express backend) |
 | **Deployment** | Google AI Studio (Cloud Run) — `output: 'standalone'` in Next config |
-| **Dev Tools** | ESLint, TypeScript 5.9, nodemon, PostCSS, firebase-tools (dev dep) |
+| **Dev Tools** | ESLint, TypeScript 5.9, nodemon, PostCSS |
 
 ---
 
@@ -56,8 +55,6 @@ fyp/
 │   │   ├── google-api/           # SerpApi helper modules
 │   │   │   ├── google-flights.ts # SerpApi Google Flights wrapper
 │   │   │   └── google-hotels.ts  # SerpApi Google Hotels wrapper
-│   │   ├── hotels/search/        # Hotel search (Amadeus)
-│   │   ├── itinerary/save/       # Save itinerary (Prisma/PostgreSQL)
 │   │   └── planner/
 │   │       ├── generate/         # Main AI trip planner (~1828 lines, core logic)
 │   │       ├── surprise/         # "Surprise Me" AI destination suggestions
@@ -109,16 +106,8 @@ fyp/
 │   └── use-mobile.ts             # Mobile viewport detection hook
 │
 ├── lib/
-│   ├── amadeus.ts                # Amadeus API client singleton
 │   ├── duffel.ts                 # Duffel API client singleton
-│   ├── prisma.ts                 # Prisma client singleton (PostgreSQL)
 │   └── utils.ts                  # cn() utility for class merging
-│
-├── prisma/
-│   └── schema.prisma             # Prisma schema (PostgreSQL, Itinerary model)
-│
-├── types/
-│   └── amadeus.d.ts              # Amadeus type declaration
 │
 ├── .env.example                  # Environment variable template
 ├── .env.local                    # Local environment variables (gitignored values)
@@ -205,9 +194,7 @@ There is no admin role, no role-based permissions system, and no user management
 | POST | `/api/flights/search` | Flight search via Duffel API. |
 | POST | `/api/flights/book` | Flight booking via Duffel API (create order). |
 | GET  | `/api/airports/suggestions` | Airport autocomplete via Duffel suggestions API. |
-| POST | `/api/hotels/search` | Hotel search via Amadeus API. |
 | POST | `/api/buses/search` | Bus search — **returns mock/randomly generated data**. |
-| POST | `/api/itinerary/save` | Save itinerary to PostgreSQL via Prisma. |
 
 ### Express Backend Routes (Port 5000, `/backend/`)
 
@@ -294,27 +281,6 @@ There is no admin role, no role-based permissions system, and no user management
 | status | NVARCHAR(50) | CHECK: confirmed, cancelled, pending |
 | booking_details | NVARCHAR(MAX) | JSON string |
 
-### PostgreSQL (Prisma — Next.js Side)
-
-**Itinerary**
-| Column | Type | Notes |
-|---|---|---|
-| id | String (cuid) | |
-| userId | String | |
-| origin, destination | String | |
-| departureDate | DateTime | |
-| offerId | String? | |
-| totalAmount | Float? | |
-| currency | String? | |
-| createdAt, updatedAt | DateTime | |
-
-### Relationships
-
-- `Users` 1:1 `Profiles` (via `user_id` FK with CASCADE delete)
-- `Users` 1:N `Trips` (via `user_id` FK with CASCADE delete)
-- `Users` 1:N `Reservations` (via `user_id` FK with CASCADE delete)
-- `Trips` 1:N `Reservations` (via `trip_id` FK, nullable — reservations can exist without a trip)
-
 ---
 
 ## 11. Authentication and Authorization
@@ -343,10 +309,7 @@ There is no admin role, no role-based permissions system, and no user management
 | `NEXT_PUBLIC_GEMINI_API_KEY` | Gemini API key exposed to client (used in some API routes) |
 | `GEMINI_API_KEY_2` | Secondary Gemini API key (fallback) |
 | `GROQ_API_KEY` | Groq API key (Llama 3.3 fallback for AI features) |
-| `AMADEUS_CLIENT_ID` | Amadeus API client ID (hotel search) |
-| `AMADEUS_CLIENT_SECRET` | Amadeus API client secret |
 | `DUFFEL_ACCESS_TOKEN` | Duffel API token (flights, airport suggestions) |
-| `DATABASE_URL` | PostgreSQL connection string (Prisma) |
 | `SERPAPI_API_KEY` | SerpApi key (Google Flights, Hotels, Maps) |
 | `APP_URL` | Application URL (for Cloud Run deployment) |
 | `NEXT_PUBLIC_BACKEND_URL` | Express backend URL (default: `http://localhost:5000`) |
@@ -378,7 +341,6 @@ There is no admin role, no role-based permissions system, and no user management
 | **Groq (Llama 3.3 70B)** | Fallback AI provider for surprise destinations | Direct HTTP API |
 | **SerpApi** | Google Flights search, Google Hotels search, Google Maps geocoding | Direct HTTP API |
 | **Duffel** | Flight search, flight booking, airport suggestions | `@duffel/api` |
-| **Amadeus** | Hotel search (legacy) | `amadeus` npm |
 | **LocationIQ** | Geocoding cities and places, nearby place search | Direct HTTP API |
 | **Nominatim (OpenStreetMap)** | Fallback geocoding | Direct HTTP API |
 | **Unsplash** | Hero background image | Direct URL |
@@ -426,8 +388,6 @@ There is no admin role, no role-based permissions system, and no user management
 ### Partial / Needs Work
 - ⚠️ Bus search — returns **mock/random data**, not real API results
 - ⚠️ Duffel flight search/booking — implemented but may be secondary to SerpApi in the planner flow
-- ⚠️ Amadeus hotel search — implemented but appears secondary to SerpApi in the planner flow
-- ⚠️ Prisma/PostgreSQL itinerary saving — present but may not be actively used (SQL Server is the primary DB)
 - ⚠️ `/planner` route — just redirects to `/`, effectively unused
 
 ### Missing / Not Implemented
@@ -447,8 +407,8 @@ There is no admin role, no role-based permissions system, and no user management
 2. **Security — No CSRF Protection:** No CSRF tokens observed on any form or API call.
 3. **Security — JWT in localStorage:** Tokens stored in `localStorage` are vulnerable to XSS attacks. HttpOnly cookies would be more secure.
 4. **Security — LocationIQ API Key Hardcoded:** The LocationIQ key is hardcoded directly in the planner generate route (line 6 of `planner/generate/route.ts`) rather than being in an environment variable.
-5. **Architecture — Dual Database Systems:** The project uses both SQL Server (Express backend) and PostgreSQL (Prisma/Next.js). This creates confusion about which is the source of truth.
-6. **Architecture — Dual Flight/Hotel APIs:** SerpApi, Duffel, and Amadeus are all configured. The planner primarily uses SerpApi; the standalone search/book endpoints use Duffel/Amadeus. This may cause inconsistency.
+5. **Architecture — Database Systems:** The project uses SQL Server (Express backend).
+6. **Architecture — Flight/Hotel APIs:** SerpApi is configured. The planner primarily uses SerpApi.
 7. **Mock Data — Bus Search:** `/api/buses/search` returns randomly generated fake data, not real bus API results.
 8. **README has Git Merge Conflict:** The `README.md` contains unresolved merge conflict markers (`<<<<<<< HEAD` / `>>>>>>> f2da9670`).
 9. **No TODO/FIXME Comments:** No TODO or FIXME comments found in the codebase.
@@ -513,15 +473,12 @@ cd backend && node db/initDb.js
 # Run name migration (if upgrading from full_name to first/last name)
 cd backend && node db/migrate_names.js
 
-# Generate Prisma client (for PostgreSQL itinerary model)
-npx prisma generate
 ```
 
 ### Prerequisites
 - Node.js
 - Microsoft SQL Server (e.g., SQL Server Express on Windows)
-- PostgreSQL (for Prisma features, if used)
-- API keys for: Gemini, SerpApi, Duffel, Amadeus, LocationIQ (see Section 12)
+- API keys for: Gemini, SerpApi, Duffel, LocationIQ (see Section 12)
 
 ---
 
@@ -604,7 +561,6 @@ There is **no test suite** in this project. Future agents should verify changes 
 - `backend/db/init.sql` — Schema changes affect the entire data layer.
 - `hooks/useAuth.tsx` — Auth changes affect every authenticated feature.
 - `app/layout.tsx` — Root layout changes affect every page.
-- `prisma/schema.prisma` — Database model changes require migration.
 - `.env.example` / `.env.local` — May contain deployment-specific values.
 - `package.json` / `package-lock.json` — Dependency changes can break builds.
 
@@ -625,8 +581,7 @@ There is **no test suite** in this project. Future agents should verify changes 
 ### Project-Specific Warnings
 - ⚠️ The planner `generate` route is ~1828 lines. Do NOT try to rewrite it entirely — make surgical, targeted edits.
 - ⚠️ `TripPlannerWizard.tsx` and `TripPlannerResults.tsx` are extremely large. Read carefully before editing.
-- ⚠️ The project has two separate database systems (SQL Server + PostgreSQL). Do not confuse them.
-- ⚠️ SerpApi, Duffel, and Amadeus are all present for flights/hotels. The planner primarily uses SerpApi. The standalone search endpoints use Duffel/Amadeus.
+- ⚠️ SerpApi is present for flights/hotels. The planner primarily uses SerpApi.
 - ⚠️ The bus search returns fake data — do not assume it's connected to a real API.
 - ⚠️ The LocationIQ API key is hardcoded in `planner/generate/route.ts` line 6.
 - ⚠️ Never log, commit, or expose values from `.env.local` or `backend/.env`.
@@ -637,15 +592,12 @@ There is **no test suite** in this project. Future agents should verify changes 
 
 ### Assumptions (Needs Confirmation)
 - The project appears to be a university Final Year Project (FYP) based on the directory name and README reference to "ENGR498-Seminar".
-- The PostgreSQL/Prisma setup may be a legacy artifact from an earlier version or AI Studio scaffolding, with SQL Server being the actively used database.
-- The Duffel and Amadeus integrations may be legacy, with SerpApi being the primary data source for the planner.
-- The `firebase-tools` dev dependency suggests a possible previous or planned Firebase deployment, but no Firebase configuration files are present.
+- SQL Server is the database.
 - The project was initially scaffolded using Google AI Studio (based on `metadata.json` and README).
 
 ### Unknowns
 - **Deployment target:** The exact current deployment platform is unknown. The README mentions AI Studio / Cloud Run, but the backend uses SQL Server which is uncommon in Cloud Run.
 - **Database hosting:** Where the SQL Server instance is hosted (appears to be local: `DESKTOP-QOH5V7E\SQLEXPRESS`).
-- **PostgreSQL usage:** Whether the Prisma/PostgreSQL database is actively used in production or is vestigial.
 - **SerpApi quota/limits:** What plan or quota is available for SerpApi calls.
 - **Payment processing:** Whether payment integration is planned or out of scope.
 - **Test strategy:** Whether automated tests are planned.
