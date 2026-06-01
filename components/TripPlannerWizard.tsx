@@ -94,7 +94,7 @@ const STEPS = [
   { title: 'Who', subtitle: 'How many travelers?' },
   { title: 'Flight Style', subtitle: 'Choose your cabin preferences' },
   { title: 'Stay', subtitle: 'Define your hotel needs' },
-  { title: 'Transport', subtitle: 'Ground transportation' },
+  { title: 'Transportation', subtitle: 'Choose how you want to move around your destination' },
   { title: 'Your Vibe', subtitle: "What's your travel style?" },
   { title: 'Budget', subtitle: 'Set your spending limits' },
   { title: 'Review', subtitle: 'Confirm your trip details' },
@@ -178,7 +178,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
         setDatePickMode('range');
       }
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step]);
 
   // Auto-compute nights from dates (user can still override manually)
@@ -219,6 +219,11 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
   const estimatedFlightPrice = (CABIN_FALLBACK[data.cabinClass] || 300) * totalTravelers;
 
   const suggestedBudget = useMemo(() => {
+    // Only calculate and log in an active browser session on/after Step 8 (step === 7)
+    if (typeof window === 'undefined' || step < 7) {
+      return null;
+    }
+
     const flightCost = estimatedFlightPrice;
     const hotelCost = (HOTEL_NIGHTLY[data.hotelStars] || 160) * nights * data.hotelRooms;
     const meals = costEstimates?.dailyMeals ?? 50;
@@ -236,7 +241,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
     console.log('   🛍️ Daily misc:', misc * totalTravelers * nights, `($${misc}/person × ${totalTravelers} × ${nights} nights)`);
     console.log('   💰 Total suggestion:', rounded);
     return rounded;
-  }, [estimatedFlightPrice, data.hotelStars, data.hotelRooms, nights, totalTravelers, costEstimates]);
+  }, [estimatedFlightPrice, data.hotelStars, data.hotelRooms, nights, totalTravelers, costEstimates, step]);
 
   const cabinLabel = ({ economy: 'Economy', premium_economy: 'Premium Economy', business: 'Business', first: 'First Class' } as Record<string, string>)[data.cabinClass] || data.cabinClass;
 
@@ -296,7 +301,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
       }));
       autoFilledRef.current = suggestedBudget;
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [suggestedBudget, step]);
 
   // Counter component for reuse
@@ -383,9 +388,8 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
               {/* Date label cards */}
               <div className="flex gap-4">
                 {/* Departure card */}
-                <div className={`flex-1 rounded-2xl py-4 px-5 flex items-center gap-3 transition-all border ${
-                  depActive ? 'bg-foreground/5 border-foreground/30' : 'bg-muted border-border'
-                }`}>
+                <div className={`flex-1 rounded-2xl py-4 px-5 flex items-center gap-3 transition-all border ${depActive ? 'bg-foreground/5 border-foreground/30' : 'bg-muted border-border'
+                  }`}>
                   <CalendarIcon className="w-5 h-5 text-muted-foreground flex-shrink-0" />
                   <div className="flex-1 min-w-0">
                     <p className="text-[0.65rem] small-caps tracking-widest text-muted-foreground">Departure</p>
@@ -407,9 +411,8 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                   )}
                 </div>
                 {/* Return card */}
-                <div className={`flex-1 rounded-2xl py-4 px-5 flex items-center gap-3 transition-all border ${
-                  retActive ? 'bg-foreground/5 border-foreground/30' : 'bg-muted border-border'
-                }`}>
+                <div className={`flex-1 rounded-2xl py-4 px-5 flex items-center gap-3 transition-all border ${retActive ? 'bg-foreground/5 border-foreground/30' : 'bg-muted border-border'
+                  }`}>
                   <CalendarIcon className="w-5 h-5 text-muted-foreground flex-shrink-0" />
                   <div className="flex-1 min-w-0">
                     <p className="text-[0.65rem] small-caps tracking-widest text-muted-foreground">Return</p>
