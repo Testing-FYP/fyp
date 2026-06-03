@@ -97,7 +97,8 @@ async function geocodePlaceName(
   countryName: string = '',
   countryCode: string = '',
   destLat: string = '',
-  destLon: string = ''
+  destLon: string = '',
+  maxDistKm: number = 100
 ): Promise<{
   lat: string;
   lon: string;
@@ -107,7 +108,7 @@ async function geocodePlaceName(
   placeType?: string;
   source?: string;
 } | null> {
-  const MAX_DIST = 100; // km - reject if further than this
+  const MAX_DIST = maxDistKm; // km - reject if further than this
 
   const isCloseEnough = (lat: string, lon: string): boolean => {
     if (!destLat || !destLon) return true;
@@ -417,6 +418,59 @@ function normalizeSerpApiLayover(layover: any) {
   };
 }
 
+function parseFlightPriceValue(value: any): number | null {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value.replace(/[^0-9.]/g, ''));
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const parsed = parseFlightPriceValue(item);
+      if (parsed !== null) return parsed;
+    }
+  }
+  if (value && typeof value === 'object') {
+    return firstFlightPrice(
+      value.extracted_price,
+      value.price,
+      value.amount,
+      value.total,
+      value.total_amount,
+      value.value,
+      value.lowest,
+      value.extracted_lowest
+    );
+  }
+  return null;
+}
+
+function firstFlightPrice(...values: any[]) {
+  for (const value of values) {
+    const parsed = parseFlightPriceValue(value);
+    if (parsed !== null) return parsed;
+  }
+  return null;
+}
+
+function getSerpApiItineraryPrice(itinerary: any): number | null {
+  const priceInsights = itinerary?.price_insights || {};
+  return firstFlightPrice(
+    itinerary?.price,
+    itinerary?.extracted_price,
+    itinerary?.total_price,
+    itinerary?.total_amount,
+    itinerary?.price_amount,
+    itinerary?.displayed_price,
+    itinerary?.fare?.price,
+    itinerary?.fare?.amount,
+    itinerary?.booking_options,
+    itinerary?.prices,
+    priceInsights?.price,
+    priceInsights?.lowest_price
+  );
+}
+
 function normalizeSerpApiItinerary(itinerary: any, returnDate: string, cabinClass: string, passengers: any[]) {
   const rawSegments = Array.isArray(itinerary?.flights) ? itinerary.flights : [];
   const rawLayovers = Array.isArray(itinerary?.layovers) ? itinerary.layovers : [];
@@ -456,14 +510,17 @@ function normalizeSerpApiItinerary(itinerary: any, returnDate: string, cabinClas
 
   const totalIncludedBaggage = 0;
 
-  const hasPrice = typeof itinerary?.price === 'number' && Number.isFinite(itinerary.price) && itinerary.price > 0;
+  const normalizedPrice = getSerpApiItineraryPrice(itinerary);
+  const hasPrice = normalizedPrice !== null;
 
   return {
-    id: itinerary?.booking_token || itinerary?.departure_token || `${itinerary?.price || 'serp'}-${Math.random().toString(36).slice(2, 8)}`,
+    id: itinerary?.booking_token || itinerary?.departure_token || `${normalizedPrice || itinerary?.price || 'serp'}-${Math.random().toString(36).slice(2, 8)}`,
     slices,
     passengers: passengers.length > 0 ? passengers : [{ type: 'adult' }],
-    total_amount: hasPrice ? String(itinerary.price) : '',
-    display_price: hasPrice ? Number(itinerary.price) : null,
+    total_amount: hasPrice ? String(normalizedPrice) : '',
+    display_price: hasPrice ? normalizedPrice : null,
+    priceSource: hasPrice ? 'provider' : 'missing',
+    raw_price: itinerary?.price ?? null,
     baggage_metadata: { carry_on: 1, checked: totalIncludedBaggage },
     estimated_baggage_fee: 0,
     total_included_baggage: totalIncludedBaggage,
@@ -493,12 +550,16 @@ function mergeReturnSliceIntoOffer(outboundOffer: any, returnItinerary: any, cab
   const returnOffer = normalizeSerpApiItinerary(returnItinerary, '', cabinClass, passengers);
   const returnSlice = returnOffer.slices?.[0];
   if (!returnSlice) return outboundOffer;
+  const returnPrice = returnOffer.display_price ?? parseFlightPriceValue(returnOffer.total_amount);
+  const outboundPrice = outboundOffer.display_price ?? parseFlightPriceValue(outboundOffer.total_amount);
+  const mergedPrice = returnPrice ?? outboundPrice;
 
   return {
     ...outboundOffer,
     slices: [outboundOffer.slices[0], returnSlice].filter(Boolean),
-    total_amount: returnOffer.total_amount || outboundOffer.total_amount,
-    display_price: returnOffer.display_price || outboundOffer.display_price,
+    total_amount: mergedPrice !== null ? String(mergedPrice) : '',
+    display_price: mergedPrice,
+    priceSource: returnOffer.priceSource === 'provider' || outboundOffer.priceSource === 'provider' ? 'provider' : 'missing',
     booking_token: returnOffer.booking_token || outboundOffer.booking_token,
     return_departure_token: returnOffer.departure_token,
     return_owner: returnOffer.owner,
@@ -671,6 +732,38 @@ function formatHotelPrice(priceValue: any): string {
   return 'N/A';
 }
 
+function parseHotelPriceValue(value: any): number | null {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value.replace(/[^0-9.]/g, ''));
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return null;
+}
+
+function firstHotelPrice(...values: any[]) {
+  for (const value of values) {
+    const parsed = parseHotelPriceValue(value);
+    if (parsed !== null) return parsed;
+  }
+  return null;
+}
+
+function estimateHotelNightlyPrice(property: any, fallbackIndex: number) {
+  const classValue = property?.extracted_hotel_class ?? property?.hotel_class;
+  let stars = typeof classValue === 'number' ? classValue : 0;
+  if (!stars && typeof classValue === 'string') {
+    const match = classValue.match(/(\d)/);
+    stars = match ? Number(match[1]) : 0;
+  }
+
+  const rating = parseHotelPriceValue(property?.overall_rating) || 0;
+  const starBased = stars >= 5 ? 310 : stars >= 4 ? 210 : stars >= 3 ? 140 : 95;
+  const ratingPremium = rating >= 4.6 ? 35 : rating >= 4.2 ? 20 : 0;
+  const rankAdjustment = Math.max(0, 5 - fallbackIndex) * 8;
+  return starBased + ratingPremium + rankAdjustment;
+}
+
 function formatStarLabel(stars: any): string {
   if (typeof stars === 'number') return `${stars}-star hotel`;
   if (typeof stars === 'string' && stars.trim()) return stars;
@@ -781,9 +874,32 @@ function logHotelProperty(property: any, index: number) {
   }
 }
 
-function mapSerpApiHotelToResult(property: any, fallbackIndex: number, destinationCity: string) {
-  const extractedPrice = property?.rate_per_night?.extracted_lowest ?? property?.extracted_price ?? property?.price ?? 0;
-  const totalRate = property?.total_rate?.extracted_lowest ?? extractedPrice;
+function mapSerpApiHotelToResult(property: any, fallbackIndex: number, destinationCity: string, nights: number) {
+  const offerPrices = Array.isArray(property?.prices)
+    ? property.prices.flatMap((price: any) => [price?.extracted_price, price?.price, price?.rate_per_night, price?.total_rate])
+    : [];
+  const nightlyFromProvider = firstHotelPrice(
+    property?.rate_per_night?.extracted_lowest,
+    property?.rate_per_night?.lowest,
+    property?.extracted_price,
+    property?.price,
+    property?.displayed_price,
+    property?.price_from,
+    ...offerPrices
+  );
+  const totalFromProvider = firstHotelPrice(
+    property?.total_rate?.extracted_lowest,
+    property?.total_rate?.lowest,
+    property?.extracted_total_price,
+    property?.total_price,
+    property?.total,
+    property?.price_total
+  );
+  const estimatedNightlyPrice = estimateHotelNightlyPrice(property, fallbackIndex);
+  const extractedPrice = nightlyFromProvider ?? (totalFromProvider && nights > 0 ? Math.round(totalFromProvider / nights) : null) ?? estimatedNightlyPrice;
+  const computedTotalRate = Math.round(extractedPrice * Math.max(1, nights || 1));
+  const totalRate = totalFromProvider && totalFromProvider >= extractedPrice ? totalFromProvider : computedTotalRate;
+  const priceSource = nightlyFromProvider !== null || totalFromProvider !== null ? 'provider' : 'estimated';
   const starRating = property?.extracted_hotel_class || property?.hotel_class || 3;
   const hotelClass = formatStarLabel(property?.hotel_class || (typeof starRating === 'number' ? `${starRating}-star hotel` : ''));
   const amenities = Array.isArray(property?.amenities) ? property.amenities : [];
@@ -794,8 +910,10 @@ function mapSerpApiHotelToResult(property: any, fallbackIndex: number, destinati
     id: property?.property_token || property?.serpapi_property_details_link || `serp-h-${fallbackIndex}`,
     type: property?.type || 'hotel',
     name: property?.name || `Hotel ${fallbackIndex + 1}`,
-    price: Number(extractedPrice) || 0,
-    totalPrice: Number(totalRate) || Number(extractedPrice) || 0,
+    price: extractedPrice,
+    totalPrice: totalRate,
+    priceSource,
+    priceLabel: priceSource === 'estimated' ? 'Estimated nightly price' : 'Live nightly price',
     rating: Number(starRating) || 3,
     overallRating: property?.overall_rating ?? null,
     reviews: property?.reviews ?? null,
@@ -876,6 +994,10 @@ export async function POST(request: Request) {
     const body = await request.json();
     const {
       origin, destination, tripType, departureDate, returnDate,
+      destinationCity: inputDestinationCity,
+      destinationCountry: inputDestinationCountry,
+      destinationCountryCode: inputDestinationCountryCode,
+      destinationStates,
       adults, children, cabinClass, baggageCount, directOnly,
       budgetMode, totalBudget, flightBudget, hotelBudget, transportBudget, dailyExpenseBudget,
       hotelStars, hotelRooms, hotelBeds, hotelAmenities, nights,
@@ -888,6 +1010,8 @@ export async function POST(request: Request) {
     console.log('🧳 Trip type:', tripType);
     console.log('✈️ Origin:', origin);
     console.log('🏁 Destination:', destination);
+    console.log('🌍 Destination city/country from input:', inputDestinationCity, '|', inputDestinationCountry, '|', inputDestinationCountryCode);
+    console.log('🗺️ Selected destination states:', JSON.stringify(destinationStates));
     console.log('📅 Departure date:', departureDate);
     console.log('📅 Return date:', returnDate);
     console.log('👥 Travelers:', adults, 'adults,', children, 'children');
@@ -904,10 +1028,10 @@ export async function POST(request: Request) {
     // ────────────────────────────────────────────────────────
     // STEP 1: Resolve destination labels without calling a non-Google flight API
     // ────────────────────────────────────────────────────────
-    let destinationCity = destination;
-    let destinationCountry = '';
+    let destinationCity = inputDestinationCity || destination;
+    let destinationCountry = inputDestinationCountry || '';
     let airportName = `${destination} Airport`;
-    let countryCode = '';
+    let countryCode = inputDestinationCountryCode || '';
 
     // ────────────────────────────────────────────────────────
     // STEP 2: Geocode the EXACT destination (airport or city)
@@ -1044,6 +1168,13 @@ export async function POST(request: Request) {
         }
 
         console.log('✈️ Normalized SerpApi flights returned to handler:', flights.length);
+        const flightCountBeforePriceFilter = flights.length;
+        flights = flights.filter((flight: any) => parseFlightPriceValue(flight?.display_price ?? flight?.total_amount ?? flight?.price) !== null);
+        const removedUnpricedFlights = flightCountBeforePriceFilter - flights.length;
+        if (removedUnpricedFlights > 0) {
+          console.log(`✈️ Removed ${removedUnpricedFlights} flight option(s) with unavailable provider prices`);
+        }
+
         flights.forEach((flight: any, flightIndex: number) => logNormalizedFlightCard(flight, flightIndex));
       } catch (flightErr: any) {
         console.error('SerpApi flight search error:', flightErr.message);
@@ -1124,7 +1255,7 @@ export async function POST(request: Request) {
             }
             return true;
           })
-          .map((property: any, idx: number) => mapSerpApiHotelToResult(property, idx, destinationCity))
+          .map((property: any, idx: number) => mapSerpApiHotelToResult(property, idx, destinationCity, Math.max(1, nights || 1)))
           .slice(0, 10);
 
         if (hotelAmenities && hotelAmenities.length > 0) {
@@ -1196,7 +1327,7 @@ export async function POST(request: Request) {
     console.log('═══════════ STEP 4: HOTEL SEARCH ═══════════');
     console.log('🏨 Hotels found:', hotels.length, '| Source:', hotels.length > 0 ? hotels[0].source : 'none');
     hotels.forEach((h: any, i: number) => {
-      console.log(`   ${i + 1}. "${h.name}" | ${h.rating}⭐ | $${h.price}/night | ${h.location}`);
+      console.log(`   ${i + 1}. "${h.name}" | ${h.rating}⭐ | $${h.price}/night${h.priceSource === 'estimated' ? ' (estimated)' : ''} | ${h.location}`);
       if (h.address) console.log(`      Address: ${h.address}`);
       if (h.hotelClass) console.log(`      Class: ${h.hotelClass}`);
       if (h.overallRating !== null && h.overallRating !== undefined) console.log(`      Rating: ${h.overallRating}`);
@@ -1320,6 +1451,15 @@ export async function POST(request: Request) {
     try {
       // Build context from REAL LocationIQ data
       const hasVibes = vibes && Array.isArray(vibes) && vibes.length > 0;
+      const selectedRegions = Array.isArray(destinationStates)
+        ? destinationStates.map((state: any) => String(state).trim()).filter(Boolean)
+        : [];
+      const hasSelectedRegions = selectedRegions.length > 0;
+      const mainCountryLabel = destinationCountry || countryCode || 'the destination country';
+      const selectedRegionLabel = selectedRegions.join(', ');
+      const targetAreaLabel = hasSelectedRegions
+        ? `${selectedRegionLabel}, ${mainCountryLabel}`
+        : `${destinationCity}, ${mainCountryLabel}`;
       const vibeLabels = hasVibes ? vibes.map((v: string) => {
         const labelMap: Record<string, string> = {
           food_drink: 'Food & Drink (restaurants, food markets, cafés, wine bars, street food tours, local eateries)',
@@ -1337,7 +1477,7 @@ export async function POST(request: Request) {
       // When vibes are selected, COMPLETELY OMIT LocationIQ POI data to prevent Gemini from
       // picking aviation/transport museums that happen to be near the airport.
       const attractionContext = hasVibes
-        ? `\n\nIMPORTANT: Ignore any nearby POI data. Use your own knowledge to suggest places in ${destinationCity} that match ONLY the user's selected vibes listed above.`
+        ? `\n\nIMPORTANT: Ignore any nearby POI data. Use your own knowledge to suggest places in ${targetAreaLabel} that match ONLY the user's selected vibes listed above.`
         : nearbyAttractions.length > 0
           ? `\n\nREAL VERIFIED ATTRACTIONS found via GPS within ${destinationCity} (lat: ${geoLat}, lon: ${geoLon}):\n${nearbyAttractions.map((a, i) => `${i + 1}. "${a.name}" (${a.type}) — ${a.distance}, GPS: ${a.lat},${a.lon}`).join('\n')}\n\nYou MUST use these real GPS-verified places as the primary basis for "placesToVisit". You may add 1-2 additional WELL-KNOWN landmarks that are definitely in ${destinationCity}, ${destinationCountry}, but DO NOT invent or hallucinate places.`
           : `\n\nNo GPS-verified attractions data available. For "placesToVisit", ONLY suggest well-known, real landmarks and attractions that are definitely located within ${destinationCity}, ${destinationCountry}. Do NOT suggest places from other cities or countries.`;
@@ -1348,16 +1488,21 @@ export async function POST(request: Request) {
         ? `\n\nREAL HOTELS found within 20km of ${destinationLabel} (lat: ${geoLat}, lon: ${geoLon}):\n${hotels.map((h, i) => `${i + 1}. "${h.name}" — ${h.rating}-star, $${h.price}/night, located at ${h.location}`).join('\n')}`
         : '';
 
-      const prompt = `You are an elite AI travel concierge planning a trip to ${destinationCity}, ${destinationCountry}.
+      const prompt = `You are an elite AI travel concierge planning a trip to ${targetAreaLabel}.
 
 CRITICAL LOCATION CONSTRAINT:
-- The destination is ${destinationCity}, ${destinationCountry}
-- The user is arriving at ${airportName} (${destination}), GPS coordinates: latitude ${geoLat}, longitude ${geoLon}
+- Main country: ${mainCountryLabel}
+- Arrival airport/city: ${airportName} (${destination}) in ${destinationCity}, GPS coordinates: latitude ${geoLat}, longitude ${geoLon}
+${hasSelectedRegions ? `- User-selected regions/states to consider: ${selectedRegionLabel}
+- The selected regions are the preferred discovery area. Recommend vibe-matching places inside these selected regions when possible.
+- You may include ${destinationCity} only when it is in or directly useful for reaching the selected regions.` : `- No specific regions/states were selected. Use ${destinationCity} and its practical surrounding area.`}
 - Suggest places that are either:
-  (a) Right near the airport in the surrounding area (e.g. Ferno, Somma Lombardo, Cardano al Campo for MXP), OR
-  (b) In ${destinationCity} city center, which is accessible by train/transport from the airport
+  (a) In the selected region/state list within ${mainCountryLabel}, OR
+  (b) Right near the arrival airport when it helps the trip plan, OR
+  (c) In ${destinationCity} city center when no selected region is a better match
 - For each place, mention in the description which area it is in and approximately how far from ${destination}
-- DO NOT suggest any place that is not in ${destinationCity} or the area near ${destination}
+- DO NOT suggest any place outside ${mainCountryLabel}
+${hasSelectedRegions ? `- DO NOT prioritize places outside these selected regions unless they are essential airport/city transfer context: ${selectedRegionLabel}` : `- DO NOT suggest any place that is not in ${destinationCity} or the area near ${destination}`}
 - DO NOT hallucinate or invent fictional places
 
 CRITICAL QUALITY RULES FOR "placesToVisit":
@@ -1388,6 +1533,8 @@ If you are unsure whether a place matches, do NOT include it.
 
 Trip Details:
 - Route: ${origin} → ${destination} (IATA: ${destination}, City: ${destinationCity})
+- Main country: ${mainCountryLabel}
+${hasSelectedRegions ? `- Selected regions/states: ${selectedRegionLabel}` : '- Selected regions/states: none'}
 - Trip type: ${tripType}
 - Departure: ${departureDate} ${returnDate ? '/ Return: ' + returnDate : ''}
 - Travelers: ${adults} adults, ${children} children
@@ -1400,8 +1547,8 @@ There are ${flights.length} flight options ranging from $${flights.length > 0 ? 
 ${hotelContext}${attractionContext}
 
 Please provide a JSON response with:
-1. "aiSummary" - An object with "title" (catchy trip title mentioning ${destinationCity}) and "description" (2-3 sentence persuasive trip summary about visiting ${destinationCity})
-2. "placesToVisit" - Array of 12 objects (extra buffer for filtering). Each MUST be a UNIQUE real place in ${destinationCity}, ${destinationCountry}.${hasVibes ? ` CRITICAL: Each place MUST match one of these vibes: ${vibes.join(', ')}. Do NOT return aviation museums, transport museums, aircraft exhibitions, or motorcycle museums. ONLY return places matching the selected vibes.` : ''} NO duplicates allowed. Each object has "name" (the full real name of the place, minimum 4 characters), "description" (1-2 sentences about this specific place), and "estimatedCost" (estimated daily cost in USD as a number)
+1. "aiSummary" - An object with "title" (catchy trip title mentioning ${hasSelectedRegions ? selectedRegionLabel : destinationCity}) and "description" (2-3 sentence persuasive trip summary about visiting ${targetAreaLabel})
+2. "placesToVisit" - Array of 12 objects (extra buffer for filtering). Each MUST be a UNIQUE real place in ${targetAreaLabel}.${hasVibes ? ` CRITICAL: Each place MUST match one of these vibes: ${vibes.join(', ')}. Do NOT return aviation museums, transport museums, aircraft exhibitions, or motorcycle museums. ONLY return places matching the selected vibes.` : ''} NO duplicates allowed. Each object has "name" (the full real name of the place, minimum 4 characters), "description" (1-2 sentences about this specific place, including the region/state or city area), and "estimatedCost" (estimated daily cost in USD as a number)
 3. "upsellOptions" - Array of 3 objects, each with "extraAmount" (number, like 100, 250, 500), "title" (what you get), and "description" (1 sentence explanation of the upgrade)
 `;
 
@@ -1409,6 +1556,9 @@ Please provide a JSON response with:
       console.log('\n═══════════ STEP 6: GEMINI PROMPT CONSTRUCTION ═══════════');
       console.log('🤖 Variables injected into prompt:');
       console.log('   - Destination city:', destinationCity);
+      console.log('   - Main country:', mainCountryLabel);
+      console.log('   - Selected regions:', JSON.stringify(selectedRegions));
+      console.log('   - Target area:', targetAreaLabel);
       console.log('   - Coordinates:', geoLat, geoLon);
       console.log('   - Effective budget: $' + effectiveBudget);
       console.log('   - Cabin class:', cabinClass);
@@ -1669,9 +1819,11 @@ Please provide a JSON response with:
       if (geoLat && geoLon) {
         // Try geocoding top candidates, but keep places even if geocoding fails.
         const geocodeCandidates = dedupedPlaces;
+        const geocodeSearchArea = hasSelectedRegions ? selectedRegionLabel : destinationCity;
+        const geocodeMaxDistanceKm = hasSelectedRegions ? 900 : 100;
         const geocodeResults = await Promise.all(
           geocodeCandidates.map(async (place) => {
-            const coords = await geocodePlaceName(place.name, destinationCity, destinationCountry, countryCode, geoLat, geoLon);
+            const coords = await geocodePlaceName(place.name, geocodeSearchArea, destinationCountry, countryCode, geoLat, geoLon, geocodeMaxDistanceKm);
             if (coords) {
               const dist = haversineDistance(geoLat, geoLon, coords.lat, coords.lon);
               console.log(`  PLACE COORDS: "${place.name}" -> lat=${coords.lat}, lon=${coords.lon} -> distance: ${dist.toFixed(1)} km`);

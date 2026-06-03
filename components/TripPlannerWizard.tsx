@@ -18,6 +18,14 @@ type BudgetMode = 'total' | 'per_category';
 type TransportType = 'metro_subway' | 'train' | 'public_bus' | 'taxi' | 'rideshare_uber' | 'rental_car';
 type TransportPriority = 'cheapest' | 'fastest' | 'comfortable';
 
+type GeocodedCity = {
+  id: string;
+  name: string;
+  state?: string;
+  latitude?: string;
+  longitude?: string;
+};
+
 export interface TransportOption {
   id: TransportType;
   transportType: TransportType;
@@ -46,6 +54,7 @@ export interface PlannerData {
   destination: string;
   destinationCity?: string;
   destinationCountry?: string;
+  destinationCountryCode?: string;
   tripType: TripType;
   // Step 2
   departureDate: string;
@@ -75,6 +84,7 @@ export interface PlannerData {
   transportDataSource?: string;
   // Step 7 — Vibe
   vibes: string[];
+  destinationStates: string[];
   // Step 8 — Budget
   budgetMode: BudgetMode;
   totalBudget: number;
@@ -172,17 +182,24 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
     transportTypes: ['public_bus'],
     transportPriority: 'cheapest',
     vibes: [],
+    destinationStates: [],
     ...initialData,
   });
 
   const update = (partial: Partial<PlannerData>) => setData(prev => ({ ...prev, ...partial }));
   const [transportLoading, setTransportLoading] = useState(false);
   const transportFetchKeyRef = useRef('');
+  const [countryCities, setCountryCities] = useState<GeocodedCity[]>([]);
+  const [countryStates, setCountryStates] = useState<string[]>([]);
+  const [citiesLoading, setCitiesLoading] = useState(false);
+  const [citiesError, setCitiesError] = useState('');
+  const cityFetchKeyRef = useRef('');
 
   const getTransportLookupKey = (current: PlannerData) => [
     current.destination,
     current.destinationCity || '',
     current.destinationCountry || '',
+    current.destinationCountryCode || '',
     current.transportPriority,
   ].join('|');
 
@@ -200,6 +217,46 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
       };
     });
   };
+
+  const fetchCountryCities = useCallback(async (country: string) => {
+    const lookupKey = country.trim().toLowerCase();
+    if (!lookupKey || cityFetchKeyRef.current === lookupKey) return;
+
+    cityFetchKeyRef.current = lookupKey;
+    setCitiesLoading(true);
+    setCitiesError('');
+    setCountryCities([]);
+    setCountryStates([]);
+    try {
+      const response = await fetch(`/api/geocoded/cities?country=${encodeURIComponent(country)}&limit=80`);
+      const json = await response.json();
+      if (!response.ok || json?.error) throw new Error(json?.error || 'Could not load cities.');
+      setCountryCities(Array.isArray(json?.cities) ? json.cities : []);
+      setCountryStates(Array.isArray(json?.states) ? json.states : []);
+    } catch (error: any) {
+      cityFetchKeyRef.current = '';
+      setCountryCities([]);
+      setCountryStates([]);
+      setCitiesError(error?.message || 'Could not load cities.');
+    } finally {
+      setCitiesLoading(false);
+    }
+  }, []);
+
+  const countryCitiesLookup = data.destinationCountryCode || data.destinationCountry || '';
+  const countryStateOptions = useMemo(() => {
+    const sourceStates = countryStates.length ? countryStates : countryCities.map(city => city.state || '');
+    const seen = new Set<string>();
+    return sourceStates
+      .map(state => state.trim())
+      .filter(state => {
+        const key = state.toLowerCase();
+        if (!state || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .sort((a, b) => a.localeCompare(b));
+  }, [countryCities, countryStates]);
 
   const fetchTransportOptions = useCallback(async (current: PlannerData) => {
     if (!current.includeTransport || !current.destination) return;
@@ -261,6 +318,12 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
       void fetchTransportOptions(data);
     }
   }, [step, data.includeTransport, data.destination, data.transportOptions?.length, fetchTransportOptions]);
+
+  useEffect(() => {
+    if (step === 6 && countryCitiesLookup) {
+      void fetchCountryCities(countryCitiesLookup);
+    }
+  }, [step, countryCitiesLookup, fetchCountryCities]);
 
   const progress = ((step + 1) / STEPS.length) * 100;
 
@@ -424,6 +487,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
 
   const getTransportOption = (type: TransportType) => data.transportOptions?.find(option => option.id === type || option.transportType === type);
   const destinationLabel = data.destinationCity || data.destination || 'this destination';
+  const countryCitiesLabel = data.destinationCountry || data.destinationCountryCode || 'this country';
 
   const renderStep = () => {
     switch (step) {
@@ -450,11 +514,13 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
               <label className="small-caps ml-1">To</label>
               <AirportAutocomplete
                 value={data.destination}
-                onSelect={(v) => update({ destination: v, destinationCity: undefined, destinationCountry: undefined, transportOptions: undefined, transportDataSource: undefined })}
+                onSelect={(v) => update({ destination: v, destinationCity: undefined, destinationCountry: undefined, destinationCountryCode: undefined, destinationStates: [], transportOptions: undefined, transportDataSource: undefined })}
                 onSelectSuggestion={(suggestion) => update({
                   destination: suggestion.iata_code,
                   destinationCity: suggestion.city_name,
                   destinationCountry: suggestion.country_name,
+                  destinationCountryCode: suggestion.country_code || suggestion.iata_country_code,
+                  destinationStates: [],
                   transportOptions: undefined,
                   transportDataSource: undefined,
                 })}
@@ -489,6 +555,16 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
           // Auto-enter idle mode when both dates are set during initial range pick
           const bothDatesSet = !!rangeValue.from && !!rangeValue.to;
           const effectiveMode = (datePickMode === 'range' && bothDatesSet) ? 'idle' : datePickMode;
+          const selectedNights = rangeValue.from && rangeValue.to
+            ? Math.max(0, Math.ceil((rangeValue.to.getTime() - rangeValue.from.getTime()) / 86400000))
+            : 0;
+          const selectedDateCount = rangeValue.from
+            ? selectedNights > 0 ? selectedNights + 1 : 1
+            : 0;
+          const returnWeekRow = rangeValue.to
+            ? Math.floor(((new Date(rangeValue.to.getFullYear(), rangeValue.to.getMonth(), 1).getDay()) + rangeValue.to.getDate() - 1) / 7)
+            : 0;
+          const durationBadgeTop = `calc(6rem + ${returnWeekRow} * 2.25rem)`;
 
           // Determine which date card is "active" (being edited)
           const depActive = effectiveMode === 'range' || effectiveMode === 'editDeparture';
@@ -553,28 +629,47 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                 </p>
               )}
 
+              <div className="hidden">
+                <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">Selected dates</div>
+                <div className="mt-1 text-sm font-bold text-foreground">
+                  {selectedDateCount > 0 ? `${selectedDateCount} day${selectedDateCount !== 1 ? 's' : ''}` : 'No dates selected'}
+                  {selectedNights > 0 ? ` • ${selectedNights} night${selectedNights !== 1 ? 's' : ''}` : ''}
+                </div>
+              </div>
+
               {/* Calendar */}
               <div className="flex justify-center">
                 {(effectiveMode === 'range' || effectiveMode === 'idle') ? (
                   /* Range mode or idle — show range calendar */
-                  <Calendar
-                    mode="range"
-                    selected={rangeValue}
-                    onSelect={(range: DateRange | undefined) => {
-                      update({
-                        departureDate: toStr(range?.from),
-                        returnDate: toStr(range?.to),
-                      });
-                      // Auto-idle when both dates are now set
-                      if (range?.from && range?.to) {
-                        setDatePickMode('idle');
-                      }
-                    }}
-                    numberOfMonths={2}
-                    disabled={{ before: today }}
-                    defaultMonth={parseDate(data.departureDate) || today}
-                    className="rounded-2xl border border-border bg-card p-4"
-                  />
+                  <div className="relative overflow-visible">
+                    {selectedNights > 0 && (
+                      <div
+                        className="pointer-events-none absolute left-[calc(100%+0.75rem)] z-[9999] -translate-y-1/2 whitespace-nowrap rounded-lg border border-foreground bg-foreground px-3 py-1 text-xs font-black text-background shadow-2xl"
+                        style={{ top: durationBadgeTop }}
+                      >
+                        {selectedDateCount} day{selectedDateCount !== 1 ? 's' : ''}
+                      </div>
+                    )}
+                    <Calendar
+                      mode="range"
+                      selected={rangeValue}
+                      onSelect={(range: DateRange | undefined) => {
+                        update({
+                          departureDate: toStr(range?.from),
+                          returnDate: toStr(range?.to),
+                        });
+                        // Auto-idle when both dates are now set
+                        if (range?.from && range?.to) {
+                          setDatePickMode('idle');
+                        }
+                      }}
+                      numberOfMonths={2}
+                      showOutsideDays={false}
+                      disabled={{ before: today }}
+                      defaultMonth={parseDate(data.departureDate) || today}
+                      className="rounded-2xl border border-border bg-card p-4"
+                    />
+                  </div>
                 ) : (
                   /* Edit single date mode — show single-pick calendar */
                   <Calendar
@@ -600,6 +695,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                       setDatePickMode('idle');
                     }}
                     numberOfMonths={2}
+                    showOutsideDays={false}
                     disabled={{ before: today }}
                     defaultMonth={
                       (effectiveMode === 'editDeparture'
@@ -616,6 +712,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
 
         // ── One Way: single-date calendar ──
         const selectedDate = parseDate(data.departureDate);
+        const selectedDateCount = selectedDate ? 1 : 0;
 
         return (
           <div className="space-y-6">
@@ -632,6 +729,13 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
               </div>
             </div>
 
+            <div className="rounded-2xl border border-border bg-muted px-5 py-3 text-center">
+              <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">Selected dates</div>
+              <div className="mt-1 text-sm font-bold text-foreground">
+                {selectedDateCount ? '1 day' : 'No dates selected'}
+              </div>
+            </div>
+
             {/* Single calendar */}
             <div className="flex justify-center">
               <Calendar
@@ -640,6 +744,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                 onSelect={(date: Date | undefined) => {
                   update({ departureDate: toStr(date) });
                 }}
+                showOutsideDays={false}
                 disabled={{ before: today }}
                 defaultMonth={selectedDate || today}
                 className="rounded-2xl border border-border bg-card p-4"
@@ -1124,6 +1229,72 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                 );
               })}
             </div>
+            <div className="space-y-4 rounded-3xl border border-border bg-muted p-5">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="text-sm font-bold text-foreground">States in {countryCitiesLabel}</div>
+                  <p className="mt-1 text-xs leading-relaxed text-muted-foreground/70">
+                    Select one or more regions you would consider visiting.
+                  </p>
+                </div>
+                {citiesLoading && <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />}
+              </div>
+
+              {!countryCitiesLookup && (
+                <div className="rounded-2xl border border-dashed border-border bg-background px-4 py-3 text-xs text-muted-foreground">
+                  Select your destination from the Step 1 airport suggestions so we can load cities automatically.
+                </div>
+              )}
+
+              {citiesLoading && (
+                <div className="flex items-center gap-3 rounded-2xl border border-border bg-background px-4 py-4 text-xs font-bold uppercase tracking-[0.14em] text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Loading states from {countryCitiesLabel}
+                </div>
+              )}
+
+              {citiesError && (
+                <div className="rounded-2xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-xs text-red-500">
+                  {citiesError}
+                </div>
+              )}
+
+              {!citiesLoading && countryCitiesLookup && !citiesError && countryStateOptions.length === 0 && cityFetchKeyRef.current && (
+                <div className="rounded-2xl border border-dashed border-border bg-background px-4 py-3 text-xs text-muted-foreground">
+                  No state options came back for {countryCitiesLabel}.
+                </div>
+              )}
+
+              {!citiesLoading && countryStateOptions.length > 0 && (
+                <div className="grid grid-cols-2 gap-2">
+                  {countryStateOptions.map(stateName => {
+                    const selected = data.destinationStates.includes(stateName);
+                    return (
+                      <button
+                        key={stateName}
+                        type="button"
+                        onClick={() => update({
+                          destinationStates: selected
+                            ? data.destinationStates.filter(state => state !== stateName)
+                            : [...data.destinationStates, stateName]
+                        })}
+                        className={`min-h-[76px] rounded-2xl border px-4 py-3 text-left transition-all ${
+                          selected
+                            ? 'border-emerald-500 bg-emerald-500 text-white shadow-lg shadow-emerald-500/20'
+                            : 'border-border bg-background text-muted-foreground hover:border-foreground/30 hover:text-foreground'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <MapPin className="h-3.5 w-3.5" />
+                          <span className="text-[11px] font-black uppercase tracking-[0.12em]">{stateName}</span>
+                          {selected && <Check className="ml-auto h-3.5 w-3.5" />}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
             {data.vibes.length === 0 && (
               <p className="text-center text-[10px] text-muted-foreground/40 uppercase tracking-wider">No vibe selected — we'll show a general mix of top attractions</p>
             )}
@@ -1144,6 +1315,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                 { label: 'Hotel', value: data.includeHotel ? `${data.hotelStars}-Star` : 'Not included', sub: data.includeHotel ? `${data.hotelRooms} room${data.hotelRooms > 1 ? 's' : ''} • ${data.hotelBeds} bed${data.hotelBeds > 1 ? 's' : ''} • ${data.hotelAmenities.length} amenities` : '—' },
                 { label: 'Transport', value: data.includeTransport ? data.transportTypes.map(t => t.replace('_', ' ')).join(', ') : 'Not included', sub: data.includeTransport ? data.transportPriority : '—' },
                 { label: 'Vibe', value: data.vibes.length > 0 ? data.vibes.map(v => VIBE_OPTIONS.find(vo => vo.id === v)?.emoji || '').join(' ') : 'General mix', sub: data.vibes.length > 0 ? data.vibes.map(v => VIBE_OPTIONS.find(vo => vo.id === v)?.label || '').join(', ') : 'All attractions' },
+                { label: 'Regions', value: data.destinationStates.length > 0 ? `${data.destinationStates.length} selected` : 'Not limited', sub: data.destinationStates.length > 0 ? data.destinationStates.join(', ') : data.destinationCountry || data.destinationCountryCode || 'Destination country' },
               ].map((item, i) => (
                 <div key={i} className="py-4 px-5 rounded-2xl bg-muted border border-border">
                   <div className="text-[9px] uppercase tracking-[0.2em] font-bold text-muted-foreground/40 mb-1">{item.label}</div>
