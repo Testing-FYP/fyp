@@ -622,7 +622,7 @@ export function FlightCard({ flight, index, travelerCount = 1, isExpanded, onTog
 
               return (
                 <button
-                  key={flightSlice?.id || sliceIndex}
+                  key={`${flightSlice?.id || 'slice'}-${label}-${sliceIndex}`}
                   type="button"
                   onClick={(event) => {
                     event.stopPropagation();
@@ -718,7 +718,7 @@ function FlightLeg({ slice, label }: { slice: any; label: string }) {
       <div className="mt-4 space-y-3">
         {segments.map((segment: any, segmentIndex: number) => (
           <FlightSegmentDetails
-            key={segment?.id || `${label}-segment-${segmentIndex}`}
+            key={`${segment?.id || 'segment'}-${label}-${segmentIndex}`}
             segment={segment}
             segmentIndex={segmentIndex}
             totalSegments={segments.length}
@@ -813,6 +813,7 @@ export function HotelCard({ hotel, suspicious, distanceKm }: { hotel: any; suspi
   const nearby = Array.isArray(hotel?.nearbyPlaces) ? hotel.nearbyPlaces.slice(0, 3) : [];
   const nightlyPrice = asNumber(hotel?.price);
   const totalPrice = asNumber(hotel?.totalPrice);
+  const priceIsEstimated = hotel?.priceSource === 'estimated';
 
   return (
     <article className={`overflow-hidden rounded-3xl border bg-card shadow-sm ${suspicious ? 'border-amber-500/40' : 'border-border'}`}>
@@ -856,11 +857,11 @@ export function HotelCard({ hotel, suspicious, distanceKm }: { hotel: any; suspi
                 {nightlyPrice ? (
                   <>
                     <p className="text-2xl title-text text-foreground">{formatMoney(nightlyPrice)}</p>
-                    <p className="text-xs font-semibold text-muted-foreground">per night</p>
+                    <p className="text-xs font-semibold text-muted-foreground">{priceIsEstimated ? 'estimated per night' : 'per night'}</p>
                   </>
                 ) : null}
                 {totalPrice ? (
-                  <p className="mt-1 text-sm font-bold text-foreground">{formatMoney(totalPrice)} total</p>
+                  <p className="mt-1 text-sm font-bold text-foreground">{formatMoney(totalPrice)} total{priceIsEstimated ? ' est.' : ''}</p>
                 ) : null}
               </div>
             ) : (
@@ -1052,7 +1053,7 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
       suspicious: isHotelSuspicious(hotel, results, destination),
       distance: getHotelDistanceKm(hotel, results),
     }));
-    if (hotelFilter === 'cheapest') return withFlags.sort((a, b) => (asNumber(a.hotel?.price) ?? Infinity) - (asNumber(b.hotel?.price) ?? Infinity));
+    if (hotelFilter === 'cheapest') return withFlags.sort((a, b) => (asNumber(a.hotel?.price ?? a.hotel?.totalPrice) ?? Infinity) - (asNumber(b.hotel?.price ?? b.hotel?.totalPrice) ?? Infinity));
     if (hotelFilter === 'location-check') return withFlags.filter(item => item.suspicious);
     return withFlags.sort((a, b) => Number(a.suspicious) - Number(b.suspicious));
   }, [results, destination, hotelFilter]);
@@ -1083,9 +1084,24 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
     { id: 'upgrades', label: 'Upgrades', count: results?.upsellOptions?.length || 3 },
   ];
 
+  const getFlightKey = (flight: any, index: number) => {
+    const route = (flight?.slices || [])
+      .map((slice: any) => (slice?.segments || [])
+        .map((segment: any) => `${segment?.origin?.iata_code || 'DEP'}-${segment?.destination?.iata_code || 'ARR'}-${segment?.departing_at || ''}`)
+        .join('_'))
+      .join('|');
+    return [
+      flight?.id || 'flight',
+      flight?.owner?.name || '',
+      flight?.total_amount || '',
+      route,
+      index,
+    ].join('-');
+  };
+
   const flightCards = flights.map((flight: any, index: number) => (
     <FlightCard
-      key={flight?.id || `${flight?.owner?.name || 'flight'}-${index}`}
+      key={getFlightKey(flight, index)}
       flight={flight}
       index={index}
       travelerCount={travelerCount}
@@ -1178,7 +1194,7 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
             </WarningBanner>
           ) : null}
           {hotels.length ? hotels.map(({ hotel, suspicious, distance }, index) => (
-            <HotelCard key={hotel?.id || index} hotel={hotel} suspicious={suspicious} distanceKm={distance} />
+            <HotelCard key={`${hotel?.id || hotel?.name || 'hotel'}-${hotel?.price || ''}-${index}`} hotel={hotel} suspicious={suspicious} distanceKm={distance} />
           )) : (
             <EmptyState icon={Hotel} title="No hotel cards for this filter" body="Try another hotel filter or run a new search with broader stay preferences." />
           )}
@@ -1194,15 +1210,15 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
           className="space-y-5"
         >
           <SectionHeader icon={Bus} eyebrow="Transport" title="Your selected transport" />
-          {selectedTransport.length ? selectedTransport.map((transport: any) => (
-            <TransportCard key={transport?.id || transport?.transportType || transport?.displayName} transport={transport} selected />
+          {selectedTransport.length ? selectedTransport.map((transport: any, index: number) => (
+            <TransportCard key={`${transport?.id || transport?.transportType || transport?.displayName || 'transport'}-selected-${index}`} transport={transport} selected />
           )) : (
             <EmptyState icon={Bus} title="No selected transport" body="Available destination transport exists, but no option is currently selected in the planner." />
           )}
 
           <SectionHeader icon={Compass} eyebrow="Alternatives" title="Other available options" />
-          {otherTransport.length ? otherTransport.map((transport: any) => (
-            <TransportCard key={transport?.id || transport?.transportType || transport?.displayName} transport={transport} />
+          {otherTransport.length ? otherTransport.map((transport: any, index: number) => (
+            <TransportCard key={`${transport?.id || transport?.transportType || transport?.displayName || 'transport'}-other-${index}`} transport={transport} />
           )) : (
             <EmptyState icon={Bus} title="No other options available" body="The selected transport choices cover the currently available destination options." />
           )}

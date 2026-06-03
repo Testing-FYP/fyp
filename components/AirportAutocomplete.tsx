@@ -10,6 +10,8 @@ interface AirportSuggestion {
   iata_code: string;
   city_name: string;
   country_name: string;
+  country_code?: string;
+  iata_country_code?: string;
 }
 
 interface AirportAutocompleteProps {
@@ -19,12 +21,37 @@ interface AirportAutocompleteProps {
   placeholder: string;
 }
 
+function isValidAirportSuggestion(suggestion: any): suggestion is AirportSuggestion {
+  const iata = String(suggestion?.iata_code || '').trim();
+  const cityName = String(suggestion?.city_name || '').trim();
+  const airportName = String(suggestion?.name || '').trim();
+  const countryCode = String(suggestion?.iata_country_code || suggestion?.country_code || '').trim();
+
+  return (
+    /^[A-Z]{3}$/.test(iata) &&
+    cityName.length > 0 &&
+    airportName.length > 0 &&
+    countryCode.length > 0 &&
+    airportName.toLowerCase() !== 'none' &&
+    cityName.toLowerCase() !== 'none'
+  );
+}
+
 export default function AirportAutocomplete({ value, onSelect, onSelectSuggestion, placeholder }: AirportAutocompleteProps) {
   const [query, setQuery] = useState(value);
   const [suggestions, setSuggestions] = useState<AirportSuggestion[]>([]);
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const selectedDisplayRef = useRef<{ iata: string; label: string } | null>(null);
+
+  useEffect(() => {
+    if (selectedDisplayRef.current?.iata === value) {
+      setQuery(selectedDisplayRef.current.label);
+      return;
+    }
+    setQuery(value);
+  }, [value]);
 
   useEffect(() => {
     const fetchSuggestions = async () => {
@@ -36,7 +63,7 @@ export default function AirportAutocomplete({ value, onSelect, onSelectSuggestio
       try {
         const res = await fetch(`/api/airports/suggestions?query=${encodeURIComponent(query)}`);
         const data = await res.json();
-        setSuggestions(data || []);
+        setSuggestions(Array.isArray(data) ? data.filter(isValidAirportSuggestion) : []);
       } catch (err) {
         console.error(err);
       } finally {
@@ -66,6 +93,7 @@ export default function AirportAutocomplete({ value, onSelect, onSelectSuggestio
           type="text" 
           value={query}
           onChange={(e) => {
+            selectedDisplayRef.current = null;
             setQuery(e.target.value);
             setIsOpen(true);
           }}
@@ -96,9 +124,11 @@ export default function AirportAutocomplete({ value, onSelect, onSelectSuggestio
                   key={s.id}
                   type="button"
                   onClick={() => {
+                    const displayLabel = `${s.city_name}, ${s.country_name} (${s.iata_code})`;
+                    selectedDisplayRef.current = { iata: s.iata_code, label: displayLabel };
                     onSelect(s.iata_code);
                     onSelectSuggestion?.(s);
-                    setQuery(`${s.city_name} (${s.iata_code})`);
+                    setQuery(displayLabel);
                     setIsOpen(false);
                   }}
                   className="w-full px-4 py-4 text-left hover:bg-muted rounded-2xl flex items-center justify-between transition-all group mb-1 last:mb-0"
@@ -110,6 +140,7 @@ export default function AirportAutocomplete({ value, onSelect, onSelectSuggestio
                     <div>
                       <div className="font-bold text-[15px] text-foreground/80 group-hover:text-foreground transition-colors">{s.city_name}</div>
                       <div className="text-[10px] text-muted-foreground uppercase tracking-[0.15em] mt-1 font-semibold">{s.name}</div>
+                      <div className="text-[10px] text-muted-foreground/70 uppercase tracking-[0.15em] mt-1 font-semibold">{s.country_name}</div>
                     </div>
                   </div>
                   <div className="bg-muted px-3 py-2 rounded-xl text-[11px] font-bold text-muted-foreground border border-border group-hover:border-foreground/10 group-hover:text-foreground/60 transition-all font-mono">
