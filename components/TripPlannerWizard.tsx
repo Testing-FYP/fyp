@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   MapPin, Calendar as CalendarIcon, Users, Plane, DollarSign, Hotel, Bus, Star,
-  ChevronRight, ChevronLeft, Check, Minus, Plus, Sparkles, Briefcase,
+  ChevronRight, ChevronLeft, Check, Minus, Plus, Sparkles,
   Wifi, Coffee, UtensilsCrossed, Dumbbell, CarFront, Train, ArrowRight, BedDouble,
   Compass, AlertTriangle, Lightbulb, Pencil, Loader2
 } from 'lucide-react';
@@ -697,26 +697,6 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                     ))}
                   </div>
                 </div>
-
-                <div className="flex items-center justify-between py-5 px-6 rounded-3xl bg-muted border border-border">
-                  <div className="flex items-center gap-3">
-                    <Briefcase className="w-5 h-5 text-muted-foreground" />
-                    <div>
-                      <div className="text-base font-bold text-foreground">Checked Baggage</div>
-                      <div className="text-xs text-muted-foreground">Include checked bags?</div>
-                    </div>
-                  </div>
-                  <button type="button" onClick={() => update({ includeBaggage: !data.includeBaggage })}
-                    className={`w-16 h-9 rounded-full transition-all duration-300 relative shadow-inner ${data.includeBaggage ? 'bg-emerald-500' : 'bg-muted-foreground/20'}`}>
-                    <div className={`w-7 h-7 rounded-full shadow-lg absolute top-1 transition-all duration-300 flex items-center justify-center ${data.includeBaggage ? 'left-8 bg-white' : 'left-1 bg-white'}`}>
-                      {data.includeBaggage && <Check className="w-3.5 h-3.5 text-emerald-600 stroke-[3]" />}
-                    </div>
-                  </button>
-                </div>
-
-                {data.includeBaggage && (
-                  <Counter label="Number of Bags" sublabel="Per adult traveler" value={data.baggageCount} min={1} onChange={v => update({ baggageCount: v })} />
-                )}
 
                 <div className="flex items-center justify-between py-5 px-6 rounded-3xl bg-muted border border-border">
                   <div className="flex items-center gap-3">

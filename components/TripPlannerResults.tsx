@@ -10,13 +10,13 @@ import {
   Bus,
   CalendarDays,
   CarFront,
+  ChevronDown,
   ChevronRight,
   CircleDollarSign,
   Clock3,
   Compass,
   Crown,
   Hotel,
-  Leaf,
   MapPin,
   PlaneLanding,
   PlaneTakeoff,
@@ -101,14 +101,18 @@ function formatDuration(value: any) {
   if (typeof value === 'number') {
     const hours = Math.floor(value / 60);
     const minutes = value % 60;
-    return hours ? `${hours}h ${minutes}m` : `${minutes}m`;
+    if (hours && minutes) return `${hours}h ${minutes}m`;
+    if (hours) return `${hours}h`;
+    return `${minutes}m`;
   }
   const text = String(value).toUpperCase();
   const days = Number(text.match(/(\d+)D/)?.[1] || 0);
   const hours = Number(text.match(/(\d+)H/)?.[1] || 0) + days * 24;
   const minutes = Number(text.match(/(\d+)M/)?.[1] || 0);
   if (!hours && !minutes) return value;
-  return hours ? `${hours}h ${minutes}m` : `${minutes}m`;
+  if (hours && minutes) return `${hours}h ${minutes}m`;
+  if (hours) return `${hours}h`;
+  return `${minutes}m`;
 }
 
 function normalizeCabin(value: string) {
@@ -207,6 +211,27 @@ function getFlightSegmentNumbers(flight: any) {
     (slice?.segments || []).map((segment: any) => segment?.marketing_carrier_flight_number).filter(Boolean)
   );
   return Array.from(new Set(numbers));
+}
+
+function getCarryOnStatus(flight: any) {
+  const slices = Array.isArray(flight?.slices) ? flight.slices : [];
+  const extensionText = slices
+    .flatMap((slice: any) => Array.isArray(slice?.segments) ? slice.segments : [])
+    .flatMap((segment: any) => Array.isArray(segment?.extensions) ? segment.extensions : [])
+    .find((extension: any) => {
+      const text = String(extension || '').toLowerCase();
+      return text.includes('carry-on') || text.includes('bag');
+    });
+
+  if (!extensionText) return null;
+
+  const label = String(extensionText);
+  const unavailable = /(?:^|\b)no\b/i.test(label);
+  return {
+    label,
+    tone: unavailable ? 'red' as const : 'green' as const,
+    prefix: unavailable ? '✗' : '✓',
+  };
 }
 
 function getSliceRouteCodes(slice: any) {
@@ -472,11 +497,15 @@ export function BudgetBreakdown({ breakdown, plannerData }: { breakdown: any; pl
   );
 }
 
-export function FlightCard({ flight, index, travelerCount = 1 }: { flight: any; index: number; travelerCount?: number }) {
+export function FlightCard({ flight, index, travelerCount = 1, isExpanded, onToggle }: { flight: any; index: number; travelerCount?: number; isExpanded: boolean; onToggle: () => void }) {
   const [activeSliceIndex, setActiveSliceIndex] = useState(0);
   const { slice, segments, first, last } = getFlightEndpoints(flight);
   const slices = Array.isArray(flight?.slices) && flight.slices.length > 0 ? flight.slices : [slice].filter(Boolean);
   const activeSlice = slices[Math.min(activeSliceIndex, slices.length - 1)] || slices[0];
+  const activeEndpoints = getSliceEndpoints(activeSlice);
+  const activeFirst = activeEndpoints.first;
+  const activeLast = activeEndpoints.last;
+  const activeSegments = activeEndpoints.segments;
   const price = getFlightPrice(flight);
   const perTravelerPrice = price && travelerCount > 1 ? price / travelerCount : null;
   const direct = slices.every((item: any) => (item?.segments || []).length <= 1);
@@ -501,53 +530,87 @@ export function FlightCard({ flight, index, travelerCount = 1 }: { flight: any; 
   const hasUsb = amenitiesText.includes('usb');
   const hasWifi = amenitiesText.includes('wi-fi') || amenitiesText.includes('wifi');
   const hasVideo = amenitiesText.includes('video') || amenitiesText.includes('stream');
+  const carryOnStatus = getCarryOnStatus(flight);
   const carbon = first?.carbon_emissions || first?.carbonEmissions || flight?.carbon_emissions;
 
   return (
-    <article className="rounded-3xl border border-border bg-card p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-xl">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex items-start gap-4">
-          <div className="relative flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-border bg-background text-muted-foreground">
-            <PlaneTakeoff className="h-7 w-7" />
-            {carrierLogo ? (
-              <img
-                src={carrierLogo}
-                alt={`${carrier} logo`}
-                className="absolute inset-0 h-full w-full bg-background object-contain p-1.5"
-                referrerPolicy="no-referrer"
-                loading="lazy"
-                onError={(event) => {
-                  event.currentTarget.style.display = 'none';
-                }}
-              />
-            ) : null}
-          </div>
-          <div>
-            <div className="flex flex-wrap items-center gap-2">
-              {index === 0 ? <Badge tone="green" strong><Sparkles className="h-4 w-4" />Best Value</Badge> : null}
-              {index === 0 ? <Badge tone="amber" strong>Cheapest</Badge> : <Badge tone="blue" strong>Available</Badge>}
-              {direct ? <Badge tone="blue" strong>Fastest</Badge> : null}
+    <article
+      onClick={onToggle}
+      className="cursor-pointer rounded-3xl border border-border bg-card p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-xl"
+    >
+      <div className="space-y-4">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="flex items-start gap-4">
+            <div className="relative flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-border bg-background text-muted-foreground">
+              <PlaneTakeoff className="h-7 w-7" />
+              {carrierLogo ? (
+                <img
+                  src={carrierLogo}
+                  alt={`${carrier} logo`}
+                  className="absolute inset-0 h-full w-full bg-background object-contain p-1.5"
+                  referrerPolicy="no-referrer"
+                  loading="lazy"
+                  onError={(event) => {
+                    event.currentTarget.style.display = 'none';
+                  }}
+                />
+              ) : null}
             </div>
-            <h3 className="mt-3 text-xl font-black text-foreground">{carrier}</h3>
-            <p className="mt-1 text-sm font-semibold text-muted-foreground">
-              {(flightNumbers.length ? flightNumbers.join(' + ') : flightNumber)}{carrierCode ? ` / ${carrierCode}` : ''}
-            </p>
+            <div>
+              <h3 className="text-xl font-black text-foreground">{carrier}</h3>
+              <p className="mt-1 text-sm font-semibold text-muted-foreground">
+                {(flightNumbers.length ? flightNumbers.join(' + ') : flightNumber)}{carrierCode ? ` / ${carrierCode}` : ''}
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+            {index === 0 ? <Badge tone="green" strong><Sparkles className="h-4 w-4" />Best Value</Badge> : null}
+            {index === 0 ? <Badge tone="amber" strong>Cheapest</Badge> : <Badge tone="blue" strong>Available</Badge>}
+            {direct ? <Badge tone="blue" strong>Fastest</Badge> : null}
+            {carryOnStatus ? <Badge tone={carryOnStatus.tone} strong>{carryOnStatus.prefix} {carryOnStatus.label}</Badge> : null}
           </div>
         </div>
-        <div className="text-left lg:text-right">
-          <p className="text-3xl title-text text-foreground">{formatMoney(price)}</p>
-          <p className="text-xs font-black uppercase tracking-[0.14em] text-muted-foreground">Total fare</p>
-          <div className="mt-1 flex justify-start lg:justify-end">
-            <CabinClassBadge cabin={cabin} />
+
+        <div className="grid gap-3 md:grid-cols-[1fr_1fr_1fr_1fr_1.25fr_auto] md:items-stretch">
+          <div className="rounded-2xl border border-border bg-background/60 p-3">
+            <p className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">Depart</p>
+            <p className="mt-1 text-xl font-black text-foreground">{formatTime(activeFirst?.departing_at)}</p>
+            <p className="text-xs font-bold text-muted-foreground">{activeFirst?.origin?.iata_code || 'DEP'}</p>
           </div>
-          {perTravelerPrice ? (
-            <p className="mt-1 text-sm font-bold text-muted-foreground">
-              {formatMoney(perTravelerPrice)} per traveler x {travelerCount}
+          <div className="rounded-2xl border border-border bg-background/60 p-3">
+            <p className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">Arrive</p>
+            <p className="mt-1 text-xl font-black text-foreground">{formatTime(activeLast?.arriving_at)}</p>
+            <p className="text-xs font-bold text-muted-foreground">{activeLast?.destination?.iata_code || 'ARR'}</p>
+          </div>
+          <div className="rounded-2xl border border-border bg-background/60 p-3">
+            <p className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">Duration</p>
+            <p className="mt-1 text-xl font-black text-foreground">{formatDuration(activeSlice?.duration)}</p>
+          </div>
+          <div className="rounded-2xl border border-border bg-background/60 p-3">
+            <p className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">Stops</p>
+            <p className="text-xs font-bold uppercase text-muted-foreground">
+              {activeSegments.length <= 1 ? 'NONSTOP' : `${activeSegments.length - 1} stop${activeSegments.length === 2 ? '' : 's'}`}
             </p>
-          ) : null}
+          </div>
+          <div className="rounded-2xl border border-border bg-background/60 p-3">
+            <p className="text-3xl title-text text-foreground">{formatMoney(price)}</p>
+            <p className="text-xs font-black uppercase tracking-[0.14em] text-muted-foreground">Total fare</p>
+            <div className="mt-2 flex justify-start">
+              <CabinClassBadge cabin={cabin} />
+            </div>
+            {perTravelerPrice ? (
+              <p className="mt-1 text-sm font-bold text-muted-foreground">
+                {formatMoney(perTravelerPrice)} per traveler x {travelerCount}
+              </p>
+            ) : null}
+          </div>
+          <div className="flex items-center justify-end">
+            <ChevronDown className={`h-6 w-6 shrink-0 text-muted-foreground transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''}`} />
+          </div>
         </div>
       </div>
 
+      <div className={`overflow-hidden transition-[max-height,opacity] duration-300 ease-out ${isExpanded ? 'max-h-[5000px] opacity-100' : 'max-h-0 opacity-0'}`}>
       <div className="mt-5 space-y-4">
         {slices.length > 1 ? (
           <div className="grid gap-2 rounded-2xl border border-border bg-muted p-1 sm:grid-cols-2">
@@ -561,7 +624,10 @@ export function FlightCard({ flight, index, travelerCount = 1 }: { flight: any; 
                 <button
                   key={flightSlice?.id || sliceIndex}
                   type="button"
-                  onClick={() => setActiveSliceIndex(sliceIndex)}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setActiveSliceIndex(sliceIndex);
+                  }}
                   className={`flex items-center justify-between gap-3 rounded-xl px-4 py-3 text-left transition ${
                     active ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
                   }`}
@@ -581,6 +647,7 @@ export function FlightCard({ flight, index, travelerCount = 1 }: { flight: any; 
           slice={activeSlice}
           label={slices.length > 1 ? (activeSliceIndex === 0 ? 'Outbound' : 'Return') : 'One-way'}
         />
+      </div>
       </div>
 
     </article>
@@ -674,7 +741,7 @@ function FlightSegmentDetails({ segment, segmentIndex, totalSegments }: { segmen
   const hasUsb = amenitiesText.includes('usb');
   const hasWifi = amenitiesText.includes('wi-fi') || amenitiesText.includes('wifi');
   const hasVideo = amenitiesText.includes('video') || amenitiesText.includes('stream');
-  const carbon = segment?.carbon_emissions || segment?.carbonEmissions;
+  const carryOnStatus = getCarryOnStatus({ slices: [{ segments: [segment] }] });
 
   return (
     <div className="rounded-2xl border border-border bg-card p-4">
@@ -697,7 +764,7 @@ function FlightSegmentDetails({ segment, segmentIndex, totalSegments }: { segmen
         <Detail icon={PlaneTakeoff} label="Aircraft" value={segment?.aircraft_name || 'Aircraft TBA'} />
         <Detail icon={Ticket} label="Cabin" value={cabinLabel(segment?.cabin_class || 'economy')} />
         <Detail icon={BedDouble} label="Legroom" value={segment?.legroom || 'Legroom TBA'} />
-        <Detail icon={Leaf} label="Carbon" value={carbon ? `${carbon}` : 'Estimate unavailable'} />
+        {carryOnStatus ? <Detail icon={Ticket} label="BAGGAGE" value={carryOnStatus.label} /> : null}
       </div>
 
       <div className="mt-3 flex flex-wrap gap-2">
@@ -962,6 +1029,7 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
   const [flightFilter, setFlightFilter] = useState('best');
   const [hotelFilter, setHotelFilter] = useState('recommended');
   const [placeFilter, setPlaceFilter] = useState('all');
+  const [expandedCards, setExpandedCards] = useState<Set<number>>(new Set());
 
   const destination = getDestinationDisplay(results, plannerData);
 
@@ -1021,6 +1089,15 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
       flight={flight}
       index={index}
       travelerCount={travelerCount}
+      isExpanded={expandedCards.has(index)}
+      onToggle={() => {
+        setExpandedCards(prev => {
+          const next = new Set(prev);
+          if (next.has(index)) next.delete(index);
+          else next.add(index);
+          return next;
+        });
+      }}
     />
   ));
 
