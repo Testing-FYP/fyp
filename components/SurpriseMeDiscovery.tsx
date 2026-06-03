@@ -234,7 +234,7 @@ export default function SurpriseMeDiscovery({ onDestinationSelect }: SurpriseMeD
       includeFlight,
       includeHotel,
       includeTransport: true,
-      transportTypes: ['bus'],
+      transportTypes: ['public_bus'],
       transportPriority: pace === 'packed' ? 'fastest' : 'cheapest',
       vibes: selectedVibes,
       hotelStars: travelerSafeBudget >= 3500 ? 5 : travelerSafeBudget >= 2200 ? 4 : 3,

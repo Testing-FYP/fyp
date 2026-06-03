@@ -6,7 +6,7 @@ import {
   MapPin, Calendar as CalendarIcon, Users, Plane, DollarSign, Hotel, Bus, Star,
   ChevronRight, ChevronLeft, Check, Minus, Plus, Sparkles, Briefcase,
   Wifi, Coffee, UtensilsCrossed, Dumbbell, CarFront, Train, ArrowRight, BedDouble,
-  Compass, AlertTriangle, Lightbulb, Pencil
+  Compass, AlertTriangle, Lightbulb, Pencil, Loader2
 } from 'lucide-react';
 import AirportAutocomplete from './AirportAutocomplete';
 import { Calendar } from '@/components/ui/calendar';
@@ -15,13 +15,37 @@ import type { DateRange } from 'react-day-picker';
 type TripType = 'one_way' | 'round_trip' | 'multi_city';
 type CabinClass = 'economy' | 'premium_economy' | 'business' | 'first';
 type BudgetMode = 'total' | 'per_category';
-type TransportType = 'private_car' | 'shared_shuttle' | 'bus' | 'train';
+type TransportType = 'metro_subway' | 'train' | 'public_bus' | 'taxi' | 'rideshare_uber' | 'rental_car';
 type TransportPriority = 'cheapest' | 'fastest' | 'comfortable';
+
+export interface TransportOption {
+  id: TransportType;
+  transportType: TransportType;
+  type: TransportType;
+  displayName: string;
+  available: boolean;
+  estimatedPrice: number | null;
+  priceLabel: string;
+  singleTicketPrice?: string;
+  dayPassPrice?: string;
+  priceRange?: string;
+  travelTimeNotes?: string;
+  pricingType?: string;
+  pricingNotes?: string;
+  meterInfo?: string;
+  surgePricingNotes?: string;
+  extraCosts?: string;
+  bestUseCase?: string;
+  notes: string;
+  dataSource?: string;
+}
 
 export interface PlannerData {
   // Step 1
   origin: string;
   destination: string;
+  destinationCity?: string;
+  destinationCountry?: string;
   tripType: TripType;
   // Step 2
   departureDate: string;
@@ -47,6 +71,8 @@ export interface PlannerData {
   includeTransport: boolean;
   transportTypes: TransportType[];
   transportPriority: TransportPriority;
+  transportOptions?: TransportOption[];
+  transportDataSource?: string;
   // Step 7 — Vibe
   vibes: string[];
   // Step 8 — Budget
@@ -86,6 +112,15 @@ const VIBE_OPTIONS = [
   { id: 'relaxation_wellness', label: 'Relaxation & Wellness', emoji: '🧘' },
   { id: 'art_architecture', label: 'Art & Architecture', emoji: '🎨' },
   { id: 'family_friendly', label: 'Family Friendly', emoji: '👨‍👩‍👧' },
+];
+
+const TRANSPORT_OPTIONS: { value: TransportType; label: string; icon: any }[] = [
+  { value: 'metro_subway', label: 'Metro / Subway', icon: Train },
+  { value: 'train', label: 'Train', icon: Train },
+  { value: 'public_bus', label: 'Public Bus', icon: Bus },
+  { value: 'taxi', label: 'Taxi', icon: CarFront },
+  { value: 'rideshare_uber', label: 'Rideshare / Uber', icon: CarFront },
+  { value: 'rental_car', label: 'Rental Car', icon: CarFront },
 ];
 
 const STEPS = [
@@ -134,18 +169,73 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
     nearAirport: false,
     nights: 1,
     includeTransport: true,
-    transportTypes: ['bus'],
+    transportTypes: ['public_bus'],
     transportPriority: 'cheapest',
     vibes: [],
     ...initialData,
   });
 
   const update = (partial: Partial<PlannerData>) => setData(prev => ({ ...prev, ...partial }));
+  const [transportLoading, setTransportLoading] = useState(false);
+  const transportFetchKeyRef = useRef('');
+
+  const getTransportLookupKey = (current: PlannerData) => [
+    current.destination,
+    current.destinationCity || '',
+    current.destinationCountry || '',
+    current.transportPriority,
+  ].join('|');
+
+  const applyTransportResponse = (json: any) => {
+    const options = Array.isArray(json?.options) ? json.options : [];
+    const availableIds = new Set(options.filter((option: TransportOption) => option.available).map((option: TransportOption) => option.id));
+    setData(prev => {
+      const selectedAvailable = prev.transportTypes.filter(type => availableIds.has(type));
+      const firstAvailable = options.find((option: TransportOption) => option.available)?.id;
+      return {
+        ...prev,
+        transportOptions: options,
+        transportDataSource: json?.dataSource || 'static_fallback',
+        transportTypes: selectedAvailable.length ? selectedAvailable : firstAvailable ? [firstAvailable] : [],
+      };
+    });
+  };
+
+  const fetchTransportOptions = useCallback(async (current: PlannerData) => {
+    if (!current.includeTransport || !current.destination) return;
+    const lookupKey = getTransportLookupKey(current);
+    if (transportLoading || transportFetchKeyRef.current === lookupKey) return;
+
+    transportFetchKeyRef.current = lookupKey;
+    setTransportLoading(true);
+    try {
+      const response = await fetch('/api/planner/transport', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          destination: current.destination,
+          destinationCity: current.destinationCity || current.destination,
+          destinationCountry: current.destinationCountry || '',
+          selectedTransportTypes: current.transportTypes,
+          transportPriority: current.transportPriority,
+        }),
+      });
+      const json = await response.json();
+      applyTransportResponse(json);
+    } catch {
+      transportFetchKeyRef.current = '';
+    } finally {
+      setTransportLoading(false);
+    }
+  }, [transportLoading]);
 
   const next = () => {
     if (step < STEPS.length - 1) {
       setDirection(1);
       setStep(s => s + 1);
+      if (step === 2) {
+        void fetchTransportOptions(data);
+      }
     }
   };
   const prev = () => {
@@ -162,8 +252,15 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
   const canProceed = () => {
     if (step === 0) return data.origin && data.destination;
     if (step === 1) return data.departureDate && (data.tripType !== 'round_trip' || data.returnDate);
+    if (step === 5 && data.includeTransport) return !transportLoading && data.transportTypes.length > 0;
     return true;
   };
+
+  useEffect(() => {
+    if (step === 5 && data.includeTransport && !data.transportOptions?.length) {
+      void fetchTransportOptions(data);
+    }
+  }, [step, data.includeTransport, data.destination, data.transportOptions?.length, fetchTransportOptions]);
 
   const progress = ((step + 1) / STEPS.length) * 100;
 
@@ -325,6 +422,9 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
     </div>
   );
 
+  const getTransportOption = (type: TransportType) => data.transportOptions?.find(option => option.id === type || option.transportType === type);
+  const destinationLabel = data.destinationCity || data.destination || 'this destination';
+
   const renderStep = () => {
     switch (step) {
       // Step 1 — Destination
@@ -348,7 +448,18 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
             </div>
             <div className="space-y-3 relative z-20">
               <label className="small-caps ml-1">To</label>
-              <AirportAutocomplete value={data.destination} onSelect={(v) => update({ destination: v })} placeholder="Arrival City" />
+              <AirportAutocomplete
+                value={data.destination}
+                onSelect={(v) => update({ destination: v, destinationCity: undefined, destinationCountry: undefined, transportOptions: undefined, transportDataSource: undefined })}
+                onSelectSuggestion={(suggestion) => update({
+                  destination: suggestion.iata_code,
+                  destinationCity: suggestion.city_name,
+                  destinationCountry: suggestion.country_name,
+                  transportOptions: undefined,
+                  transportDataSource: undefined,
+                })}
+                placeholder="Arrival City"
+              />
             </div>
           </div>
         );
@@ -911,25 +1022,52 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
               <>
                 <div className="space-y-3">
                   <label className="small-caps ml-1">Transport Type <span className="normal-case text-[9px] text-muted-foreground/50 ml-1">(select multiple)</span></label>
+                  {transportLoading && (
+                    <div className="flex items-center justify-center gap-3 rounded-2xl border border-border bg-muted px-5 py-4 text-xs font-bold uppercase tracking-[0.14em] text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Checking live transport in {destinationLabel}
+                    </div>
+                  )}
+                  {!transportLoading && data.transportOptions?.length ? (
+                    <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 px-5 py-3 text-[10px] font-bold uppercase tracking-[0.14em] text-emerald-700 dark:text-emerald-300">
+                      Live transport data ready
+                    </div>
+                  ) : null}
                   <div className="grid grid-cols-2 gap-3">
-                    {([
-                      { value: 'private_car', label: 'Private Car', icon: CarFront },
-                      { value: 'shared_shuttle', label: 'Shuttle', icon: Bus },
-                      { value: 'bus', label: 'Bus', icon: Bus },
-                      { value: 'train', label: 'Train', icon: Train },
-                    ] as { value: TransportType; label: string; icon: any }[]).map(t => {
+                    {TRANSPORT_OPTIONS.map(t => {
                       const selected = data.transportTypes.includes(t.value);
+                      const liveOption = getTransportOption(t.value);
+                      const hasLiveData = !!liveOption;
+                      const available = !hasLiveData || liveOption.available;
+                      const unavailableLabel = `Not available in ${destinationLabel}`;
                       return (
                         <button key={t.value} type="button"
+                          disabled={!available}
                           onClick={() => update({
                             transportTypes: selected
                               ? data.transportTypes.filter(x => x !== t.value)
                               : [...data.transportTypes, t.value]
                           })}
-                          className={`flex items-center justify-center gap-2 py-4 rounded-2xl border text-xs uppercase tracking-[0.12em] font-bold transition-all duration-200 ${selected ? 'bg-emerald-500 text-white border-emerald-500 shadow-lg shadow-emerald-500/20' : 'bg-background border-border text-muted-foreground hover:border-foreground/30'}`}>
-                          <t.icon className="w-4 h-4" />
-                          {t.label}
-                          {selected && <Check className="w-3.5 h-3.5 ml-1" />}
+                          className={`flex min-h-[104px] flex-col items-start justify-between gap-3 rounded-2xl border p-4 text-left transition-all duration-200 ${
+                            !available
+                              ? 'cursor-not-allowed bg-muted/60 border-border text-muted-foreground/35'
+                              : selected
+                                ? 'bg-emerald-500 text-white border-emerald-500 shadow-lg shadow-emerald-500/20'
+                                : 'bg-background border-border text-muted-foreground hover:border-foreground/30 hover:text-foreground'
+                          }`}>
+                          <div className="flex w-full items-center gap-2">
+                            <t.icon className="h-4 w-4 shrink-0" />
+                            <span className="text-[11px] font-black uppercase tracking-[0.12em]">{t.label}</span>
+                            {selected && available && <Check className="ml-auto h-3.5 w-3.5 shrink-0" />}
+                          </div>
+                          <div className="space-y-1">
+                            <div className={`text-sm font-black ${selected && available ? 'text-white' : 'text-foreground'}`}>
+                              {available ? liveOption?.priceLabel || 'Price pending' : 'Unavailable'}
+                            </div>
+                            <div className={`text-[10px] font-semibold leading-relaxed ${selected && available ? 'text-white/75' : 'text-muted-foreground'}`}>
+                              {available ? liveOption?.notes || 'Live details will appear here.' : unavailableLabel}
+                            </div>
+                          </div>
                         </button>
                       );
                     })}

@@ -9,6 +9,7 @@ import {
   BedDouble,
   Bus,
   CalendarDays,
+  CarFront,
   ChevronRight,
   CircleDollarSign,
   Clock3,
@@ -24,6 +25,7 @@ import {
   Star,
   Ticket,
   TrendingUp,
+  Train,
   Usb,
   Users,
   Video,
@@ -832,34 +834,64 @@ export function HotelCard({ hotel, suspicious, distanceKm }: { hotel: any; suspi
   );
 }
 
-export function TransportCard({ transport }: { transport: any }) {
+function getTransportIcon(type: string) {
+  if (type === 'metro_subway' || type === 'train') return <Train className="h-6 w-6" />;
+  if (type === 'taxi' || type === 'rideshare_uber' || type === 'rental_car') return <CarFront className="h-6 w-6" />;
+  return <Bus className="h-6 w-6" />;
+}
+
+function getTransportDetailItems(transport: any) {
+  return [
+    transport?.singleTicketPrice ? { label: 'Ticket', value: transport.singleTicketPrice } : null,
+    transport?.dayPassPrice ? { label: 'Day pass', value: transport.dayPassPrice } : null,
+    transport?.priceRange ? { label: 'Range', value: transport.priceRange } : null,
+    transport?.pricingType ? { label: 'Pricing', value: transport.pricingType } : null,
+    transport?.meterInfo ? { label: 'Meter', value: transport.meterInfo } : null,
+    transport?.surgePricingNotes ? { label: 'Surge', value: transport.surgePricingNotes } : null,
+    transport?.extraCosts ? { label: 'Extras', value: transport.extraCosts } : null,
+    transport?.bestUseCase ? { label: 'Best for', value: transport.bestUseCase } : null,
+  ].filter(Boolean).slice(0, 3) as { label: string; value: string }[];
+}
+
+export function TransportCard({ transport, selected = false }: { transport: any; selected?: boolean }) {
+  const icon = getTransportIcon(transport?.id || transport?.transportType || transport?.type);
+  const detailItems = getTransportDetailItems(transport);
+
   return (
     <article className="rounded-3xl border border-border bg-card p-5 shadow-sm">
       <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
         <div className="flex items-start gap-4">
           <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-foreground text-background">
-            <Bus className="h-6 w-6" />
+            {icon}
           </div>
           <div>
             <div className="flex flex-wrap gap-2">
-              <Badge tone="amber" strong>Cheapest</Badge>
-              <Badge tone="green" strong>Recommended</Badge>
+              {selected ? <Badge tone="green" strong>Selected</Badge> : <Badge tone="blue" strong>Available</Badge>}
             </div>
-            <h3 className="mt-3 text-xl font-black text-foreground">{transport?.operator || 'Ground transport'}</h3>
+            <h3 className="mt-3 text-xl font-black text-foreground">{transport?.displayName || transport?.operator || 'Ground transport'}</h3>
             <p className="mt-1 text-sm font-semibold capitalize text-muted-foreground">
-              Type: {(transport?.transportType || transport?.type || 'bus').replace(/_/g, ' ')} / Priority: cheapest
+              {(transport?.transportType || transport?.type || 'transport').replace(/_/g, ' ')}
             </p>
           </div>
         </div>
         <div className="md:text-right">
-          <p className="text-3xl title-text text-foreground">{formatMoney(transport?.price ?? 70)}</p>
-          <p className="text-xs font-black uppercase tracking-[0.14em] text-muted-foreground">estimated budget</p>
+          <p className="text-3xl title-text text-foreground">{transport?.priceLabel || formatMoney(transport?.estimatedPrice ?? transport?.price ?? 70)}</p>
+          <p className="text-xs font-black uppercase tracking-[0.14em] text-muted-foreground">estimated cost</p>
         </div>
       </div>
+      <p className="mt-5 text-sm leading-relaxed text-muted-foreground">
+        {transport?.notes || transport?.travelTimeNotes || 'Check local provider details before booking.'}
+      </p>
       <div className="mt-5 grid gap-3 sm:grid-cols-3">
-        <Detail icon={Clock3} label="Duration" value={transport?.duration || 'Time TBA'} />
-        <Detail icon={Ticket} label="Class" value={transport?.class || 'Standard'} />
-        <Detail icon={MapPin} label="Pickup" value={transport?.location || 'Station TBA'} />
+        {detailItems.length ? detailItems.map(item => (
+          <Detail key={item.label} icon={Ticket} label={item.label} value={item.value} />
+        )) : (
+          <>
+            <Detail icon={Clock3} label="Timing" value={transport?.travelTimeNotes || transport?.duration || 'Varies'} />
+            <Detail icon={Ticket} label="Price" value={transport?.priceLabel || 'Varies'} />
+            <Detail icon={MapPin} label="Use case" value={transport?.bestUseCase || 'City travel'} />
+          </>
+        )}
       </div>
     </article>
   );
@@ -965,7 +997,10 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
     return all;
   }, [results?.placesToVisit, placeFilter]);
 
-  const transport = [...(results?.transport || [])].sort((a, b) => (asNumber(a?.price) ?? Infinity) - (asNumber(b?.price) ?? Infinity))[0];
+  const transportOptions = useMemo(() => [...(results?.transport || [])].filter(option => option?.available !== false), [results?.transport]);
+  const selectedTransportTypes = new Set(plannerData?.transportTypes || results?.selectedTransportTypes || []);
+  const selectedTransport = transportOptions.filter(option => selectedTransportTypes.has(option?.id || option?.transportType || option?.type));
+  const otherTransport = transportOptions.filter(option => !selectedTransportTypes.has(option?.id || option?.transportType || option?.type));
   const suspiciousHotelCount = hotels.filter(item => item.suspicious).length;
   const travelerCount = Math.max(1, (plannerData?.adults || 0) + (plannerData?.children || 0));
 
@@ -975,7 +1010,7 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
     { id: 'overview', label: 'Overview' },
     { id: 'flights', label: 'Flights', count: flights.length },
     { id: 'hotels', label: 'Hotels', count: results?.hotels?.length || 0 },
-    { id: 'transport', label: 'Transport', count: transport ? 1 : 0 },
+    { id: 'transport', label: 'Transport', count: transportOptions.length },
     { id: 'places', label: 'Places', count: results?.placesToVisit?.length || 0 },
     { id: 'upgrades', label: 'Upgrades', count: results?.upsellOptions?.length || 3 },
   ];
@@ -1081,9 +1116,18 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
           transition={{ duration: 0.25 }}
           className="space-y-5"
         >
-          <SectionHeader icon={Bus} eyebrow="Transport" title="Cheapest selected transport" />
-          {transport ? <TransportCard transport={transport} /> : (
-            <EmptyState icon={Bus} title="No transport returned" body="Ground transport will appear when the selected destination has matching options." />
+          <SectionHeader icon={Bus} eyebrow="Transport" title="Your selected transport" />
+          {selectedTransport.length ? selectedTransport.map((transport: any) => (
+            <TransportCard key={transport?.id || transport?.transportType || transport?.displayName} transport={transport} selected />
+          )) : (
+            <EmptyState icon={Bus} title="No selected transport" body="Available destination transport exists, but no option is currently selected in the planner." />
+          )}
+
+          <SectionHeader icon={Compass} eyebrow="Alternatives" title="Other available options" />
+          {otherTransport.length ? otherTransport.map((transport: any) => (
+            <TransportCard key={transport?.id || transport?.transportType || transport?.displayName} transport={transport} />
+          )) : (
+            <EmptyState icon={Bus} title="No other options available" body="The selected transport choices cover the currently available destination options." />
           )}
         </motion.section>
       )}

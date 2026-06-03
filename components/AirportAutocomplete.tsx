@@ -15,10 +15,11 @@ interface AirportSuggestion {
 interface AirportAutocompleteProps {
   value: string;
   onSelect: (iata: string) => void;
+  onSelectSuggestion?: (suggestion: AirportSuggestion) => void;
   placeholder: string;
 }
 
-export default function AirportAutocomplete({ value, onSelect, placeholder }: AirportAutocompleteProps) {
+export default function AirportAutocomplete({ value, onSelect, onSelectSuggestion, placeholder }: AirportAutocompleteProps) {
   const [query, setQuery] = useState(value);
   const [suggestions, setSuggestions] = useState<AirportSuggestion[]>([]);
   const [isOpen, setIsOpen] = useState(false);
@@ -96,6 +97,7 @@ export default function AirportAutocomplete({ value, onSelect, placeholder }: Ai
                   type="button"
                   onClick={() => {
                     onSelect(s.iata_code);
+                    onSelectSuggestion?.(s);
                     setQuery(`${s.city_name} (${s.iata_code})`);
                     setIsOpen(false);
                   }}

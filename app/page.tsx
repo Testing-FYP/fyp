@@ -18,6 +18,16 @@ export default function Home() {
   const [plannerMode, setPlannerMode] = useState<'classic' | 'surprise'>('classic');
   const resultsRef = useRef<HTMLDivElement>(null);
 
+  const attachPrefetchedTransport = (json: any, data: PlannerData) => {
+    if (!data.includeTransport || !data.transportOptions?.length) return json;
+    return {
+      ...json,
+      transport: data.transportOptions,
+      transportDataSource: data.transportDataSource,
+      selectedTransportTypes: data.transportTypes,
+    };
+  };
+
   const handleComplete = async (data: PlannerData) => {
     setIsLoading(true);
     setError(null);
@@ -33,7 +43,7 @@ export default function Home() {
 
       if (json.error) throw new Error(json.error);
 
-      setResults(json);
+      setResults(attachPrefetchedTransport(json, data));
 
       // Scroll to results
       setTimeout(() => {
@@ -67,7 +77,7 @@ export default function Home() {
       });
       const json = await res.json();
       if (json.error) throw new Error(json.error);
-      setResults(json);
+      setResults(attachPrefetchedTransport(json, updatedData));
       setPlannerData(updatedData);
 
       setTimeout(() => {
