@@ -788,7 +788,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
               <>
                 <div className="space-y-3">
                   <label className="small-caps ml-1">Cabin Class</label>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-2 items-start gap-3">
                     {([
                       { value: 'economy', label: 'Economy' },
                       { value: 'premium_economy', label: 'Premium Economy' },
@@ -1133,26 +1133,36 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                               ? data.transportTypes.filter(x => x !== t.value)
                               : [...data.transportTypes, t.value]
                           })}
-                          className={`flex min-h-[104px] flex-col items-start justify-between gap-3 rounded-2xl border p-4 text-left transition-all duration-200 ${
+                          className={`transition-all duration-200 ${
                             !available
-                              ? 'cursor-not-allowed bg-muted/60 border-border text-muted-foreground/35'
+                              ? 'flex items-center gap-2 rounded-xl border border-border/60 bg-muted/35 px-3 py-2 text-left text-muted-foreground/60'
                               : selected
-                                ? 'bg-emerald-500 text-white border-emerald-500 shadow-lg shadow-emerald-500/20'
-                                : 'bg-background border-border text-muted-foreground hover:border-foreground/30 hover:text-foreground'
+                                ? 'flex min-h-[104px] flex-col items-start justify-between gap-3 rounded-2xl border p-4 text-left bg-emerald-500 text-white border-emerald-500 shadow-lg shadow-emerald-500/20'
+                                : 'flex min-h-[104px] flex-col items-start justify-between gap-3 rounded-2xl border p-4 text-left bg-background border-border text-muted-foreground hover:border-foreground/30 hover:text-foreground'
                           }`}>
-                          <div className="flex w-full items-center gap-2">
-                            <t.icon className="h-4 w-4 shrink-0" />
-                            <span className="text-[11px] font-black uppercase tracking-[0.12em]">{t.label}</span>
-                            {selected && available && <Check className="ml-auto h-3.5 w-3.5 shrink-0" />}
-                          </div>
-                          <div className="space-y-1">
-                            <div className={`text-sm font-black ${selected && available ? 'text-white' : 'text-foreground'}`}>
-                              {available ? liveOption?.priceLabel || 'Price pending' : 'Unavailable'}
-                            </div>
-                            <div className={`text-[10px] font-semibold leading-relaxed ${selected && available ? 'text-white/75' : 'text-muted-foreground'}`}>
-                              {available ? liveOption?.notes || 'Live details will appear here.' : unavailableLabel}
-                            </div>
-                          </div>
+                          {!available ? (
+                            <>
+                              <span className="text-sm font-black leading-none">×</span>
+                              <span className="min-w-0 text-[10px] font-black uppercase tracking-[0.1em] text-gray-500">{t.label}</span>
+                              <span className="ml-auto min-w-0 truncate text-[10px] font-semibold normal-case tracking-normal text-gray-500">{unavailableLabel}</span>
+                            </>
+                          ) : (
+                            <>
+                              <div className="flex w-full items-center gap-2">
+                                <t.icon className="h-4 w-4 shrink-0" />
+                                <span className="text-[11px] font-black uppercase tracking-[0.12em]">{t.label}</span>
+                                {selected && <Check className="ml-auto h-3.5 w-3.5 shrink-0" />}
+                              </div>
+                              <div className="space-y-1">
+                                <div className={`text-sm font-black ${selected ? 'text-white' : 'text-foreground'}`}>
+                                  {liveOption?.priceLabel || 'Price pending'}
+                                </div>
+                                <div className={`text-[10px] font-semibold leading-relaxed ${selected ? 'text-white/75' : 'text-muted-foreground'}`}>
+                                  {liveOption?.notes || 'Live details will appear here.'}
+                                </div>
+                              </div>
+                            </>
+                          )}
                         </button>
                       );
                     })}
