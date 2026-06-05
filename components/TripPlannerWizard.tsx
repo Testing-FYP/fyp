@@ -137,16 +137,15 @@ const STEPS = [
   { title: 'Where To', subtitle: 'Select your destination' },
   { title: 'When', subtitle: 'Pick your travel dates' },
   { title: 'Who', subtitle: 'How many travelers?' },
-  { title: 'Flight Style', subtitle: 'Choose your cabin preferences' },
-  { title: 'Stay', subtitle: 'Define your hotel needs' },
-  { title: 'Transportation', subtitle: 'Choose how you want to move around your destination' },
+  { title: 'Budget', subtitle: 'Set how the trip money should be used' },
   { title: 'Your Vibe', subtitle: "What's your travel style?" },
-  { title: 'Budget', subtitle: 'Set your spending limits' },
   { title: 'Review', subtitle: 'Confirm your trip details' },
 ];
 
+const STEP_CONTENT_IDS = [0, 1, 2, 9, 6, 8] as const;
+
 export default function TripPlannerWizard({ onComplete, isLoading, initialStep = 0, initialData }: TripPlannerWizardProps) {
-  const [step, setStep] = useState(initialStep);
+  const [step, setStep] = useState(Math.min(Math.max(initialStep, 0), STEPS.length - 1));
   const [direction, setDirection] = useState(1);
   // 'range' = initial picking (click from, then to), 'idle' = both set,
   // 'editDeparture' = picking departure only, 'editReturn' = picking return only
@@ -167,10 +166,10 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
     directOnly: false,
     budgetMode: 'total',
     totalBudget: 3000,
-    flightBudget: 1500,
-    hotelBudget: 800,
-    transportBudget: 200,
-    dailyExpenseBudget: 500,
+    flightBudget: 0,
+    hotelBudget: 0,
+    transportBudget: 0,
+    dailyExpenseBudget: 0,
     includeHotel: true,
     hotelStars: 4,
     hotelRooms: 1,
@@ -188,35 +187,37 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
 
   const update = (partial: Partial<PlannerData>) => setData(prev => ({ ...prev, ...partial }));
   const [transportLoading, setTransportLoading] = useState(false);
-  const transportFetchKeyRef = useRef('');
   const [countryCities, setCountryCities] = useState<GeocodedCity[]>([]);
   const [countryStates, setCountryStates] = useState<string[]>([]);
   const [citiesLoading, setCitiesLoading] = useState(false);
   const [citiesError, setCitiesError] = useState('');
   const cityFetchKeyRef = useRef('');
+  const [budgetEstimateLoading, setBudgetEstimateLoading] = useState(false);
+  const [budgetEstimateError, setBudgetEstimateError] = useState('');
+  const [budgetEstimateNote, setBudgetEstimateNote] = useState('');
+  const [budgetAutoAllocated, setBudgetAutoAllocated] = useState(false);
+  const budgetAutoAllocatedKeyRef = useRef('');
+  const [includePlaceVisits, setIncludePlaceVisits] = useState(true);
 
-  const getTransportLookupKey = (current: PlannerData) => [
+  const getBudgetAutoAllocateKey = (current: PlannerData, placesEnabled: boolean) => [
+    current.origin,
     current.destination,
     current.destinationCity || '',
     current.destinationCountry || '',
     current.destinationCountryCode || '',
-    current.transportPriority,
+    current.tripType,
+    current.departureDate,
+    current.returnDate,
+    current.nights,
+    current.adults,
+    current.children,
+    current.includeFlight,
+    current.includeHotel,
+    current.includeTransport,
+    placesEnabled,
+    (current.vibes || []).join(','),
+    (current.destinationStates || []).join(','),
   ].join('|');
-
-  const applyTransportResponse = (json: any) => {
-    const options = Array.isArray(json?.options) ? json.options : [];
-    const availableIds = new Set(options.filter((option: TransportOption) => option.available).map((option: TransportOption) => option.id));
-    setData(prev => {
-      const selectedAvailable = prev.transportTypes.filter(type => availableIds.has(type));
-      const firstAvailable = options.find((option: TransportOption) => option.available)?.id;
-      return {
-        ...prev,
-        transportOptions: options,
-        transportDataSource: json?.dataSource || 'static_fallback',
-        transportTypes: selectedAvailable.length ? selectedAvailable : firstAvailable ? [firstAvailable] : [],
-      };
-    });
-  };
 
   const fetchCountryCities = useCallback(async (country: string) => {
     const lookupKey = country.trim().toLowerCase();
@@ -258,41 +259,81 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
       .sort((a, b) => a.localeCompare(b));
   }, [countryCities, countryStates]);
 
-  const fetchTransportOptions = useCallback(async (current: PlannerData) => {
-    if (!current.includeTransport || !current.destination) return;
-    const lookupKey = getTransportLookupKey(current);
-    if (transportLoading || transportFetchKeyRef.current === lookupKey) return;
-
-    transportFetchKeyRef.current = lookupKey;
-    setTransportLoading(true);
+  const fetchBudgetEstimates = async () => {
+    const budgetAutoKey = getBudgetAutoAllocateKey(data, includePlaceVisits);
+    setBudgetEstimateLoading(true);
+    setBudgetEstimateError('');
+    setBudgetEstimateNote('');
+    console.log('[Budget auto allocate] Requesting live averages', {
+      origin: data.origin,
+      destination: data.destination,
+      departureDate: data.departureDate,
+      returnDate: data.returnDate,
+      totalBudget: data.totalBudget,
+    });
     try {
-      const response = await fetch('/api/planner/transport', {
+      const response = await fetch('/api/planner/budget-estimates', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          destination: current.destination,
-          destinationCity: current.destinationCity || current.destination,
-          destinationCountry: current.destinationCountry || '',
-          selectedTransportTypes: current.transportTypes,
-          transportPriority: current.transportPriority,
+          ...data,
+          includePlaceVisits,
+          allowTransportLookup: step === 3,
+          stepContext: step === 3 ? 'budget' : 'other',
         }),
       });
       const json = await response.json();
-      applyTransportResponse(json);
-    } catch {
-      transportFetchKeyRef.current = '';
+      if (!response.ok || json?.error) throw new Error(json?.error || 'Could not estimate budget.');
+
+      const travelerCount = Math.max(1, data.adults + data.children);
+      const safeNights = Math.max(1, data.nights);
+      const flightPerPerson = Math.round(Number(json.flightPerPerson) || 0);
+      const hotelPerPersonPerNight = Math.round(Number(json.hotelPerPersonPerNight) || 0);
+      const transportPerPersonPerDay = Math.round(Number(json.transportPerPersonPerDay ?? json.transportPerPerson) || 0);
+      const placeVisitCostPerDay = Math.round(Number(json.placeVisitCostPerDay ?? json.placeVisitCost) || 0);
+      const flightBudget = data.includeFlight ? flightPerPerson * travelerCount : 0;
+      const hotelBudget = data.includeHotel ? hotelPerPersonPerNight * travelerCount * safeNights : 0;
+      const transportBudget = data.includeTransport ? transportPerPersonPerDay * travelerCount * safeNights : 0;
+      const dailyExpenseBudget = includePlaceVisits ? placeVisitCostPerDay * travelerCount * safeNights : 0;
+      console.log('[Budget auto allocate] Applying selected live values', {
+        totalBudget: data.totalBudget,
+        flightBudget,
+        hotelBudget,
+        transportBudget,
+        dailyExpenseBudget,
+        rawEstimates: json,
+      });
+
+      update({
+        budgetMode: 'per_category',
+        flightBudget,
+        hotelBudget,
+        transportBudget,
+        dailyExpenseBudget,
+      });
+      setBudgetAutoAllocated(true);
+      budgetAutoAllocatedKeyRef.current = budgetAutoKey;
+
+      const sources = json.sources
+        ? [json.sources.flight, json.sources.hotel, json.sources.transport, json.sources.daily].filter(Boolean).join(' / ')
+        : '';
+      setBudgetEstimateNote(
+        [json.currencyNote, sources ? 'Live estimates applied as selected slider values.' : 'Live estimates applied.']
+          .filter(Boolean)
+          .join(' • ')
+      );
+    } catch (error: any) {
+      console.error('[Budget auto allocate] Failed', error?.message || error);
+      setBudgetEstimateError(error?.message || 'Could not estimate budget.');
     } finally {
-      setTransportLoading(false);
+      setBudgetEstimateLoading(false);
     }
-  }, [transportLoading]);
+  };
 
   const next = () => {
     if (step < STEPS.length - 1) {
       setDirection(1);
       setStep(s => s + 1);
-      if (step === 2) {
-        void fetchTransportOptions(data);
-      }
     }
   };
   const prev = () => {
@@ -306,24 +347,30 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
     setStep(target);
   };
 
+  const activeContentStep: number = STEP_CONTENT_IDS[step] ?? 0;
+
   const canProceed = () => {
     if (step === 0) return data.origin && data.destination;
     if (step === 1) return data.departureDate && (data.tripType !== 'round_trip' || data.returnDate);
-    if (step === 5 && data.includeTransport) return !transportLoading && data.transportTypes.length > 0;
     return true;
   };
 
-  useEffect(() => {
-    if (step === 5 && data.includeTransport && !data.transportOptions?.length) {
-      void fetchTransportOptions(data);
-    }
-  }, [step, data.includeTransport, data.destination, data.transportOptions?.length, fetchTransportOptions]);
+  const budgetAutoAllocateKey = getBudgetAutoAllocateKey(data, includePlaceVisits);
 
   useEffect(() => {
-    if (step === 6 && countryCitiesLookup) {
+    if (!budgetAutoAllocated) return;
+    if (budgetAutoAllocatedKeyRef.current && budgetAutoAllocatedKeyRef.current !== budgetAutoAllocateKey) {
+      setBudgetAutoAllocated(false);
+      setBudgetEstimateNote('');
+      setBudgetEstimateError('');
+    }
+  }, [budgetAutoAllocated, budgetAutoAllocateKey]);
+
+  useEffect(() => {
+    if (activeContentStep === 6 && countryCitiesLookup) {
       void fetchCountryCities(countryCitiesLookup);
     }
-  }, [step, countryCitiesLookup, fetchCountryCities]);
+  }, [activeContentStep, countryCitiesLookup, fetchCountryCities]);
 
   const progress = ((step + 1) / STEPS.length) * 100;
 
@@ -490,7 +537,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
   const countryCitiesLabel = data.destinationCountry || data.destinationCountryCode || 'this country';
 
   const renderStep = () => {
-    switch (step) {
+    switch (activeContentStep) {
       // Step 1 — Destination
       case 0:
         return (
@@ -712,7 +759,6 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
 
         // ── One Way: single-date calendar ──
         const selectedDate = parseDate(data.departureDate);
-        const selectedDateCount = selectedDate ? 1 : 0;
 
         return (
           <div className="space-y-6">
@@ -726,13 +772,6 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                     ? selectedDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
                     : <span className="text-muted-foreground">Pick a date</span>}
                 </p>
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-border bg-muted px-5 py-3 text-center">
-              <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">Selected dates</div>
-              <div className="mt-1 text-sm font-bold text-foreground">
-                {selectedDateCount ? '1 day' : 'No dates selected'}
               </div>
             </div>
 
@@ -1191,6 +1230,291 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
         );
 
       // Step 7 — Your Vibe
+      // Step 5 — Budget
+      case 9: {
+        const travelerCount = Math.max(1, data.adults + data.children);
+        const safeNights = Math.max(1, data.nights);
+        const placesEnabled = includePlaceVisits;
+        const fixedBudgetMode = data.budgetMode === 'total';
+        const pendingAutoText = budgetAutoAllocated ? 'Customize manually if needed' : 'Run Auto allocate or customize manually';
+        const perPersonFlightBudget = data.includeFlight ? Math.round(data.flightBudget / travelerCount) : 0;
+        const perPersonHotelBudget = data.includeHotel ? Math.round(data.hotelBudget / travelerCount) : 0;
+        const perPersonTransportBudget = data.includeTransport ? Math.round(data.transportBudget / travelerCount) : 0;
+        const perPersonPlaceBudget = placesEnabled ? Math.round(data.dailyExpenseBudget / travelerCount) : 0;
+        const perPersonHotelNightBudget = data.includeHotel ? Math.round(perPersonHotelBudget / safeNights) : 0;
+        const perPersonTransportDayBudget = data.includeTransport ? Math.round(perPersonTransportBudget / safeNights) : 0;
+        const placeVisitDayBudget = placesEnabled ? Math.round(perPersonPlaceBudget / safeNights) : 0;
+        const travelerText = `${travelerCount} traveler${travelerCount !== 1 ? 's' : ''}`;
+        const budgetRows = [
+          {
+            key: 'flight',
+            label: 'Flights for travelers',
+            detail: data.includeFlight ? (data.flightBudget > 0 ? `$${perPersonFlightBudget.toLocaleString()} per traveler × ${travelerText}` : pendingAutoText) : 'Flights turned off',
+            icon: Plane,
+            value: data.includeFlight ? data.flightBudget : 0,
+            max: 50000,
+            step: 50,
+            enabled: data.includeFlight,
+            toggle: () => {
+              const includeFlight = !data.includeFlight;
+              setBudgetEstimateNote('');
+              update({ includeFlight, flightBudget: includeFlight ? data.flightBudget : 0 });
+            },
+            onChange: (value: number) => update({ flightBudget: value, budgetMode: 'per_category' }),
+          },
+          {
+            key: 'hotel',
+            label: 'Hotel for travelers',
+            detail: data.includeHotel ? (data.hotelBudget > 0 ? `$${perPersonHotelNightBudget.toLocaleString()} per traveler/night × ${safeNights} day${safeNights !== 1 ? 's' : ''} × ${travelerText}` : pendingAutoText) : 'Hotel turned off',
+            icon: Hotel,
+            value: data.includeHotel ? data.hotelBudget : 0,
+            max: 50000,
+            step: 25,
+            enabled: data.includeHotel,
+            toggle: () => {
+              const includeHotel = !data.includeHotel;
+              setBudgetEstimateNote('');
+              update({ includeHotel, hotelBudget: includeHotel ? data.hotelBudget : 0 });
+            },
+            onChange: (value: number) => update({ hotelBudget: value, budgetMode: 'per_category' }),
+          },
+          {
+            key: 'transport',
+            label: 'Transportation for travelers',
+            detail: data.includeTransport ? (data.transportBudget > 0 ? `$${perPersonTransportDayBudget.toLocaleString()} per traveler/day × ${safeNights} day${safeNights !== 1 ? 's' : ''} × ${travelerText}` : pendingAutoText) : 'Transportation turned off',
+            icon: Bus,
+            value: data.includeTransport ? data.transportBudget : 0,
+            max: 30000,
+            step: 25,
+            enabled: data.includeTransport,
+            toggle: () => {
+              const includeTransport = !data.includeTransport;
+              setBudgetEstimateNote('');
+              update({ includeTransport, transportBudget: includeTransport ? data.transportBudget : 0 });
+            },
+            onChange: (value: number) => update({ transportBudget: value, budgetMode: 'per_category' }),
+          },
+          {
+            key: 'places',
+            label: 'Places for travelers',
+            detail: placesEnabled ? (data.dailyExpenseBudget > 0 ? `$${placeVisitDayBudget.toLocaleString()} per traveler/day × ${safeNights} day${safeNights !== 1 ? 's' : ''} × ${travelerText}` : pendingAutoText) : 'Place visits turned off',
+            icon: Compass,
+            value: placesEnabled ? data.dailyExpenseBudget : 0,
+            max: 30000,
+            step: 25,
+            enabled: placesEnabled,
+            toggle: () => {
+              const includePlaces = !placesEnabled;
+              setBudgetEstimateNote('');
+              setIncludePlaceVisits(includePlaces);
+              update({ dailyExpenseBudget: includePlaces ? data.dailyExpenseBudget : 0 });
+            },
+            onChange: (value: number) => update({ dailyExpenseBudget: value, budgetMode: 'per_category' }),
+          },
+        ];
+        const consumedBudget = data.flightBudget + data.hotelBudget + data.transportBudget + data.dailyExpenseBudget;
+        const budgetDelta = data.totalBudget - consumedBudget;
+        const budgetFits = budgetDelta >= 0;
+        const switchBudgetMode = (budgetMode: BudgetMode) => {
+          if (budgetMode === 'total') {
+            setBudgetEstimateNote('');
+            setBudgetEstimateError('');
+            setBudgetAutoAllocated(false);
+            budgetAutoAllocatedKeyRef.current = '';
+            update({
+              budgetMode,
+              flightBudget: 0,
+              hotelBudget: 0,
+              transportBudget: 0,
+              dailyExpenseBudget: 0,
+            });
+            return;
+          }
+          update({ budgetMode });
+        };
+
+        return (
+          <div className="space-y-8">
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                {([
+                  { value: 'total' as BudgetMode, label: 'Fixed Budget', sub: 'Use main budget only' },
+                  { value: 'per_category' as BudgetMode, label: 'Detailed', sub: 'Auto or manual split' },
+                ]).map(option => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => switchBudgetMode(option.value)}
+                    className={`rounded-2xl border px-4 py-4 text-left transition ${data.budgetMode === option.value ? 'border-foreground bg-foreground text-background shadow-lg shadow-foreground/10' : 'border-border bg-background text-foreground hover:border-foreground/30'}`}
+                  >
+                    <div className="text-xs font-black uppercase tracking-[0.14em]">{option.label}</div>
+                    <div className={`mt-1 text-[11px] ${data.budgetMode === option.value ? 'text-background/70' : 'text-muted-foreground'}`}>{option.sub}</div>
+                  </button>
+                ))}
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className={`py-7 px-6 rounded-3xl bg-muted border border-border ${fixedBudgetMode ? 'sm:col-span-2' : ''}`}>
+                  <div className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground mb-2">Main Budget</div>
+                  <div className="text-5xl font-bold text-foreground title-text">${data.totalBudget.toLocaleString()}</div>
+                  <div className="text-xs text-muted-foreground/60 mt-2">
+                    {fixedBudgetMode ? 'This fixed number is the full budget the planner will work inside.' : 'Total money available for this trip plan'}
+                  </div>
+                </div>
+                {!fixedBudgetMode && (
+                  <div className={`py-7 px-6 rounded-3xl border ${budgetFits ? 'bg-emerald-500/10 border-emerald-500/25' : 'bg-red-500/10 border-red-500/25'}`}>
+                    <div className={`text-[10px] uppercase tracking-[0.2em] font-bold mb-2 ${budgetFits ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-600 dark:text-red-300'}`}>Used Budget</div>
+                    <div className={`text-5xl font-bold title-text ${budgetFits ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-600 dark:text-red-300'}`}>
+                      ${consumedBudget.toLocaleString()}
+                    </div>
+                    <div className={`text-xs mt-2 ${budgetFits ? 'text-emerald-700/70 dark:text-emerald-300/70' : 'text-red-600/70 dark:text-red-300/70'}`}>
+                      {budgetFits ? `$${budgetDelta.toLocaleString()} remaining` : `$${Math.abs(budgetDelta).toLocaleString()} over budget`}
+                    </div>
+                  </div>
+                )}
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="50000"
+                step="100"
+                value={data.totalBudget}
+                onChange={event => {
+                  const totalBudget = Number(event.target.value);
+                  update({ totalBudget });
+                }}
+                className="w-full h-2 bg-muted rounded-lg appearance-none cursor-pointer accent-foreground"
+              />
+              <div className="flex justify-between text-[10px] text-muted-foreground/40 font-bold uppercase tracking-wider">
+                <span>$0</span><span>$50,000</span>
+              </div>
+              <div className="rounded-3xl border border-border bg-muted p-5">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <div className="text-sm font-bold text-foreground">
+                      {data.tripType === 'round_trip' ? 'Stay length from return date' : 'Days staying in this country'}
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <div className="inline-flex items-center gap-2 rounded-2xl border border-border bg-background px-3 py-2">
+                        <Users className="h-4 w-4 text-muted-foreground" />
+                        <span className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">People</span>
+                        <span className="font-mono text-sm font-black text-foreground">{travelerCount}</span>
+                      </div>
+                      <div className="inline-flex items-center gap-2 rounded-2xl border border-border bg-background px-3 py-2">
+                        <CalendarIcon className="h-4 w-4 text-muted-foreground" />
+                        <span className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">Days</span>
+                        <span className="font-mono text-sm font-black text-foreground">{safeNights}</span>
+                      </div>
+                    </div>
+                  </div>
+                  {data.tripType === 'one_way' ? (
+                    <div className="shrink-0">
+                      <Counter
+                        label="Days"
+                        sublabel="Stay length"
+                        value={safeNights}
+                        min={1}
+                        onChange={value => {
+                          const nextNights = Math.min(60, value);
+                          const scaleByStayLength = (amount: number) => Math.round((amount / safeNights) * nextNights);
+                          nightsAutoSet.current = true;
+                          update({
+                            nights: nextNights,
+                            hotelBudget: data.includeHotel ? scaleByStayLength(data.hotelBudget) : data.hotelBudget,
+                            transportBudget: data.includeTransport ? scaleByStayLength(data.transportBudget) : data.transportBudget,
+                            dailyExpenseBudget: placesEnabled ? scaleByStayLength(data.dailyExpenseBudget) : data.dailyExpenseBudget,
+                          });
+                        }}
+                      />
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl border border-border bg-background px-5 py-3 text-right">
+                      <div className="text-[10px] uppercase tracking-[0.16em] font-bold text-muted-foreground/50">Trip Days</div>
+                      
+                    </div>
+                  )}
+                </div>
+              </div>
+              {!fixedBudgetMode && (
+                <>
+                  <button
+                    type="button"
+                    onClick={fetchBudgetEstimates}
+                    disabled={budgetAutoAllocated || budgetEstimateLoading || !data.origin || !data.destination || !data.departureDate}
+                    className="w-full rounded-2xl border border-border bg-background px-5 py-4 text-[11px] font-black uppercase tracking-[0.16em] text-foreground transition hover:border-foreground/30 hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {budgetAutoAllocated ? 'Auto allocate applied' : budgetEstimateLoading ? 'Checking live averages...' : 'Auto allocate enabled categories'}
+                  </button>
+                  {budgetEstimateError && (
+                    <div className="rounded-2xl border border-red-500/25 bg-red-500/10 px-4 py-3 text-xs font-semibold text-red-600 dark:text-red-300">
+                      {budgetEstimateError}
+                    </div>
+                  )}
+                  {budgetEstimateNote && !budgetEstimateError && (
+                    <div className="rounded-2xl border border-emerald-500/25 bg-emerald-500/10 px-4 py-3 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
+                      {budgetEstimateNote}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
+            {!fixedBudgetMode && (
+              <div className="space-y-4">
+                {budgetRows.map(item => (
+                  <div key={item.key} className={`rounded-3xl border p-5 transition ${item.enabled ? 'bg-muted border-border' : 'bg-muted/40 border-border/70 opacity-75'}`}>
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex items-start gap-3">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-background border border-border">
+                          <item.icon className="h-5 w-5 text-muted-foreground" />
+                        </div>
+                        <div>
+                          <div className="text-base font-bold text-foreground">{item.label}</div>
+                          <div className="mt-1 text-xs text-muted-foreground">{item.detail}</div>
+                        </div>
+                      </div>
+                      {item.toggle && (
+                        <button
+                          type="button"
+                          onClick={item.toggle}
+                          className={`w-16 h-9 rounded-full transition-all duration-300 relative shadow-inner ${item.enabled ? 'bg-emerald-500' : 'bg-muted-foreground/20'}`}
+                          aria-label={`${item.enabled ? 'Disable' : 'Enable'} ${item.label}`}
+                          title={`${item.enabled ? 'Disable' : 'Enable'} ${item.label}`}
+                        >
+                          <div className={`w-7 h-7 rounded-full shadow-lg absolute top-1 transition-all duration-300 flex items-center justify-center ${item.enabled ? 'left-8 bg-white' : 'left-1 bg-white'}`}>
+                            {item.enabled && <Check className="w-3.5 h-3.5 text-emerald-600 stroke-[3]" />}
+                          </div>
+                        </button>
+                      )}
+                    </div>
+                    <div className="mt-5 flex items-end justify-between gap-4">
+                      <div>
+                        <div className="text-[10px] uppercase tracking-[0.16em] font-bold text-muted-foreground/50">Selected value</div>
+                        <div className="mt-1 text-xl font-bold text-foreground font-mono">
+                          {item.enabled ? `$${item.value.toLocaleString()}` : '--'}
+                        </div>
+                      </div>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max={item.max}
+                      step={item.step}
+                      value={item.value}
+                      disabled={!item.enabled}
+                      onChange={event => item.onChange(Number(event.target.value))}
+                      className="mt-3 w-full h-1.5 bg-background rounded-lg appearance-none cursor-pointer accent-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                    />
+                    <div className="mt-2 flex justify-between text-[10px] text-muted-foreground/40 font-bold uppercase tracking-wider">
+                      <span>$0</span><span>${item.max.toLocaleString()}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      }
+
       case 6:
         return (
           <div className="space-y-8">
@@ -1300,10 +1624,13 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                 { label: 'Route', value: `${data.origin} → ${data.destination}`, sub: data.tripType.replace('_', ' ') },
                 { label: 'Dates', value: data.departureDate, sub: data.returnDate ? `Return: ${data.returnDate}` : 'One way' },
                 { label: 'Travelers', value: `${data.adults} Adult${data.adults > 1 ? 's' : ''}`, sub: data.children > 0 ? `${data.children} Child${data.children > 1 ? 'ren' : ''}` : 'No children' },
-                { label: 'Flight', value: data.includeFlight ? data.cabinClass.replace('_', ' ') : 'Not included', sub: data.includeFlight ? (data.includeBaggage ? `${data.baggageCount} bag${data.baggageCount > 1 ? 's' : ''}` : 'No baggage') : '—' },
-                { label: 'Budget', value: data.budgetMode === 'total' ? `$${data.totalBudget.toLocaleString()}` : `$${(data.flightBudget + data.hotelBudget + data.transportBudget + data.dailyExpenseBudget).toLocaleString()}`, sub: data.budgetMode === 'total' ? 'AI-allocated' : 'Per category' },
-                { label: 'Hotel', value: data.includeHotel ? `${data.hotelStars}-Star` : 'Not included', sub: data.includeHotel ? `${data.hotelRooms} room${data.hotelRooms > 1 ? 's' : ''} • ${data.hotelBeds} bed${data.hotelBeds > 1 ? 's' : ''} • ${data.hotelAmenities.length} amenities` : '—' },
-                { label: 'Transport', value: data.includeTransport ? data.transportTypes.map(t => t.replace('_', ' ')).join(', ') : 'Not included', sub: data.includeTransport ? data.transportPriority : '—' },
+                {
+                  label: 'Budget',
+                  value: data.budgetMode === 'total' ? `$${data.totalBudget.toLocaleString()}` : `$${(data.flightBudget + data.hotelBudget + data.transportBudget + data.dailyExpenseBudget).toLocaleString()}`,
+                  sub: data.budgetMode === 'total'
+                    ? 'Fixed main budget'
+                    : `Flight $${data.flightBudget.toLocaleString()} • Hotel $${data.hotelBudget.toLocaleString()} • Transport $${data.transportBudget.toLocaleString()} • Places $${data.dailyExpenseBudget.toLocaleString()}`
+                },
                 { label: 'Vibe', value: data.vibes.length > 0 ? data.vibes.map(v => VIBE_OPTIONS.find(vo => vo.id === v)?.emoji || '').join(' ') : 'General mix', sub: data.vibes.length > 0 ? data.vibes.map(v => VIBE_OPTIONS.find(vo => vo.id === v)?.label || '').join(', ') : 'All attractions' },
                 { label: 'Regions', value: data.destinationStates.length > 0 ? `${data.destinationStates.length} selected` : 'Not limited', sub: data.destinationStates.length > 0 ? data.destinationStates.join(', ') : data.destinationCountry || data.destinationCountryCode || 'Destination country' },
               ].map((item, i) => (

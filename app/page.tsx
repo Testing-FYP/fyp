@@ -19,12 +19,17 @@ export default function Home() {
   const resultsRef = useRef<HTMLDivElement>(null);
 
   const attachPrefetchedTransport = (json: any, data: PlannerData) => {
-    if (!data.includeTransport || !data.transportOptions?.length) return json;
+    if (!data.transportOptions?.length) return json;
+    if (Array.isArray(json?.transport) && json.transport.length > 0) {
+      return {
+        ...json,
+        transportDataSource: json.transportDataSource || data.transportDataSource,
+      };
+    }
     return {
       ...json,
       transport: data.transportOptions,
       transportDataSource: data.transportDataSource,
-      selectedTransportTypes: data.transportTypes,
     };
   };
 

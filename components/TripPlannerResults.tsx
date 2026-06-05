@@ -355,12 +355,88 @@ export function WarningBanner({ title, children }: { title: string; children: Re
   );
 }
 
+function BudgetFitPanel({ agent }: { agent: any }) {
+  if (!agent?.categories) return null;
+  const categories = Object.values(agent.categories).filter((category: any) => category?.status !== 'disabled') as any[];
+
+  return (
+    <section className="rounded-3xl border border-border bg-card p-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="small-caps">Budget Fit Agent</p>
+          <h2 className="mt-2 text-3xl title-text text-foreground">Real-price budget check</h2>
+          <p className="mt-2 max-w-3xl text-sm leading-relaxed text-muted-foreground">
+            {agent.summary || 'Real prices are checked against your budget with a 10% tolerance.'}
+          </p>
+        </div>
+        <Badge tone="blue" strong>{agent.tolerancePercent || 10}% tolerance</Badge>
+      </div>
+      <div className="mt-5 grid gap-3 md:grid-cols-2">
+        {categories.map((category: any) => {
+          const overBudget = category.status === 'over_budget';
+          const noBudget = category.status === 'no_budget';
+          const tone = overBudget ? 'red' : noBudget ? 'amber' : category.status === 'fit' ? 'green' : 'neutral';
+          return (
+            <div key={category.key} className="rounded-2xl border border-border bg-background p-4">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-black text-foreground">{category.label}</p>
+                <Badge tone={tone as any} strong>{String(category.status || 'checked').replace(/_/g, ' ')}</Badge>
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+                <span>Budget {formatMoney(category.budget)}</span>
+                <span>Upper {formatMoney(category.upperBound)}</span>
+                <span>Cheapest {formatMoney(category.cheapestPrice)}</span>
+                <span>Shown {category.shownCount}/{category.originalCount}</span>
+              </div>
+              <p className="mt-3 text-sm leading-relaxed text-muted-foreground">{category.message}</p>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function BudgetCategoryNotice({ agent, categoryKey }: { agent: any; categoryKey: string }) {
+  const category = agent?.categories?.[categoryKey];
+  if (!category || !['over_budget', 'no_budget'].includes(category.status)) return null;
+
+  return (
+    <WarningBanner title={`${category.label} budget check`}>
+      {category.message}
+    </WarningBanner>
+  );
+}
+
 function EmptyState({ icon: Icon, title, body }: { icon: any; title: string; body: string }) {
   return (
     <div className="rounded-3xl border border-dashed border-border bg-card p-8 text-center">
       <Icon className="mx-auto h-8 w-8 text-muted-foreground" />
       <h3 className="mt-4 text-base font-black text-foreground">{title}</h3>
       <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-muted-foreground">{body}</p>
+    </div>
+  );
+}
+
+function BudgetEmptyState({ icon: Icon, title, body, category }: { icon: any; title: string; body: string; category?: any }) {
+  const examples = Array.isArray(category?.examples) ? category.examples.filter(Boolean) : [];
+
+  return (
+    <div className="rounded-3xl border border-dashed border-border bg-card p-8 text-center">
+      <Icon className="mx-auto h-8 w-8 text-muted-foreground" />
+      <h3 className="mt-4 text-base font-black text-foreground">{title}</h3>
+      <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-muted-foreground">
+        {category?.message || body}
+      </p>
+      {examples.length > 0 ? (
+        <div className="mx-auto mt-5 max-w-2xl space-y-2 text-left">
+          {examples.map((example: string, index: number) => (
+            <div key={`${example}-${index}`} className="rounded-2xl border border-border bg-background px-4 py-3 text-sm leading-relaxed text-muted-foreground">
+              {example}
+            </div>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -394,7 +470,6 @@ export function TripHeader({ results, plannerData }: { results: any; plannerData
         <div>
           <div className="flex flex-wrap gap-2">
             <Badge tone="amber" strong>Recommended</Badge>
-            <Badge strong>{cabinLabel(plannerData?.cabinClass || 'economy')}</Badge>
             <Badge strong>{(plannerData?.tripType || 'one_way').replace(/_/g, ' ')}</Badge>
           </div>
           <h1 className="mt-5 text-5xl title-text leading-none text-foreground">{route}</h1>
@@ -402,7 +477,6 @@ export function TripHeader({ results, plannerData }: { results: any; plannerData
           <div className="mt-7 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <HeaderFact icon={CalendarDays} label="Departure" value={formatDate(plannerData?.departureDate)} />
             <HeaderFact icon={Users} label="Travelers" value={getTravelerLabel(plannerData)} />
-            <HeaderFact icon={Ticket} label="Cabin" value={cabinLabel(plannerData?.cabinClass || 'economy')} />
             <HeaderFact icon={CircleDollarSign} label="Budget" value={formatMoney(budget)} />
           </div>
         </div>
@@ -1033,6 +1107,7 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
   const [expandedCards, setExpandedCards] = useState<Set<number>>(new Set());
 
   const destination = getDestinationDisplay(results, plannerData);
+  const budgetAgent = results?.budgetFitAgent;
 
   const flights = useMemo(() => {
     const pricedFlights = [...(results?.flights || [])].filter(flight => getFlightPrice(flight) !== null);
@@ -1067,7 +1142,7 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
   }, [results?.placesToVisit, placeFilter]);
 
   const transportOptions = useMemo(() => [...(results?.transport || [])].filter(option => option?.available !== false), [results?.transport]);
-  const selectedTransportTypes = new Set(plannerData?.transportTypes || results?.selectedTransportTypes || []);
+  const selectedTransportTypes = new Set(results?.selectedTransportTypes || []);
   const selectedTransport = transportOptions.filter(option => selectedTransportTypes.has(option?.id || option?.transportType || option?.type));
   const otherTransport = transportOptions.filter(option => !selectedTransportTypes.has(option?.id || option?.transportType || option?.type));
   const suspiciousHotelCount = hotels.filter(item => item.suspicious).length;
@@ -1078,9 +1153,9 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
   const sectionTabs = [
     { id: 'overview', label: 'Overview' },
     { id: 'flights', label: 'Flights', count: flights.length },
-    { id: 'hotels', label: 'Hotels', count: results?.hotels?.length || 0 },
+    { id: 'hotels', label: 'Hotels', count: hotels.length },
     { id: 'transport', label: 'Transport', count: transportOptions.length },
-    { id: 'places', label: 'Places', count: results?.placesToVisit?.length || 0 },
+    { id: 'places', label: 'Places', count: places.length },
     { id: 'upgrades', label: 'Upgrades', count: results?.upsellOptions?.length || 3 },
   ];
 
@@ -1139,6 +1214,7 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
           className="space-y-5"
         >
           <BudgetBreakdown breakdown={results?.budgetBreakdown} plannerData={plannerData} />
+          <BudgetFitPanel agent={budgetAgent} />
           <AISummary summary={results?.aiSummary} destination={destination} />
         </motion.section>
       )}
@@ -1163,8 +1239,9 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
               ]}
             />
           </SectionHeader>
+          <BudgetCategoryNotice agent={budgetAgent} categoryKey="flights" />
           {flightCards.length > 0 ? flightCards : (
-            <EmptyState icon={PlaneTakeoff} title="No current fares available" body="Try adjusting the dates, cabin, route, or traveler count to refresh available flight options." />
+            <BudgetEmptyState icon={PlaneTakeoff} title="No Gemini-selected flights fit" body="Gemini did not select a flight option for this budget." category={budgetAgent?.categories?.flights} />
           )}
         </motion.section>
       )}
@@ -1182,12 +1259,13 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
               active={hotelFilter}
               onChange={setHotelFilter}
               tabs={[
-                { id: 'recommended', label: 'Recommended', count: results?.hotels?.length || 0 },
+                { id: 'recommended', label: 'Recommended', count: hotels.length },
                 { id: 'cheapest', label: 'Cheapest' },
                 { id: 'location-check', label: 'Location Check', count: suspiciousHotelCount },
               ]}
             />
           </SectionHeader>
+          <BudgetCategoryNotice agent={budgetAgent} categoryKey="hotels" />
           {suspiciousHotelCount > 0 ? (
             <WarningBanner title="Some hotel locations look inconsistent">
               The hotel provider returned listings that appear outside {destination}. They remain visible for review, but they are marked before booking.
@@ -1196,7 +1274,7 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
           {hotels.length ? hotels.map(({ hotel, suspicious, distance }, index) => (
             <HotelCard key={`${hotel?.id || hotel?.name || 'hotel'}-${hotel?.price || ''}-${index}`} hotel={hotel} suspicious={suspicious} distanceKm={distance} />
           )) : (
-            <EmptyState icon={Hotel} title="No hotel cards for this filter" body="Try another hotel filter or run a new search with broader stay preferences." />
+            <BudgetEmptyState icon={Hotel} title="No Gemini-selected hotels fit" body="Gemini did not select a hotel option for this budget." category={budgetAgent?.categories?.hotels} />
           )}
         </motion.section>
       )}
@@ -1210,10 +1288,11 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
           className="space-y-5"
         >
           <SectionHeader icon={Bus} eyebrow="Transport" title="Your selected transport" />
+          <BudgetCategoryNotice agent={budgetAgent} categoryKey="transport" />
           {selectedTransport.length ? selectedTransport.map((transport: any, index: number) => (
             <TransportCard key={`${transport?.id || transport?.transportType || transport?.displayName || 'transport'}-selected-${index}`} transport={transport} selected />
           )) : (
-            <EmptyState icon={Bus} title="No selected transport" body="Available destination transport exists, but no option is currently selected in the planner." />
+            <BudgetEmptyState icon={Bus} title="No Gemini-selected transport fits" body="Gemini did not select a transport option for this budget." category={budgetAgent?.categories?.transport} />
           )}
 
           <SectionHeader icon={Compass} eyebrow="Alternatives" title="Other available options" />
@@ -1245,12 +1324,13 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
               ]}
             />
           </SectionHeader>
+          <BudgetCategoryNotice agent={budgetAgent} categoryKey="dailyExpenses" />
           {places.length ? (
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               {places.map((place, index) => <PlaceCard key={`${place?.name || 'place'}-${index}`} place={place} />)}
             </div>
           ) : (
-            <EmptyState icon={MapPin} title="No attractions match this filter" body="Places without coordinates and places with verified map data are kept separate so data gaps stay visible." />
+            <BudgetEmptyState icon={MapPin} title="No Gemini-selected places fit" body="Gemini did not select a place or activity option for this budget." category={budgetAgent?.categories?.dailyExpenses} />
           )}
         </motion.section>
       )}
