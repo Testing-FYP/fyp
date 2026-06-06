@@ -975,6 +975,7 @@ type BudgetPickResult<T = any> = {
   items: T[];
   selectedIndexes: number[];
   cheapestPrice: number | null;
+  selectedTotalPrice: number | null;
   shownCount: number;
   status: 'fit' | 'over_budget' | 'no_prices';
 };
@@ -992,6 +993,10 @@ const BUDGET_CATEGORY_LABELS: Record<BudgetCategoryKey, string> = {
   transport: 'Transport',
   dailyExpenses: 'Daily expenses',
 };
+
+function pluralize(count: number, singular: string, plural = `${singular}s`) {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
 
 function buildBudgetAllocations(input: BudgetFilterInput) {
   if (input.budgetMode === 'per_category') {
@@ -1247,19 +1252,50 @@ function deterministicPickByBudget<T>(
   items: T[],
   budget: number,
   getPrice: (item: T) => number | null,
-  maxItems: number
+  maxItems: number,
+  options: { cumulative?: boolean } = {}
 ): BudgetPickResult<T> {
   const priced = items
     .map((item, index) => ({ item, index, price: getPrice(item) }))
     .filter((entry): entry is { item: T; index: number; price: number } => typeof entry.price === 'number' && Number.isFinite(entry.price) && entry.price > 0)
     .sort((a, b) => a.price - b.price);
   const upperBound = Math.round(Math.max(0, Number(budget) || 0) * (1 + BUDGET_TOLERANCE_PERCENT / 100));
+  if (options.cumulative) {
+    const picked: typeof priced = [];
+    let selectedTotalPrice = 0;
+    for (const entry of priced) {
+      if (picked.length >= maxItems) break;
+      if (selectedTotalPrice + entry.price <= upperBound) {
+        picked.push(entry);
+        selectedTotalPrice += entry.price;
+      }
+    }
+    if (!picked.length && priced.length) {
+      picked.push(priced[0]);
+      selectedTotalPrice = priced[0].price;
+    }
+
+    return {
+      items: picked.map(entry => entry.item),
+      selectedIndexes: picked.map(entry => entry.index),
+      cheapestPrice: priced[0]?.price ?? null,
+      selectedTotalPrice: picked.length ? selectedTotalPrice : null,
+      shownCount: picked.length,
+      status: !priced.length
+        ? 'no_prices' as const
+        : selectedTotalPrice <= upperBound
+          ? 'fit' as const
+          : 'over_budget' as const,
+    };
+  }
+
   const withinBudget = priced.filter(entry => entry.price <= upperBound);
   const picked = (withinBudget.length ? withinBudget : priced.slice(0, 1)).slice(0, maxItems);
   return {
     items: picked.map(entry => entry.item),
     selectedIndexes: picked.map(entry => entry.index),
     cheapestPrice: priced[0]?.price ?? null,
+    selectedTotalPrice: picked[0]?.price ?? null,
     shownCount: picked.length,
     status: !priced.length
       ? 'no_prices' as const
@@ -1269,16 +1305,110 @@ function deterministicPickByBudget<T>(
   };
 }
 
+function buildBudgetUnitInfo(
+  key: BudgetCategoryKey,
+  input: BudgetFilterInput,
+  budget: number,
+  cheapestPrice: number | null,
+  selectedTotalPrice: number | null
+) {
+  const nights = Math.max(1, Number(input.nights) || 1);
+  const rooms = Math.max(1, Number(input.hotelRooms) || 1);
+  const travelers = Math.max(1, Number(input.travelers) || 1);
+  if (key === 'flights') {
+    return {
+      budgetLabel: 'Trip fare budget',
+      cheapestLabel: 'Cheapest fare',
+      upperLabel: 'With tolerance',
+      selectedLabel: 'Lowest shown',
+      usageDetail: `${pluralize(travelers, 'traveler')} · ${input.tripType === 'round_trip' ? 'round trip' : 'one way'}`,
+      unitBudget: null,
+      unitCheapest: null,
+    };
+  }
+  if (key === 'hotels') {
+    const perApartmentNightBudget = budget ? Math.round(budget / nights / rooms) : null;
+    const perApartmentNightCheapest = cheapestPrice ? Math.round(cheapestPrice / nights / rooms) : null;
+    return {
+      budgetLabel: 'Total stay budget',
+      cheapestLabel: 'Cheapest stay',
+      upperLabel: 'With tolerance',
+      selectedLabel: 'Lowest shown',
+      usageDetail: `${pluralize(nights, 'night')} · ${pluralize(rooms, 'apartment')}`,
+      unitBudget: perApartmentNightBudget,
+      unitCheapest: perApartmentNightCheapest,
+      unitLabel: 'per apartment/night',
+      scopeMetrics: [
+        { icon: 'hotel', label: 'Total staying budget', value: budget, detail: `${pluralize(nights, 'night')} total` },
+        { icon: 'dollar', label: 'Cheapest option', value: cheapestPrice, detail: 'total stay price' },
+        { icon: 'calendar', label: 'Nightly budget', value: perApartmentNightBudget, detail: 'per apartment/night' },
+        { icon: 'bed', label: 'Cheapest daily hotel', value: perApartmentNightCheapest, detail: 'per apartment/night' },
+        { icon: 'tolerance', label: 'Tolerance', value: Math.round(budget * 1.1), detail: `${BUDGET_TOLERANCE_PERCENT}% upper limit` },
+      ],
+    };
+  }
+  if (key === 'transport') {
+    const perDayBudget = budget ? Math.round(budget / nights) : null;
+    const perDayCheapest = cheapestPrice ? Math.round(cheapestPrice / nights) : null;
+    return {
+      budgetLabel: 'Trip transport budget',
+      cheapestLabel: 'Cheapest option',
+      upperLabel: 'With tolerance',
+      selectedLabel: 'Lowest shown',
+      usageDetail: `${pluralize(travelers, 'traveler')} · whole trip movement`,
+      unitBudget: perDayBudget,
+      unitCheapest: perDayCheapest,
+      unitLabel: 'per trip day',
+      scopeMetrics: [
+        { icon: 'dollar', label: 'Total budget', value: budget, detail: `${pluralize(nights, 'day')} total` },
+        { icon: 'ticket', label: 'Total cheapest option', value: cheapestPrice, detail: 'cheapest trip option' },
+        { icon: 'calendar', label: 'One-day budget', value: perDayBudget, detail: 'daily allowance' },
+        { icon: 'bus', label: 'Cheapest option/day', value: perDayCheapest, detail: 'cheapest daily average' },
+        { icon: 'tolerance', label: 'Tolerance', value: Math.round(budget * 1.1), detail: `${BUDGET_TOLERANCE_PERCENT}% upper limit` },
+      ],
+    };
+  }
+  const perDayBudget = budget ? Math.round(budget / nights) : null;
+  const perDaySelected = selectedTotalPrice ? Math.round(selectedTotalPrice / nights) : null;
+  return {
+    budgetLabel: 'Places budget',
+    cheapestLabel: 'Cheapest place',
+    upperLabel: 'With tolerance',
+    selectedLabel: 'Selected total',
+    usageDetail: `${pluralize(travelers, 'traveler')} · selected places are added together`,
+    unitBudget: perDayBudget,
+    unitCheapest: perDaySelected,
+    unitLabel: 'per trip day',
+    scopeMetrics: [
+      { icon: 'dollar', label: 'Total budget', value: budget, detail: `${pluralize(nights, 'day')} total` },
+      { icon: 'ticket', label: 'Selected total', value: selectedTotalPrice, detail: 'all selected places' },
+      { icon: 'calendar', label: 'One-day budget', value: perDayBudget, detail: 'daily allowance' },
+      { icon: 'map', label: 'Selected/day', value: perDaySelected, detail: 'selected daily average' },
+      { icon: 'tolerance', label: 'Tolerance', value: Math.round(budget * 1.1), detail: `${BUDGET_TOLERANCE_PERCENT}% upper limit` },
+    ],
+  };
+}
+
+function sumPrices<T>(items: T[], getPrice: (item: T) => number | null) {
+  const prices = items
+    .map(getPrice)
+    .filter((price): price is number => typeof price === 'number' && Number.isFinite(price) && price > 0);
+  return prices.length ? prices.reduce((sum, price) => sum + price, 0) : null;
+}
+
 function buildBudgetCategoryReport(
   key: BudgetCategoryKey,
   input: BudgetFilterInput,
   decision: BudgetCategoryDecision | undefined,
   originalCount: number,
   shownCount: number,
-  enabled = true
+  enabled = true,
+  selectedTotalPrice: number | null = null
 ) {
   const budgets = buildBudgetAllocations(input);
   const budget = budgets[key];
+  const cheapestPrice = getCategoryCheapestPrice(key, input);
+  const unitInfo = buildBudgetUnitInfo(key, input, budget, cheapestPrice, selectedTotalPrice);
   return {
     key,
     label: BUDGET_CATEGORY_LABELS[key],
@@ -1286,7 +1416,9 @@ function buildBudgetCategoryReport(
     budget,
     lowerBound: Math.round(budget * 0.9),
     upperBound: Math.round(budget * 1.1),
-    cheapestPrice: getCategoryCheapestPrice(key, input),
+    cheapestPrice,
+    selectedTotalPrice,
+    ...unitInfo,
     originalCount,
     shownCount,
     hiddenCount: Math.max(0, originalCount - shownCount),
@@ -1297,10 +1429,11 @@ function buildBudgetCategoryReport(
 
 function buildUnavailableBudgetResult(input: BudgetFilterInput, errorMessage: string) {
   const budgets = buildBudgetAllocations(input);
-  const flightPick = input.includeFlight ? deterministicPickByBudget(input.flights, budgets.flights, getCategoryPriceGetter('flights', input), 9) : { items: [], selectedIndexes: [], cheapestPrice: null, shownCount: 0, status: 'no_prices' as const };
-  const hotelPick = input.includeHotel ? deterministicPickByBudget(input.hotels, budgets.hotels, getCategoryPriceGetter('hotels', input), 10) : { items: [], selectedIndexes: [], cheapestPrice: null, shownCount: 0, status: 'no_prices' as const };
-  const transportPick = input.includeTransport ? deterministicPickByBudget(input.transport, budgets.transport, getCategoryPriceGetter('transport', input), 6) : { items: [], selectedIndexes: [], cheapestPrice: null, shownCount: 0, status: 'no_prices' as const };
-  const dailyPick = input.includePlaceVisits ? deterministicPickByBudget(input.placesToVisit, budgets.dailyExpenses, getCategoryPriceGetter('dailyExpenses', input), 12) : { items: [], selectedIndexes: [], cheapestPrice: null, shownCount: 0, status: 'no_prices' as const };
+  const emptyPick = { items: [], selectedIndexes: [], cheapestPrice: null, selectedTotalPrice: null, shownCount: 0, status: 'no_prices' as const };
+  const flightPick = input.includeFlight ? deterministicPickByBudget(input.flights, budgets.flights, getCategoryPriceGetter('flights', input), 9) : emptyPick;
+  const hotelPick = input.includeHotel ? deterministicPickByBudget(input.hotels, budgets.hotels, getCategoryPriceGetter('hotels', input), 10) : emptyPick;
+  const transportPick = input.includeTransport ? deterministicPickByBudget(input.transport, budgets.transport, getCategoryPriceGetter('transport', input), 6) : emptyPick;
+  const dailyPick = input.includePlaceVisits ? deterministicPickByBudget(input.placesToVisit, budgets.dailyExpenses, getCategoryPriceGetter('dailyExpenses', input), 12, { cumulative: true }) : emptyPick;
 
   const makeDecision = (key: BudgetCategoryKey, pick: BudgetPickResult) => {
     const cheapest = pick.cheapestPrice;
@@ -1318,10 +1451,10 @@ function buildUnavailableBudgetResult(input: BudgetFilterInput, errorMessage: st
   };
 
   const categories = {
-    flights: buildBudgetCategoryReport('flights', input, makeDecision('flights', flightPick), input.flights.length, flightPick.shownCount, input.includeFlight),
-    hotels: buildBudgetCategoryReport('hotels', input, makeDecision('hotels', hotelPick), input.hotels.length, hotelPick.shownCount, input.includeHotel),
-    transport: buildBudgetCategoryReport('transport', input, makeDecision('transport', transportPick), input.transport.length, transportPick.shownCount, input.includeTransport),
-    dailyExpenses: buildBudgetCategoryReport('dailyExpenses', input, makeDecision('dailyExpenses', dailyPick), input.placesToVisit.length, dailyPick.shownCount, input.includePlaceVisits),
+    flights: buildBudgetCategoryReport('flights', input, makeDecision('flights', flightPick), input.flights.length, flightPick.shownCount, input.includeFlight, flightPick.selectedTotalPrice),
+    hotels: buildBudgetCategoryReport('hotels', input, makeDecision('hotels', hotelPick), input.hotels.length, hotelPick.shownCount, input.includeHotel, hotelPick.selectedTotalPrice),
+    transport: buildBudgetCategoryReport('transport', input, makeDecision('transport', transportPick), input.transport.length, transportPick.shownCount, input.includeTransport, transportPick.selectedTotalPrice),
+    dailyExpenses: buildBudgetCategoryReport('dailyExpenses', input, makeDecision('dailyExpenses', dailyPick), input.placesToVisit.length, dailyPick.shownCount, input.includePlaceVisits, dailyPick.selectedTotalPrice),
   };
 
   return {
@@ -1399,28 +1532,33 @@ async function applyGeminiBudgetFilter(input: BudgetFilterInput) {
   const transportDecision = aiDecision.categories?.transport;
   const dailyDecision = aiDecision.categories?.dailyExpenses;
   const budgets = buildBudgetAllocations(input);
-  const fallbackFlights = input.includeFlight ? deterministicPickByBudget(input.flights, budgets.flights, getCategoryPriceGetter('flights', input), 9) : { items: [], selectedIndexes: [], cheapestPrice: null, shownCount: 0, status: 'no_prices' as const };
-  const fallbackHotels = input.includeHotel ? deterministicPickByBudget(input.hotels, budgets.hotels, getCategoryPriceGetter('hotels', input), 10) : { items: [], selectedIndexes: [], cheapestPrice: null, shownCount: 0, status: 'no_prices' as const };
-  const fallbackTransport = input.includeTransport ? deterministicPickByBudget(input.transport, budgets.transport, getCategoryPriceGetter('transport', input), 6) : { items: [], selectedIndexes: [], cheapestPrice: null, shownCount: 0, status: 'no_prices' as const };
-  const fallbackDaily = input.includePlaceVisits ? deterministicPickByBudget(input.placesToVisit, budgets.dailyExpenses, getCategoryPriceGetter('dailyExpenses', input), 12) : { items: [], selectedIndexes: [], cheapestPrice: null, shownCount: 0, status: 'no_prices' as const };
+  const emptyPick = { items: [], selectedIndexes: [], cheapestPrice: null, selectedTotalPrice: null, shownCount: 0, status: 'no_prices' as const };
+  const fallbackFlights = input.includeFlight ? deterministicPickByBudget(input.flights, budgets.flights, getCategoryPriceGetter('flights', input), 9) : emptyPick;
+  const fallbackHotels = input.includeHotel ? deterministicPickByBudget(input.hotels, budgets.hotels, getCategoryPriceGetter('hotels', input), 10) : emptyPick;
+  const fallbackTransport = input.includeTransport ? deterministicPickByBudget(input.transport, budgets.transport, getCategoryPriceGetter('transport', input), 6) : emptyPick;
+  const fallbackDaily = input.includePlaceVisits ? deterministicPickByBudget(input.placesToVisit, budgets.dailyExpenses, getCategoryPriceGetter('dailyExpenses', input), 12, { cumulative: true }) : emptyPick;
   const flights = input.includeFlight ? pickAiSelectedItems(input.flights, flightDecision) : [];
   const hotels = input.includeHotel ? pickAiSelectedItems(input.hotels, hotelDecision) : [];
   const transport = input.includeTransport ? pickAiSelectedItems(input.transport, transportDecision) : [];
   const placesToVisit = input.includePlaceVisits ? pickAiSelectedItems(input.placesToVisit, dailyDecision) : [];
+  const dailyAiTotal = input.includePlaceVisits ? sumPrices(placesToVisit, getCategoryPriceGetter('dailyExpenses', input)) : null;
+  const dailyUpperBound = Math.round(Math.max(0, budgets.dailyExpenses) * (1 + BUDGET_TOLERANCE_PERCENT / 100));
+  const dailyAiFits = placesToVisit.length > 0 && dailyAiTotal !== null && dailyAiTotal <= dailyUpperBound;
   const finalFlights = input.includeFlight ? (flights.length ? flights : fallbackFlights.items) : [];
   const finalHotels = input.includeHotel ? (hotels.length ? hotels : fallbackHotels.items) : [];
   const finalTransport = input.includeTransport ? (transport.length ? transport : fallbackTransport.items) : [];
-  const finalPlacesToVisit = input.includePlaceVisits ? (placesToVisit.length ? placesToVisit : fallbackDaily.items) : [];
+  const finalPlacesToVisit = input.includePlaceVisits ? (dailyAiFits ? placesToVisit : fallbackDaily.items) : [];
   const flightReportDecision = flights.length ? flightDecision : { status: fallbackFlights.status, selectedIndexes: fallbackFlights.selectedIndexes, message: flightDecision?.message };
   const hotelReportDecision = hotels.length ? hotelDecision : { status: fallbackHotels.status, selectedIndexes: fallbackHotels.selectedIndexes, message: hotelDecision?.message };
   const transportReportDecision = transport.length ? transportDecision : { status: fallbackTransport.status, selectedIndexes: fallbackTransport.selectedIndexes, message: transportDecision?.message };
-  const dailyReportDecision = placesToVisit.length ? dailyDecision : { status: fallbackDaily.status, selectedIndexes: fallbackDaily.selectedIndexes, message: dailyDecision?.message };
+  const dailyReportDecision = dailyAiFits ? dailyDecision : { status: fallbackDaily.status, selectedIndexes: fallbackDaily.selectedIndexes, message: dailyDecision?.message };
+  const dailySelectedTotalPrice = dailyAiFits ? dailyAiTotal : fallbackDaily.selectedTotalPrice;
 
   const categories = {
-    flights: buildBudgetCategoryReport('flights', input, flightReportDecision, input.flights.length, finalFlights.length, input.includeFlight),
-    hotels: buildBudgetCategoryReport('hotels', input, hotelReportDecision, input.hotels.length, finalHotels.length, input.includeHotel),
-    transport: buildBudgetCategoryReport('transport', input, transportReportDecision, input.transport.length, finalTransport.length, input.includeTransport),
-    dailyExpenses: buildBudgetCategoryReport('dailyExpenses', input, dailyReportDecision, input.placesToVisit.length, finalPlacesToVisit.length, input.includePlaceVisits),
+    flights: buildBudgetCategoryReport('flights', input, flightReportDecision, input.flights.length, finalFlights.length, input.includeFlight, fallbackFlights.selectedTotalPrice),
+    hotels: buildBudgetCategoryReport('hotels', input, hotelReportDecision, input.hotels.length, finalHotels.length, input.includeHotel, fallbackHotels.selectedTotalPrice),
+    transport: buildBudgetCategoryReport('transport', input, transportReportDecision, input.transport.length, finalTransport.length, input.includeTransport, fallbackTransport.selectedTotalPrice),
+    dailyExpenses: buildBudgetCategoryReport('dailyExpenses', input, dailyReportDecision, input.placesToVisit.length, finalPlacesToVisit.length, input.includePlaceVisits, dailySelectedTotalPrice),
   };
 
   return {
@@ -2484,41 +2622,42 @@ If you are unsure whether a place matches, do NOT include it.
     });
 
     // ────────────────────────────────────────────────────────
-    // STEP 8c: Calculate budget breakdown (after hotel re-pricing)
+    // STEP 8c: Calculate budget breakdown from the same allocations used by filtering
     // ────────────────────────────────────────────────────────
-    // ── Fixed percentage ceilings (never redistributed) ──
-    const flightCeiling = Math.round(effectiveBudget * 0.45);
-    const hotelCeiling = Math.round(effectiveBudget * 0.30);
-    const transportFixed = Math.round(effectiveBudget * 0.10);
-    const dailyFixed = Math.round(effectiveBudget * 0.15);
-
-    const cheapestFlightPrice = flights.length > 0
-      ? Math.min(...flights.map((f: any) => parseFloat(f.total_amount) || Infinity))
-      : 0;
-    const cheapestHotelTotal = hotels.length > 0
-      ? Math.min(...hotels.map((h: any) => (typeof h.price === 'number' ? h.price : Infinity))) * tripNights
-      : 0;
-
-    let budgetBreakdown;
-    if (budgetMode === 'total') {
-      budgetBreakdown = {
-        flights: Math.round(Math.min(cheapestFlightPrice || flightCeiling, flightCeiling)),
-        hotels: Math.round(Math.min(cheapestHotelTotal || hotelCeiling, hotelCeiling)),
-        transport: transportFixed,
-        dailyExpenses: dailyFixed,
-        nights: tripNights,
-        totalBudget: totalBudget,
-      };
-    } else {
-      budgetBreakdown = {
-        flights: flightBudget,
-        hotels: hotelBudget,
-        transport: transportBudget,
-        dailyExpenses: dailyExpenseBudget,
-        nights: tripNights,
-        totalBudget: effectiveBudget,
-      };
-    }
+    const finalBudgetAllocations = buildBudgetAllocations({
+      flights,
+      hotels,
+      transport,
+      placesToVisit,
+      includeFlight: enabledInputs.includeFlight,
+      includeHotel: enabledInputs.includeHotel,
+      includeTransport: enabledInputs.includeTransport,
+      includePlaceVisits: enabledInputs.includePlaceVisits,
+      budgetMode: budgetMode === 'per_category' ? 'per_category' : 'total',
+      totalBudget: Number(totalBudget) || 0,
+      flightBudget: Number(flightBudget) || 0,
+      hotelBudget: Number(hotelBudget) || 0,
+      transportBudget: Number(transportBudget) || 0,
+      dailyExpenseBudget: Number(dailyExpenseBudget) || 0,
+      nights: tripNights,
+      hotelRooms: Math.max(1, Number(hotelRooms) || 1),
+      travelers: travelerCount,
+      origin,
+      destination,
+      destinationCity,
+      destinationCountry,
+      tripType,
+      departureDate,
+      returnDate,
+      vibes,
+    });
+    const breakdownTotal = Object.values(finalBudgetAllocations).reduce((sum, value) => sum + value, 0);
+    const budgetBreakdown = {
+      ...finalBudgetAllocations,
+      nights: tripNights,
+      totalBudget: breakdownTotal || effectiveBudget,
+      mode: budgetMode === 'per_category' ? 'per_category' : 'fixed_total_split',
+    };
 
     // ═══════════ STEP 9: FINAL RESPONSE TO FRONTEND ═══════════
     log.step(12, 'Budget breakdown calculated', budgetBreakdown);

@@ -1,6 +1,7 @@
 'use client';
 
 import { ReactNode, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { motion } from 'motion/react';
 import {
   AlertTriangle,
@@ -21,6 +22,7 @@ import {
   PlaneLanding,
   PlaneTakeoff,
   ShieldAlert,
+  ShoppingCart,
   Sparkles,
   Star,
   Ticket,
@@ -463,7 +465,7 @@ export function WarningBanner({ title, children }: { title: string; children: Re
   );
 }
 
-function BudgetFitPanel({ agent, backgroundImage = '' }: { agent: any; backgroundImage?: string }) {
+function BudgetFitPanel({ agent, backgroundImage = '', plannerData }: { agent: any; backgroundImage?: string; plannerData?: any }) {
   if (!agent?.categories) return null;
   const categories = Object.values(agent.categories).filter((category: any) => category?.status !== 'disabled') as any[];
   const hasBudgetProblem = categories.some((category: any) => ['over_budget', 'no_budget'].includes(category?.status));
@@ -535,6 +537,7 @@ function BudgetFitPanel({ agent, backgroundImage = '' }: { agent: any; backgroun
             const noBudget = category.status === 'no_budget';
             const tone = overBudget ? 'red' : noBudget ? 'amber' : category.status === 'fit' ? 'green' : 'neutral';
             const Icon = categoryIcons[category.key] || CircleDollarSign;
+            const displayCategory = withBudgetScopeMetrics(category, plannerData);
             return (
               <div key={category.key} className="relative overflow-hidden rounded-2xl border border-border bg-background/85 p-4 shadow-sm backdrop-blur">
                 <div className={`absolute inset-y-0 left-0 w-1 ${tone === 'red' ? 'bg-red-500' : tone === 'amber' ? 'bg-amber-500' : tone === 'green' ? 'bg-emerald-500' : 'bg-muted-foreground'}`} />
@@ -548,22 +551,163 @@ function BudgetFitPanel({ agent, backgroundImage = '' }: { agent: any; backgroun
                       <p className="mt-1 text-xs font-semibold text-muted-foreground">
                         {category.shownCount}/{category.originalCount} option{category.originalCount === 1 ? '' : 's'} shown
                       </p>
+                      {category.usageDetail ? (
+                        <p className="mt-1 text-[11px] font-semibold text-muted-foreground">{category.usageDetail}</p>
+                      ) : null}
                     </div>
                   </div>
                   <Badge tone={tone as any} strong>{String(category.status || 'checked').replace(/_/g, ' ')}</Badge>
                 </div>
-                <div className="mt-4 grid grid-cols-3 gap-2">
-                  <MiniMetric label="Budget" value={formatMoney(category.budget)} />
-                  <MiniMetric label="Cheapest" value={formatMoney(category.cheapestPrice)} />
-                  <MiniMetric label="Upper" value={formatMoney(category.upperBound)} />
-                </div>
-                <p className="mt-4 text-sm leading-relaxed text-muted-foreground">{category.message}</p>
+                {Array.isArray(displayCategory.scopeMetrics) && displayCategory.scopeMetrics.length ? (
+                  <BudgetScopeRows category={displayCategory} />
+                ) : (
+                  <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    <MiniMetric label={category.budgetLabel || 'Budget'} value={formatMoney(category.budget)} />
+                    <MiniMetric label={category.cheapestLabel || 'Cheapest'} value={formatMoney(category.cheapestPrice)} />
+                    <MiniMetric label={category.upperLabel || 'Upper'} value={formatMoney(category.upperBound)} />
+                    <MiniMetric
+                      label={category.selectedLabel || 'Selected'}
+                      value={formatMoney(category.selectedTotalPrice ?? category.unitCheapest ?? category.cheapestPrice)}
+                    />
+                  </div>
+                )}
+                {!Array.isArray(displayCategory.scopeMetrics) && category.unitLabel && (category.unitBudget || category.unitCheapest) ? (
+                  <p className="mt-3 rounded-xl border border-border bg-card/70 px-3 py-2 text-xs font-semibold text-muted-foreground">
+                    {category.unitBudget ? `${formatMoney(category.unitBudget)} budget` : 'Budget unavailable'}
+                    {category.unitCheapest ? ` · ${formatMoney(category.unitCheapest)} cheapest` : ''}
+                    {' '}
+                    {category.unitLabel}
+                  </p>
+                ) : null}
               </div>
             );
           })}
         </div>
       </div>
     </motion.section>
+  );
+}
+
+function withBudgetScopeMetrics(category: any, plannerData?: any) {
+  if (Array.isArray(category?.scopeMetrics) && category.scopeMetrics.length) return category;
+  if (!['hotels', 'transport', 'dailyExpenses'].includes(category?.key)) return category;
+
+  const nights = Math.max(1, asNumber(category?.nights ?? plannerData?.nights) || 1);
+  const rooms = Math.max(1, asNumber(plannerData?.hotelRooms) || 1);
+  const budget = asNumber(category?.budget);
+  const cheapest = asNumber(category?.selectedTotalPrice ?? category?.cheapestPrice);
+  const tolerance = asNumber(category?.upperBound) ?? (budget ? Math.round(budget * 1.1) : null);
+
+  if (category.key === 'hotels') {
+    const nightlyBudget = budget ? Math.round(budget / nights / rooms) : null;
+    const nightlyCheapest = cheapest ? Math.round(cheapest / nights / rooms) : null;
+    return {
+      ...category,
+      scopeMetrics: [
+        { icon: 'hotel', label: 'Total staying budget', value: budget, detail: `${nights} night${nights === 1 ? '' : 's'} total` },
+        { icon: 'dollar', label: 'Cheapest option', value: cheapest, detail: 'total stay price' },
+        { icon: 'calendar', label: 'Nightly budget', value: nightlyBudget, detail: 'per apartment/night' },
+        { icon: 'bed', label: 'Cheapest daily hotel', value: nightlyCheapest, detail: 'per apartment/night' },
+        { icon: 'tolerance', label: 'Tolerance', value: tolerance, detail: '10% upper limit' },
+      ],
+    };
+  }
+
+  const perDayBudget = budget ? Math.round(budget / nights) : null;
+  const perDayCheapest = cheapest ? Math.round(cheapest / nights) : null;
+  if (category.key === 'transport') {
+    return {
+      ...category,
+      scopeMetrics: [
+        { icon: 'dollar', label: 'Total budget', value: budget, detail: `${nights} day${nights === 1 ? '' : 's'} total` },
+        { icon: 'ticket', label: 'Total cheapest option', value: cheapest, detail: 'cheapest trip option' },
+        { icon: 'calendar', label: 'One-day budget', value: perDayBudget, detail: 'daily allowance' },
+        { icon: 'bus', label: 'Cheapest option/day', value: perDayCheapest, detail: 'cheapest daily average' },
+        { icon: 'tolerance', label: 'Tolerance', value: tolerance, detail: '10% upper limit' },
+      ],
+    };
+  }
+
+  return {
+    ...category,
+    scopeMetrics: [
+      { icon: 'dollar', label: 'Total budget', value: budget, detail: `${nights} day${nights === 1 ? '' : 's'} total` },
+      { icon: 'ticket', label: 'Selected total', value: cheapest, detail: 'all selected places' },
+      { icon: 'calendar', label: 'One-day budget', value: perDayBudget, detail: 'daily allowance' },
+      { icon: 'map', label: 'Selected/day', value: perDayCheapest, detail: 'selected daily average' },
+      { icon: 'tolerance', label: 'Tolerance', value: tolerance, detail: '10% upper limit' },
+    ],
+  };
+}
+
+function BudgetScopeRows({ category }: { category: any }) {
+  const metrics = Array.isArray(category.scopeMetrics) ? category.scopeMetrics : [];
+  const totalMetrics = metrics.slice(0, 2);
+  const dayMetrics = metrics.slice(2, 4);
+  const toleranceMetric = metrics.find((metric: any) => metric?.icon === 'tolerance') || metrics[4];
+  const totalTitle =
+    category.key === 'hotels'
+      ? 'Total stay'
+      : category.key === 'transport'
+        ? 'Total transport'
+        : 'Total daily expenses';
+  const dailyTitle =
+    category.key === 'hotels'
+      ? 'Nightly hotel'
+      : category.key === 'transport'
+        ? 'One-day transport'
+        : 'One-day spending';
+
+  return (
+    <div className="mt-4 space-y-2">
+      <div>
+        <p className="mb-1 text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">{totalTitle}</p>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {totalMetrics.map((metric: any) => (
+            <BudgetScopeMetric key={`${category.key}-${metric.label}`} metric={metric} />
+          ))}
+        </div>
+      </div>
+      <div>
+        <p className="mb-1 text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">{dailyTitle}</p>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {dayMetrics.map((metric: any) => (
+            <BudgetScopeMetric key={`${category.key}-${metric.label}`} metric={metric} />
+          ))}
+        </div>
+      </div>
+      {toleranceMetric ? (
+        <BudgetScopeMetric metric={toleranceMetric} compact />
+      ) : null}
+    </div>
+  );
+}
+
+function BudgetScopeMetric({ metric, compact = false }: { metric: any; compact?: boolean }) {
+  const icons: Record<string, any> = {
+    bed: BedDouble,
+    bus: Bus,
+    calendar: CalendarDays,
+    dollar: CircleDollarSign,
+    hotel: Hotel,
+    map: MapPin,
+    ticket: Ticket,
+    tolerance: BadgeCheck,
+  };
+  const Icon = icons[metric?.icon] || CircleDollarSign;
+  return (
+    <div className={`flex items-start gap-2 rounded-xl border border-border bg-card/75 px-3 py-2 ${compact ? 'items-center bg-muted/50' : ''}`}>
+      <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-muted text-foreground">
+        <Icon className="h-4 w-4" />
+      </div>
+      <div className={`min-w-0 ${compact ? 'flex flex-1 items-center justify-between gap-3' : ''}`}>
+        <p className="text-[9px] font-black uppercase tracking-[0.12em] text-muted-foreground">{metric?.label}</p>
+        <div className={compact ? 'text-right' : ''}>
+          <p className="mt-0.5 text-xs font-black text-foreground">{formatMoney(metric?.value)}</p>
+          {metric?.detail ? <p className="mt-0.5 text-[10px] font-semibold text-muted-foreground">{metric.detail}</p> : null}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1323,6 +1467,32 @@ function getTransportLabel(option: any) {
   };
 }
 
+function getPlaceLabel(place: any) {
+  return {
+    title: place?.name || 'Place option',
+    detail: place?.description || 'Daily experience',
+    price: asNumber(place?.estimatedCost ?? place?.price ?? place?.cost),
+  };
+}
+
+function buildSummaryCartItems(selections: any, plannerData: any) {
+  const items = [];
+  const flight = plannerData?.includeFlight !== false ? selections.flights?.[0] : null;
+  const hotel = plannerData?.includeHotel !== false ? selections.hotels?.[0] : null;
+  const transport = plannerData?.includeTransport !== false ? selections.transport?.[0] : null;
+  const place = plannerData?.includePlaceVisits !== false ? selections.places?.[0] : null;
+
+  if (flight) items.push({ type: 'flight', icon: 'flight', ...getFlightLabel(flight) });
+  if (hotel) items.push({ type: 'hotel', icon: 'hotel', ...getHotelLabel(hotel, plannerData) });
+  if (transport) items.push({ type: 'transport', icon: 'transport', ...getTransportLabel(transport) });
+  if (place) items.push({ type: 'daily', icon: 'place', ...getPlaceLabel(place) });
+  return items.map((item, index) => ({
+    id: `${item.type}-${index}`,
+    ...item,
+    price: asNumber(item.price) || 0,
+  }));
+}
+
 function SelectedOptionMiniCard({ icon: Icon, title, detail, price }: { icon: any; title: string; detail: string; price: number | null }) {
   return (
     <div className="rounded-2xl border border-border bg-background/80 p-4">
@@ -1354,37 +1524,88 @@ function SelectedOptionEmptyCard({ icon: Icon, label }: { icon: any; label: stri
 }
 
 function AISummary({ summary, destination, selections, plannerData }: { summary: any; destination: string; selections: any; plannerData: any }) {
+  const router = useRouter();
+  const cartItems = buildSummaryCartItems(selections, plannerData);
+  const cartTotal = cartItems.reduce((sum, item) => sum + (asNumber(item.price) || 0), 0);
+  const vibes = Array.isArray(plannerData?.vibes) ? plannerData.vibes.slice(0, 5) : [];
+
+  const goToCart = () => {
+    const cart = {
+      tripTitle: summary?.title || `Trip to ${destination}`,
+      destination,
+      tripType: plannerData?.tripType,
+      departureDate: plannerData?.departureDate,
+      returnDate: plannerData?.returnDate,
+      nights: plannerData?.nights,
+      travelers: Math.max(1, (plannerData?.adults || 0) + (plannerData?.children || 0)),
+      vibes,
+      items: cartItems,
+      total: cartTotal,
+      createdAt: new Date().toISOString(),
+    };
+    window.localStorage.setItem('travelEliteCart', JSON.stringify(cart));
+    router.push('/cart');
+  };
+
   return (
     <section className="rounded-3xl border border-border bg-card p-6">
-      <div className="flex flex-col gap-4 md:flex-row md:items-start">
+      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-foreground text-background">
           <Sparkles className="h-5 w-5" />
         </div>
-        <div>
-          <p className="small-caps">AI Travel Summary</p>
-          <h2 className="mt-2 text-3xl title-text text-foreground">
-            {summary?.title || `Uncover the Hidden Gems of ${destination}`}
-          </h2>
-          <p className="mt-3 max-w-4xl text-base leading-relaxed text-muted-foreground">
-            {summary?.description || `${destination} can work beautifully for a budget-conscious traveler when the flight and stay are selected with discipline. Prioritize transit-friendly neighborhoods, low-cost cultural stops, and one memorable paid experience so the trip feels full without stretching the budget.`}
-          </p>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <p className="small-caps">AI Travel Summary</p>
+              <h2 className="mt-2 text-3xl title-text text-foreground">
+                {summary?.title || `Uncover the Hidden Gems of ${destination}`}
+              </h2>
+              <p className="mt-3 max-w-4xl text-base leading-relaxed text-muted-foreground">
+                {summary?.description || `${destination} can work beautifully for a budget-conscious traveler when the flight and stay are selected with discipline. Prioritize transit-friendly neighborhoods, low-cost cultural stops, and one memorable paid experience so the trip feels full without stretching the budget.`}
+              </p>
+              {vibes.length ? (
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {vibes.map((vibe: string) => <Badge key={vibe} tone="blue" strong>{vibe.replace(/_/g, ' ')}</Badge>)}
+                </div>
+              ) : null}
+            </div>
+            <div className="rounded-2xl border border-border bg-background/80 p-4 lg:min-w-56">
+              <p className="small-caps">Cart total</p>
+              <p className="mt-2 text-3xl title-text text-foreground">{formatMoney(cartTotal)}</p>
+              <p className="mt-1 text-xs font-semibold text-muted-foreground">{cartItems.length} selected item{cartItems.length === 1 ? '' : 's'}</p>
+              <button
+                type="button"
+                onClick={goToCart}
+                disabled={!cartItems.length}
+                className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-foreground px-4 py-3 text-sm font-black text-background transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <ShoppingCart className="h-4 w-4" />
+                Checkout
+              </button>
+            </div>
+          </div>
         </div>
       </div>
       <div className="mt-6 grid gap-3 lg:grid-cols-3">
         {plannerData?.includeFlight !== false && selections.flights.length === 0 ? <SelectedOptionEmptyCard icon={PlaneTakeoff} label="flight" /> : null}
-        {plannerData?.includeFlight !== false && selections.flights.slice(0, 2).map((flight: any, index: number) => {
+        {plannerData?.includeFlight !== false && selections.flights.slice(0, 1).map((flight: any, index: number) => {
           const item = getFlightLabel(flight);
           return <SelectedOptionMiniCard key={`summary-flight-${index}`} icon={PlaneTakeoff} {...item} />;
         })}
         {plannerData?.includeHotel !== false && selections.hotels.length === 0 ? <SelectedOptionEmptyCard icon={Hotel} label="hotel" /> : null}
-        {plannerData?.includeHotel !== false && selections.hotels.slice(0, 2).map((hotel: any, index: number) => {
+        {plannerData?.includeHotel !== false && selections.hotels.slice(0, 1).map((hotel: any, index: number) => {
           const item = getHotelLabel(hotel, plannerData);
           return <SelectedOptionMiniCard key={`summary-hotel-${index}`} icon={Hotel} {...item} />;
         })}
         {plannerData?.includeTransport !== false && selections.transport.length === 0 ? <SelectedOptionEmptyCard icon={Bus} label="transport" /> : null}
-        {plannerData?.includeTransport !== false && selections.transport.slice(0, 2).map((transport: any, index: number) => {
+        {plannerData?.includeTransport !== false && selections.transport.slice(0, 1).map((transport: any, index: number) => {
           const item = getTransportLabel(transport);
           return <SelectedOptionMiniCard key={`summary-transport-${index}`} icon={Bus} {...item} />;
+        })}
+        {plannerData?.includePlaceVisits !== false && selections.places.length === 0 ? <SelectedOptionEmptyCard icon={MapPin} label="daily expense" /> : null}
+        {plannerData?.includePlaceVisits !== false && selections.places.slice(0, 1).map((place: any, index: number) => {
+          const item = getPlaceLabel(place);
+          return <SelectedOptionMiniCard key={`summary-place-${index}`} icon={MapPin} {...item} />;
         })}
       </div>
     </section>
@@ -1473,7 +1694,6 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
     plannerData?.includeHotel !== false ? { id: 'hotels', label: 'Hotels', count: hotels.length } : null,
     plannerData?.includeTransport !== false ? { id: 'transport', label: 'Transport', count: transportOptions.length } : null,
     plannerData?.includePlaceVisits !== false ? { id: 'places', label: 'Places', count: places.length } : null,
-    { id: 'upgrades', label: 'Upgrades', count: results?.upsellOptions?.length || 3 },
   ].filter(Boolean) as Tab[];
 
   const getFlightKey = (flight: any, index: number) => {
@@ -1532,7 +1752,7 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
         >
           <BudgetBreakdown breakdown={results?.budgetBreakdown} plannerData={plannerData} />
 
-          <BudgetFitPanel agent={budgetAgent} backgroundImage={fitPanelBackground} />
+          <BudgetFitPanel agent={budgetAgent} backgroundImage={fitPanelBackground} plannerData={plannerData} />
           <AISummary
             summary={results?.aiSummary}
             destination={destination}
@@ -1541,6 +1761,7 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
               flights,
               hotels: hotels.map(item => item.hotel),
               transport: selectedTransport.length ? selectedTransport : transportOptions,
+              places,
             }}
           />
         </motion.section>
