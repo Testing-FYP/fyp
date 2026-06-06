@@ -404,14 +404,6 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
   // ── Smart Budget Suggestion ──
   const autoFilledRef = useRef<number | null>(null);
 
-  // Destination cost estimates from Gemini
-  const [costEstimates, setCostEstimates] = useState<{
-    dailyMeals: number; dailyTransport: number; dailyMiscellaneous: number;
-    averageUberOrTaxi: number; currencyNote: string; isEstimate: boolean;
-  } | null>(null);
-  const [costLoading, setCostLoading] = useState(false);
-  const lastCostKey = useRef('');
-
   const HOTEL_NIGHTLY: Record<number, number> = { 1: 60, 2: 100, 3: 160, 4: 280, 5: 450 };
   const CABIN_FALLBACK: Record<string, number> = { economy: 300, premium_economy: 600, business: 1500, first: 3000 };
 
@@ -433,9 +425,9 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
 
     const flightCost = estimatedFlightPrice;
     const hotelCost = (HOTEL_NIGHTLY[data.hotelStars] || 160) * nights * data.hotelRooms;
-    const meals = costEstimates?.dailyMeals ?? 50;
-    const transport = costEstimates?.dailyTransport ?? 20;
-    const misc = costEstimates?.dailyMiscellaneous ?? 15;
+    const meals = 50;
+    const transport = 20;
+    const misc = 15;
     const dailyCostPerPerson = meals + transport + misc;
     const totalDailyCost = dailyCostPerPerson * totalTravelers * nights;
     const total = flightCost + hotelCost + totalDailyCost;
@@ -448,7 +440,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
     console.log('   🛍️ Daily misc:', misc * totalTravelers * nights, `($${misc}/person × ${totalTravelers} × ${nights} nights)`);
     console.log('   💰 Total suggestion:', rounded);
     return rounded;
-  }, [estimatedFlightPrice, data.hotelStars, data.hotelRooms, nights, totalTravelers, costEstimates, step]);
+  }, [estimatedFlightPrice, data.hotelStars, data.hotelRooms, nights, totalTravelers, step]);
 
   const cabinLabel = ({ economy: 'Economy', premium_economy: 'Premium Economy', business: 'Business', first: 'First Class' } as Record<string, string>)[data.cabinClass] || data.cabinClass;
 
@@ -457,42 +449,6 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
     : data.flightBudget + data.hotelBudget + data.transportBudget + data.dailyExpenseBudget;
 
   const isBelowSuggestion = suggestedBudget !== null && currentBudgetTotal < suggestedBudget;
-
-  // Fetch destination-specific cost estimates from Gemini
-  useEffect(() => {
-    if (step !== 7 || !data.destination) return;
-    const key = data.destination;
-    if (key === lastCostKey.current) return;
-    lastCostKey.current = key;
-    let cancelled = false;
-    (async () => {
-      setCostLoading(true);
-      try {
-        const res = await fetch('/api/planner/cost-estimates', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ destinationCity: data.destination, destinationCountry: '' }),
-        });
-        const json = await res.json();
-        if (!cancelled) {
-          setCostEstimates({
-            dailyMeals: json.dailyMeals || 50,
-            dailyTransport: json.dailyTransport || 20,
-            dailyMiscellaneous: json.dailyMiscellaneous || 15,
-            averageUberOrTaxi: json.averageUberOrTaxi || 10,
-            currencyNote: json.currencyNote || '',
-            isEstimate: json.isEstimate || false,
-          });
-        }
-      } catch {
-        if (!cancelled) {
-          setCostEstimates({ dailyMeals: 50, dailyTransport: 20, dailyMiscellaneous: 15, averageUberOrTaxi: 10, currencyNote: '', isEstimate: true });
-        }
-      }
-      if (!cancelled) setCostLoading(false);
-    })();
-    return () => { cancelled = true; };
-  }, [step, data.destination]);
 
   // Auto-fill budget when suggestion first becomes available or changes
   useEffect(() => {
