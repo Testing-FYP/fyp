@@ -24,7 +24,7 @@ Legend:
 | `POST /api/planner/budget-estimates` | Next route | Used | `components/TripPlannerWizard.tsx` | Auto-allocates live budget estimates for flights, hotel, transport, and daily place visits |
 | `POST /api/planner/transport` | Next route | Used | `app/api/planner/budget-estimates/route.ts` | Returns transport mode pricing that budget estimates consume |
 | `GET /api/geocoded/cities` | Next route | Used | `components/TripPlannerWizard.tsx` | Loads state and city options for the destination country |
-| `GET /api/airports/suggestions` | Next route | Used | `components/AirportAutocomplete.tsx` | Airport autocomplete for origin and destination fields |
+| `GET /api/google-api/google-flights-suggestions-api` | Pages API route | Used | `components/AirportAutocomplete.tsx` | Airport autocomplete for origin and destination fields, backed by SerpApi |
 | `POST /api/auth/signup` | Backend route | Used | `hooks/useAuth.tsx`, `app/auth/page.tsx` | Creates a user account and returns a JWT |
 | `POST /api/auth/login` | Backend route | Used | `hooks/useAuth.tsx`, `app/auth/page.tsx` | Authenticates a user and returns a JWT |
 | `POST /api/auth/logout` | Backend route | Not used | No caller found | Stateless logout endpoint; frontend clears local auth itself |
@@ -53,7 +53,7 @@ Legend:
 | LocationIQ | `app/api/planner/generate/route.ts` | Geocodes cities and nearby places |
 | Nominatim / OpenStreetMap | `app/api/planner/generate/route.ts` | Fallback geocoding source |
 | Geocoded.me | `app/api/geocoded/cities/route.ts` | Country, state, and city lookup for the wizard |
-| Duffel | `app/api/airports/suggestions/route.ts` | Airport suggestions |
+| SerpApi Google Flights Autocomplete | `pages/api/google-api/google-flights-suggestions-api.ts` | Airport suggestions for the planner step 1 fields |
 | SQL Server via `mssql` | `backend/routes/*.js`, `backend/db/*` | Stores users, profiles, trips, and reservations |
 | `ui-avatars.com`, `picsum.photos`, `pravatar.cc`, Unsplash | Several UI components and the home hero | Placeholder and hero imagery |
 
@@ -98,7 +98,7 @@ Legend:
 
 | Step | Label | Main UI pieces | Main data/API dependency |
 | --- | --- | --- | --- |
-| 1 | Where To | Airport autocomplete, trip type toggle | `/api/airports/suggestions` |
+| 1 | Where To | Airport autocomplete, trip type toggle | `/api/google-api/google-flights-suggestions-api` |
 | 2 | When | Date inputs and range handling | Local state only |
 | 3 | Who | Passenger counters, baggage controls | Local state only |
 | 4 | Budget | Budget sliders and auto-allocate button | `/api/planner/budget-estimates` |

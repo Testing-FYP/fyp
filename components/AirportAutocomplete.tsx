@@ -25,13 +25,11 @@ function isValidAirportSuggestion(suggestion: any): suggestion is AirportSuggest
   const iata = String(suggestion?.iata_code || '').trim();
   const cityName = String(suggestion?.city_name || '').trim();
   const airportName = String(suggestion?.name || '').trim();
-  const countryCode = String(suggestion?.iata_country_code || suggestion?.country_code || '').trim();
 
   return (
     /^[A-Z]{3}$/.test(iata) &&
     cityName.length > 0 &&
     airportName.length > 0 &&
-    countryCode.length > 0 &&
     airportName.toLowerCase() !== 'none' &&
     cityName.toLowerCase() !== 'none'
   );
@@ -61,7 +59,7 @@ export default function AirportAutocomplete({ value, onSelect, onSelectSuggestio
       }
       setIsLoading(true);
       try {
-        const res = await fetch(`/api/airports/suggestions?query=${encodeURIComponent(query)}`);
+        const res = await fetch(`/api/google-api/google-flights-suggestions?query=${encodeURIComponent(query)}`);
         const data = await res.json();
         setSuggestions(Array.isArray(data) ? data.filter(isValidAirportSuggestion) : []);
       } catch (err) {
