@@ -14,6 +14,7 @@ import type { DateRange } from 'react-day-picker';
 
 type TripType = 'one_way' | 'round_trip' | 'multi_city';
 type CabinClass = 'economy' | 'premium_economy' | 'business' | 'first';
+type BudgetFlightCabinClass = 'economy' | 'business';
 type BudgetMode = 'total' | 'per_category';
 type TransportType = 'metro_subway' | 'train' | 'public_bus' | 'taxi' | 'rideshare_uber' | 'rental_car';
 type TransportPriority = 'cheapest' | 'fastest' | 'comfortable';
@@ -66,12 +67,12 @@ export interface PlannerData {
   includeFlight: boolean;
   cabinClass: CabinClass;
   includeBaggage: boolean;
-  baggageCount: number;
   directOnly: boolean;
   // Step 5
   includeHotel: boolean;
   hotelStars: number;
   hotelRooms: number;
+  hotelRoomsPerApartment: number;
   hotelBeds: number;
   hotelAmenities: string[];
   nearAirport: boolean;
@@ -92,6 +93,9 @@ export interface PlannerData {
   hotelBudget: number;
   transportBudget: number;
   dailyExpenseBudget: number;
+  budgetFlightCabins: BudgetFlightCabinClass[];
+  budgetHotelStars: number[];
+  includePlaceVisits: boolean;
 
 }
 
@@ -133,6 +137,14 @@ const TRANSPORT_OPTIONS: { value: TransportType; label: string; icon: any }[] = 
   { value: 'rental_car', label: 'Rental Car', icon: CarFront },
 ];
 
+const ALL_TRANSPORT_TYPES = TRANSPORT_OPTIONS.map(option => option.value);
+const BUDGET_FLIGHT_CABIN_CLASSES: BudgetFlightCabinClass[] = ['economy', 'business'];
+const BUDGET_FLIGHT_CABIN_LABELS: Record<BudgetFlightCabinClass, string> = {
+  economy: 'Economy',
+  business: 'Business',
+};
+const BUDGET_HOTEL_STAR_OPTIONS = [1, 2, 3, 4, 5];
+
 const STEPS = [
   { title: 'Where To', subtitle: 'Select your destination' },
   { title: 'When', subtitle: 'Pick your travel dates' },
@@ -162,7 +174,6 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
     includeFlight: true,
     cabinClass: 'economy',
     includeBaggage: true,
-    baggageCount: 1,
     directOnly: false,
     budgetMode: 'total',
     totalBudget: 3000,
@@ -170,9 +181,13 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
     hotelBudget: 0,
     transportBudget: 0,
     dailyExpenseBudget: 0,
+    budgetFlightCabins: [],
+    budgetHotelStars: [],
+    includePlaceVisits: true,
     includeHotel: true,
     hotelStars: 4,
     hotelRooms: 1,
+    hotelRoomsPerApartment: 1,
     hotelBeds: 2,
     hotelAmenities: ['wifi', 'breakfast'],
     nearAirport: false,
@@ -197,6 +212,11 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
   const [budgetEstimateNote, setBudgetEstimateNote] = useState('');
   const [budgetAutoAllocated, setBudgetAutoAllocated] = useState(false);
   const budgetAutoAllocatedKeyRef = useRef('');
+  const [selectedBudgetFlightCabins, setSelectedBudgetFlightCabins] = useState<BudgetFlightCabinClass[]>([]);
+  const [budgetFlightAverages, setBudgetFlightAverages] = useState<Record<BudgetFlightCabinClass, number> | null>(null);
+  const [selectedBudgetHotelStars, setSelectedBudgetHotelStars] = useState<number[]>([]);
+  const [budgetHotelAveragesByStars, setBudgetHotelAveragesByStars] = useState<Record<string, number> | null>(null);
+  const [budgetHotelDebugByStars, setBudgetHotelDebugByStars] = useState<Record<string, any[]> | null>(null);
   const [includePlaceVisits, setIncludePlaceVisits] = useState(true);
 
   const getBudgetAutoAllocateKey = (current: PlannerData, placesEnabled: boolean) => [
@@ -213,6 +233,8 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
     current.children,
     current.includeFlight,
     current.includeHotel,
+    current.hotelRooms,
+    current.hotelRoomsPerApartment,
     current.includeTransport,
     placesEnabled,
     (current.vibes || []).join(','),
@@ -264,6 +286,8 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
     setBudgetEstimateLoading(true);
     setBudgetEstimateError('');
     setBudgetEstimateNote('');
+    setSelectedBudgetFlightCabins([]);
+    setSelectedBudgetHotelStars([]);
     console.log('[Budget auto allocate] Requesting live averages', {
       origin: data.origin,
       destination: data.destination,
@@ -272,31 +296,63 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
       totalBudget: data.totalBudget,
     });
     try {
-      const response = await fetch('/api/planner/budget-estimates', {
+      const budgetEstimatePayload = {
+        origin: data.origin,
+        destination: data.destination,
+        destinationCity: data.destinationCity || data.destination,
+        destinationCountry: data.destinationCountry || '',
+        destinationCountryCode: data.destinationCountryCode || '',
+        tripType: data.tripType,
+        departureDate: data.departureDate,
+        returnDate: data.returnDate,
+        nights: data.nights,
+        adults: data.adults,
+        children: data.children,
+        includeFlight: data.includeFlight,
+        cabinClasses: BUDGET_FLIGHT_CABIN_CLASSES,
+        includeBaggage: data.includeBaggage,
+        directOnly: data.directOnly,
+        includeHotel: data.includeHotel,
+        hotelRooms: data.hotelRooms,
+        hotelRoomsPerApartment: data.hotelRoomsPerApartment,
+        includeTransport: data.includeTransport,
+        transportTypes: ALL_TRANSPORT_TYPES,
+        transportPriority: data.transportPriority,
+        vibes: data.vibes,
+        destinationStates: data.destinationStates,
+        includePlaceVisits,
+        allowTransportLookup: step === 3,
+        stepContext: step === 3 ? 'budget' : 'other',
+      };
+
+      const response = await fetch('/api/budget-estimates', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...data,
-          includePlaceVisits,
-          allowTransportLookup: step === 3,
-          stepContext: step === 3 ? 'budget' : 'other',
-        }),
+        body: JSON.stringify(budgetEstimatePayload),
       });
       const json = await response.json();
       if (!response.ok || json?.error) throw new Error(json?.error || 'Could not estimate budget.');
 
       const travelerCount = Math.max(1, data.adults + data.children);
       const safeNights = Math.max(1, data.nights);
-      const flightPerPerson = Math.round(Number(json.flightPerPerson) || 0);
-      const hotelPerPersonPerNight = Math.round(Number(json.hotelPerPersonPerNight) || 0);
+      const flightAverages = {
+        economy: Math.round(Number(json.flightAverages?.economy ?? json.flightPerPerson) || 0),
+        business: Math.round(Number(json.flightAverages?.business ?? json.flightPerPerson) || 0),
+      };
+      const defaultFlightCabin: BudgetFlightCabinClass = data.cabinClass === 'business' ? 'business' : 'economy';
+      const defaultHotelStar = Math.max(1, Math.min(5, Math.round(Number(data.hotelStars) || 3)));
+      const hotelAveragesByStars = json.hotelAveragesByStars || {};
+      const flightPerPerson = data.includeFlight ? Math.round(Number(flightAverages[defaultFlightCabin]) || 0) : 0;
       const transportPerPersonPerDay = Math.round(Number(json.transportPerPersonPerDay ?? json.transportPerPerson) || 0);
       const placeVisitCostPerDay = Math.round(Number(json.placeVisitCostPerDay ?? json.placeVisitCost) || 0);
       const flightBudget = data.includeFlight ? flightPerPerson * travelerCount : 0;
-      const hotelBudget = data.includeHotel ? hotelPerPersonPerNight * travelerCount * safeNights : 0;
+      const hotelNightlyAverage = data.includeHotel ? Math.round(Number(hotelAveragesByStars[String(defaultHotelStar)]) || 0) : 0;
+      const hotelBudget = data.includeHotel ? hotelNightlyAverage * Math.max(1, data.hotelRooms) * safeNights : 0;
       const transportBudget = data.includeTransport ? transportPerPersonPerDay * travelerCount * safeNights : 0;
       const dailyExpenseBudget = includePlaceVisits ? placeVisitCostPerDay * travelerCount * safeNights : 0;
+      const allocatedTotalBudget = flightBudget + hotelBudget + transportBudget + dailyExpenseBudget;
       console.log('[Budget auto allocate] Applying selected live values', {
-        totalBudget: data.totalBudget,
+        totalBudget: allocatedTotalBudget,
         flightBudget,
         hotelBudget,
         transportBudget,
@@ -306,11 +362,19 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
 
       update({
         budgetMode: 'per_category',
+        totalBudget: allocatedTotalBudget,
         flightBudget,
         hotelBudget,
         transportBudget,
         dailyExpenseBudget,
+        budgetFlightCabins: data.includeFlight ? [defaultFlightCabin] : [],
+        budgetHotelStars: data.includeHotel ? [defaultHotelStar] : [],
       });
+      setBudgetFlightAverages(flightAverages);
+      setSelectedBudgetFlightCabins(data.includeFlight ? [defaultFlightCabin] : []);
+      setBudgetHotelAveragesByStars(hotelAveragesByStars || null);
+      setBudgetHotelDebugByStars(json.hotelDebugByStars || null);
+      setSelectedBudgetHotelStars(data.includeHotel ? [defaultHotelStar] : []);
       setBudgetAutoAllocated(true);
       budgetAutoAllocatedKeyRef.current = budgetAutoKey;
 
@@ -361,6 +425,11 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
     if (!budgetAutoAllocated) return;
     if (budgetAutoAllocatedKeyRef.current && budgetAutoAllocatedKeyRef.current !== budgetAutoAllocateKey) {
       setBudgetAutoAllocated(false);
+      setBudgetFlightAverages(null);
+      setSelectedBudgetFlightCabins([]);
+      setBudgetHotelAveragesByStars(null);
+      setBudgetHotelDebugByStars(null);
+      setSelectedBudgetHotelStars([]);
       setBudgetEstimateNote('');
       setBudgetEstimateError('');
     }
@@ -416,6 +485,13 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
   const destinationCity = data.destination || '';
 
   const estimatedFlightPrice = (CABIN_FALLBACK[data.cabinClass] || 300) * totalTravelers;
+  const costLoading = false;
+  const costEstimates = {
+    dailyMeals: 50,
+    dailyTransport: 20,
+    dailyMiscellaneous: 15,
+    currencyNote: '',
+  };
 
   const suggestedBudget = useMemo(() => {
     // Only calculate and log in an active browser session on/after Step 8 (step === 7)
@@ -424,7 +500,8 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
     }
 
     const flightCost = estimatedFlightPrice;
-    const hotelCost = (HOTEL_NIGHTLY[data.hotelStars] || 160) * nights * data.hotelRooms;
+    const hotelApartmentCount = Math.max(1, data.hotelRooms);
+    const hotelCost = (HOTEL_NIGHTLY[data.hotelStars] || 160) * nights * hotelApartmentCount;
     const meals = 50;
     const transport = 20;
     const misc = 15;
@@ -434,13 +511,13 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
     const rounded = Math.ceil(total / 100) * 100;
     console.log('💰 BUDGET BREAKDOWN:');
     console.log('   ✈️ Flights:', flightCost);
-    console.log('   🏨 Hotels:', hotelCost, `($${HOTEL_NIGHTLY[data.hotelStars] || 160}/night × ${nights} nights × ${data.hotelRooms} rooms)`);
+    console.log('   🏨 Hotels:', hotelCost, `($${HOTEL_NIGHTLY[data.hotelStars] || 160}/night × ${nights} nights × ${hotelApartmentCount} apartments)`);
     console.log('   🍽️ Daily meals:', meals * totalTravelers * nights, `($${meals}/person × ${totalTravelers} × ${nights} nights)`);
     console.log('   🚌 Daily transport:', transport * totalTravelers * nights, `($${transport}/person × ${totalTravelers} × ${nights} nights)`);
     console.log('   🛍️ Daily misc:', misc * totalTravelers * nights, `($${misc}/person × ${totalTravelers} × ${nights} nights)`);
     console.log('   💰 Total suggestion:', rounded);
     return rounded;
-  }, [estimatedFlightPrice, data.hotelStars, data.hotelRooms, nights, totalTravelers, step]);
+  }, [estimatedFlightPrice, data.hotelStars, data.hotelRooms, data.hotelRoomsPerApartment, nights, totalTravelers, step]);
 
   const cabinLabel = ({ economy: 'Economy', premium_economy: 'Premium Economy', business: 'Business', first: 'First Class' } as Record<string, string>)[data.cabinClass] || data.cabinClass;
 
@@ -922,8 +999,8 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                       <span className="text-xs font-bold text-foreground font-mono">${estimatedFlightPrice.toLocaleString()}</span>
                     </div>
                     <div className="flex items-center justify-between">
-                      <span className="text-xs text-muted-foreground flex items-center gap-2">🏨 Hotels ({nights} night{nights !== 1 ? 's' : ''} × {data.hotelRooms} room{data.hotelRooms !== 1 ? 's' : ''})</span>
-                      <span className="text-xs font-bold text-foreground font-mono">${((HOTEL_NIGHTLY[data.hotelStars] || 160) * nights * data.hotelRooms).toLocaleString()}/total</span>
+                      <span className="text-xs text-muted-foreground flex items-center gap-2">🏨 Hotels ({nights} night{nights !== 1 ? 's' : ''} × {data.hotelRooms} apartment{data.hotelRooms !== 1 ? 's' : ''}, {data.hotelRoomsPerApartment || 1} room{(data.hotelRoomsPerApartment || 1) !== 1 ? 's' : ''} inside each)</span>
+                      <span className="text-xs font-bold text-foreground font-mono">${((HOTEL_NIGHTLY[data.hotelStars] || 160) * nights * Math.max(1, data.hotelRooms)).toLocaleString()}/total</span>
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-muted-foreground flex items-center gap-2">🍽️ Daily meals in {destinationCity}</span>
@@ -1015,16 +1092,16 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                   </div>
                 </div>
 
-                <Counter label="Rooms" sublabel="Number of hotel rooms" value={data.hotelRooms} min={1} onChange={v => update({ hotelRooms: v })} />
+                <Counter label="Apartments" sublabel="How many separate units, like room 102 and 103" value={data.hotelRooms} min={1} onChange={v => update({ hotelRooms: v })} />
 
-                <Counter label="Beds" sublabel="Number of beds per room" value={data.hotelBeds} min={1} onChange={v => update({ hotelBeds: v })} />
+                <Counter label="Rooms inside each apartment" sublabel="Bedrooms/rooms inside every selected unit" value={data.hotelRoomsPerApartment || 1} min={1} onChange={v => update({ hotelRoomsPerApartment: v })} />
 
                 {/* Nights counter */}
                 <div className="space-y-2">
                   <Counter label="Nights" sublabel="How many nights to stay" value={data.nights} min={1} onChange={v => { nightsAutoSet.current = true; update({ nights: Math.min(30, v) }); }} />
                   <div className="px-6 space-y-1">
                     <div className="text-xs text-muted-foreground font-mono">
-                      {data.nights} night{data.nights !== 1 ? 's' : ''} × ${(HOTEL_NIGHTLY[data.hotelStars] || 160).toLocaleString()}/night = ${((HOTEL_NIGHTLY[data.hotelStars] || 160) * data.nights).toLocaleString()}
+                      {data.nights} night{data.nights !== 1 ? 's' : ''} × {data.hotelRooms} apartment{data.hotelRooms !== 1 ? 's' : ''} with {data.hotelRoomsPerApartment || 1} room{(data.hotelRoomsPerApartment || 1) !== 1 ? 's' : ''} inside each × ${(HOTEL_NIGHTLY[data.hotelStars] || 160).toLocaleString()}/night = ${((HOTEL_NIGHTLY[data.hotelStars] || 160) * data.nights * Math.max(1, data.hotelRooms)).toLocaleString()}
                     </div>
                     <div className="text-[10px] text-muted-foreground/50">
                       Adjust if you won't need a hotel for the full duration.
@@ -1194,96 +1271,213 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
         const fixedBudgetMode = data.budgetMode === 'total';
         const pendingAutoText = budgetAutoAllocated ? 'Customize manually if needed' : 'Run Auto allocate or customize manually';
         const perPersonFlightBudget = data.includeFlight ? Math.round(data.flightBudget / travelerCount) : 0;
-        const perPersonHotelBudget = data.includeHotel ? Math.round(data.hotelBudget / travelerCount) : 0;
         const perPersonTransportBudget = data.includeTransport ? Math.round(data.transportBudget / travelerCount) : 0;
         const perPersonPlaceBudget = placesEnabled ? Math.round(data.dailyExpenseBudget / travelerCount) : 0;
-        const perPersonHotelNightBudget = data.includeHotel ? Math.round(perPersonHotelBudget / safeNights) : 0;
+        const hotelApartmentCount = Math.max(1, data.hotelRooms);
+        const hotelRoomsPerApartment = Math.max(1, data.hotelRoomsPerApartment || 1);
+        const perHotelApartmentNightBudget = data.includeHotel ? Math.round(data.hotelBudget / hotelApartmentCount / safeNights) : 0;
         const perPersonTransportDayBudget = data.includeTransport ? Math.round(perPersonTransportBudget / safeNights) : 0;
         const placeVisitDayBudget = placesEnabled ? Math.round(perPersonPlaceBudget / safeNights) : 0;
         const travelerText = `${travelerCount} traveler${travelerCount !== 1 ? 's' : ''}`;
+        const unlockBudgetAutoAllocate = () => {
+          if (!budgetAutoAllocated) return;
+          setBudgetAutoAllocated(false);
+          budgetAutoAllocatedKeyRef.current = '';
+        };
+        const applyBudgetFlightCabinClass = (nextCabinClass: BudgetFlightCabinClass) => {
+          unlockBudgetAutoAllocate();
+          const nextSelection = selectedBudgetFlightCabins.includes(nextCabinClass)
+            ? selectedBudgetFlightCabins.filter(cabinClass => cabinClass !== nextCabinClass)
+            : [...selectedBudgetFlightCabins, nextCabinClass];
+
+          setSelectedBudgetFlightCabins(nextSelection);
+          if (!budgetFlightAverages || !data.includeFlight) {
+            setBudgetEstimateNote(
+              nextSelection.length
+                ? `Manual flight budget marked for ${nextSelection.map(cabinClass => BUDGET_FLIGHT_CABIN_LABELS[cabinClass]).join(' + ')}.`
+                : 'No flight cabin selected for manual budget.'
+            );
+            return;
+          }
+
+          const selectedAverages = nextSelection
+            .map(cabinClass => budgetFlightAverages[cabinClass])
+            .filter(value => Number.isFinite(value) && value > 0);
+          const flightPerPerson = selectedAverages.length
+            ? Math.max(...selectedAverages)
+            : 0;
+
+          update({
+            budgetMode: 'per_category',
+            flightBudget: flightPerPerson * travelerCount,
+            budgetFlightCabins: nextSelection,
+          });
+          setBudgetEstimateNote(
+            nextSelection.length
+              ? `${nextSelection.map(cabinClass => BUDGET_FLIGHT_CABIN_LABELS[cabinClass]).join(' + ')} selected. Highest average applied to flight budget.`
+              : 'No flight cabin average selected.'
+          );
+        };
+        const applyBudgetHotelStar = (nextStar: number) => {
+          unlockBudgetAutoAllocate();
+          const nextSelection = selectedBudgetHotelStars.includes(nextStar)
+            ? selectedBudgetHotelStars.filter(star => star !== nextStar)
+            : [...selectedBudgetHotelStars, nextStar];
+          const highestSelectedStar = nextSelection.length ? Math.max(...nextSelection) : null;
+          setSelectedBudgetHotelStars(nextSelection);
+
+          if (!budgetHotelAveragesByStars || !data.includeHotel) {
+            setBudgetEstimateNote(
+              highestSelectedStar
+                ? `Manual hotel budget marked up to ${highestSelectedStar}-star apartments.`
+                : 'No hotel star categories selected for manual budget.'
+            );
+            return;
+          }
+
+          const nightlyAverage = highestSelectedStar ? Number(budgetHotelAveragesByStars[String(highestSelectedStar)] || 0) : 0;
+          update({
+            budgetMode: 'per_category',
+            hotelBudget: nightlyAverage > 0 ? nightlyAverage * hotelApartmentCount * safeNights : 0,
+            budgetHotelStars: nextSelection,
+          });
+          setBudgetEstimateNote(
+            highestSelectedStar
+              ? `${highestSelectedStar}-star apartment average applied because it is the highest selected hotel category.`
+              : 'No hotel star average selected.'
+          );
+        };
+        const updateHotelBudgetStructure = (nextValues: { hotelRooms?: number; hotelRoomsPerApartment?: number }) => {
+          unlockBudgetAutoAllocate();
+          setBudgetEstimateNote('');
+          update({
+            ...nextValues,
+            budgetMode: 'per_category',
+          });
+        };
+        const HotelBudgetCounter = ({ label, value, onChange }: { label: string; value: number; onChange: (value: number) => void }) => (
+          <div className="rounded-2xl border border-border bg-muted px-4 py-3">
+            <div className="mb-3 text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground/60">{label}</div>
+            <div className="flex items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={() => onChange(Math.max(1, value - 1))}
+                disabled={value <= 1}
+                className="flex h-9 w-9 items-center justify-center rounded-xl border border-border bg-background text-foreground transition hover:bg-foreground hover:text-background disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <Minus className="h-4 w-4" />
+              </button>
+              <span className="min-w-8 text-center font-mono text-xl font-black text-foreground">{value}</span>
+              <button
+                type="button"
+                onClick={() => onChange(value + 1)}
+                className="flex h-9 w-9 items-center justify-center rounded-xl border border-foreground bg-foreground text-background transition hover:opacity-80"
+              >
+                <Plus className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        );
         const budgetRows = [
           {
             key: 'flight',
             label: 'Flights for travelers',
             detail: data.includeFlight ? (data.flightBudget > 0 ? `$${perPersonFlightBudget.toLocaleString()} per traveler × ${travelerText}` : pendingAutoText) : 'Flights turned off',
             icon: Plane,
-            value: data.includeFlight ? data.flightBudget : 0,
+            value: data.flightBudget,
             max: 50000,
             step: 50,
             enabled: data.includeFlight,
             toggle: () => {
               const includeFlight = !data.includeFlight;
+              unlockBudgetAutoAllocate();
               setBudgetEstimateNote('');
-              update({ includeFlight, flightBudget: includeFlight ? data.flightBudget : 0 });
+              update({ includeFlight });
             },
-            onChange: (value: number) => update({ flightBudget: value, budgetMode: 'per_category' }),
+            onChange: (value: number) => {
+              unlockBudgetAutoAllocate();
+              update({ flightBudget: value, budgetMode: 'per_category' });
+            },
           },
           {
             key: 'hotel',
             label: 'Hotel for travelers',
-            detail: data.includeHotel ? (data.hotelBudget > 0 ? `$${perPersonHotelNightBudget.toLocaleString()} per traveler/night × ${safeNights} day${safeNights !== 1 ? 's' : ''} × ${travelerText}` : pendingAutoText) : 'Hotel turned off',
+            detail: data.includeHotel ? (data.hotelBudget > 0 ? `$${perHotelApartmentNightBudget.toLocaleString()} per apartment/night × ${hotelApartmentCount} apartment${hotelApartmentCount !== 1 ? 's' : ''} × ${safeNights} day${safeNights !== 1 ? 's' : ''}. Searching ${hotelRoomsPerApartment}-room apartment${hotelRoomsPerApartment !== 1 ? 's' : ''}.` : pendingAutoText) : 'Hotel turned off',
             icon: Hotel,
-            value: data.includeHotel ? data.hotelBudget : 0,
+            value: data.hotelBudget,
             max: 50000,
             step: 25,
             enabled: data.includeHotel,
             toggle: () => {
               const includeHotel = !data.includeHotel;
+              unlockBudgetAutoAllocate();
               setBudgetEstimateNote('');
-              update({ includeHotel, hotelBudget: includeHotel ? data.hotelBudget : 0 });
+              update({ includeHotel });
             },
-            onChange: (value: number) => update({ hotelBudget: value, budgetMode: 'per_category' }),
+            onChange: (value: number) => {
+              unlockBudgetAutoAllocate();
+              update({ hotelBudget: value, budgetMode: 'per_category' });
+            },
           },
           {
             key: 'transport',
             label: 'Transportation for travelers',
             detail: data.includeTransport ? (data.transportBudget > 0 ? `$${perPersonTransportDayBudget.toLocaleString()} per traveler/day × ${safeNights} day${safeNights !== 1 ? 's' : ''} × ${travelerText}` : pendingAutoText) : 'Transportation turned off',
             icon: Bus,
-            value: data.includeTransport ? data.transportBudget : 0,
+            value: data.transportBudget,
             max: 30000,
             step: 25,
             enabled: data.includeTransport,
             toggle: () => {
               const includeTransport = !data.includeTransport;
+              unlockBudgetAutoAllocate();
               setBudgetEstimateNote('');
-              update({ includeTransport, transportBudget: includeTransport ? data.transportBudget : 0 });
+              update({ includeTransport });
             },
-            onChange: (value: number) => update({ transportBudget: value, budgetMode: 'per_category' }),
+            onChange: (value: number) => {
+              unlockBudgetAutoAllocate();
+              update({ transportBudget: value, budgetMode: 'per_category' });
+            },
           },
           {
             key: 'places',
             label: 'Places for travelers',
             detail: placesEnabled ? (data.dailyExpenseBudget > 0 ? `$${placeVisitDayBudget.toLocaleString()} per traveler/day × ${safeNights} day${safeNights !== 1 ? 's' : ''} × ${travelerText}` : pendingAutoText) : 'Place visits turned off',
             icon: Compass,
-            value: placesEnabled ? data.dailyExpenseBudget : 0,
+            value: data.dailyExpenseBudget,
             max: 30000,
             step: 25,
             enabled: placesEnabled,
             toggle: () => {
               const includePlaces = !placesEnabled;
+              unlockBudgetAutoAllocate();
               setBudgetEstimateNote('');
               setIncludePlaceVisits(includePlaces);
-              update({ dailyExpenseBudget: includePlaces ? data.dailyExpenseBudget : 0 });
             },
-            onChange: (value: number) => update({ dailyExpenseBudget: value, budgetMode: 'per_category' }),
+            onChange: (value: number) => {
+              unlockBudgetAutoAllocate();
+              update({ dailyExpenseBudget: value, budgetMode: 'per_category' });
+            },
           },
         ];
-        const consumedBudget = data.flightBudget + data.hotelBudget + data.transportBudget + data.dailyExpenseBudget;
+        const consumedBudget =
+          (data.includeFlight ? data.flightBudget : 0) +
+          (data.includeHotel ? data.hotelBudget : 0) +
+          (data.includeTransport ? data.transportBudget : 0) +
+          (placesEnabled ? data.dailyExpenseBudget : 0);
         const budgetDelta = data.totalBudget - consumedBudget;
         const budgetFits = budgetDelta >= 0;
         const switchBudgetMode = (budgetMode: BudgetMode) => {
+          unlockBudgetAutoAllocate();
           if (budgetMode === 'total') {
             setBudgetEstimateNote('');
             setBudgetEstimateError('');
-            setBudgetAutoAllocated(false);
-            budgetAutoAllocatedKeyRef.current = '';
-            update({
-              budgetMode,
-              flightBudget: 0,
-              hotelBudget: 0,
-              transportBudget: 0,
-              dailyExpenseBudget: 0,
-            });
+            setBudgetFlightAverages(null);
+            setSelectedBudgetFlightCabins([]);
+            setBudgetHotelAveragesByStars(null);
+            setBudgetHotelDebugByStars(null);
+            setSelectedBudgetHotelStars([]);
+            update({ budgetMode });
             return;
           }
           update({ budgetMode });
@@ -1336,6 +1530,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                 value={data.totalBudget}
                 onChange={event => {
                   const totalBudget = Number(event.target.value);
+                  unlockBudgetAutoAllocate();
                   update({ totalBudget });
                 }}
                 className="w-full h-2 bg-muted rounded-lg appearance-none cursor-pointer accent-foreground"
@@ -1372,6 +1567,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                         onChange={value => {
                           const nextNights = Math.min(60, value);
                           const scaleByStayLength = (amount: number) => Math.round((amount / safeNights) * nextNights);
+                          unlockBudgetAutoAllocate();
                           nightsAutoSet.current = true;
                           update({
                             nights: nextNights,
@@ -1446,10 +1642,177 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                       <div>
                         <div className="text-[10px] uppercase tracking-[0.16em] font-bold text-muted-foreground/50">Selected value</div>
                         <div className="mt-1 text-xl font-bold text-foreground font-mono">
-                          {item.enabled ? `$${item.value.toLocaleString()}` : '--'}
+                          ${item.value.toLocaleString()}
                         </div>
+                        {!item.enabled && item.value > 0 && (
+                          <div className="mt-1 text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground/50">
+                            Saved while off
+                          </div>
+                        )}
                       </div>
                     </div>
+                    {item.key === 'flight' && item.enabled && (
+                      <div className="mt-4 rounded-2xl border border-border bg-background p-3">
+                        <div className="mb-2 flex items-center justify-between gap-3">
+                          <span className="text-[10px] font-black uppercase tracking-[0.16em] text-muted-foreground/60">
+                            Flight average to apply
+                          </span>
+                          {budgetFlightAverages && (
+                            <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground/50">
+                              Per traveler
+                            </span>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          {BUDGET_FLIGHT_CABIN_CLASSES.map(cabinClass => {
+                            const selected = selectedBudgetFlightCabins.includes(cabinClass);
+                            const averagePrice = budgetFlightAverages?.[cabinClass];
+                            return (
+                              <button
+                                key={cabinClass}
+                                type="button"
+                                onClick={() => applyBudgetFlightCabinClass(cabinClass)}
+                                className={`rounded-xl border px-3 py-3 text-left transition ${selected ? 'border-foreground bg-foreground text-background shadow-lg shadow-foreground/10' : 'border-border bg-muted text-foreground hover:border-foreground/30'}`}
+                              >
+                                <div className="text-[11px] font-black uppercase tracking-[0.14em]">
+                                  {BUDGET_FLIGHT_CABIN_LABELS[cabinClass]}
+                                </div>
+                                <div className={`mt-1 font-mono text-sm font-black ${selected ? 'text-background' : 'text-foreground'}`}>
+                                  {averagePrice ? `$${averagePrice.toLocaleString()}` : 'Manual'}
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                    {item.key === 'hotel' && item.enabled && (
+                      <div className="mt-4 rounded-2xl border border-border bg-background p-4">
+                        <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                          <div>
+                            <div className="text-[10px] font-black uppercase tracking-[0.16em] text-muted-foreground/60">
+                              Hotel apartment setup
+                            </div>
+                            <div className="mt-1 text-xs text-muted-foreground">
+                              Example: 2 apartments can mean separate units like room 102 and 103.
+                            </div>
+                          </div>
+                          <div className="text-right font-mono text-xs font-black text-foreground">
+                            {hotelApartmentCount} apartment{hotelApartmentCount !== 1 ? 's' : ''} needed
+                            <div className="text-[10px] text-muted-foreground/60">
+                              {hotelApartmentCount * hotelRoomsPerApartment} total room{hotelApartmentCount * hotelRoomsPerApartment !== 1 ? 's' : ''} requested
+                            </div>
+                          </div>
+                        </div>
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <HotelBudgetCounter
+                            label="Apartments"
+                            value={hotelApartmentCount}
+                            onChange={value => updateHotelBudgetStructure({ hotelRooms: value })}
+                          />
+                          <HotelBudgetCounter
+                            label="Rooms inside each"
+                            value={hotelRoomsPerApartment}
+                            onChange={value => updateHotelBudgetStructure({ hotelRoomsPerApartment: value })}
+                          />
+                        </div>
+                        <div className="mt-4 rounded-2xl border border-border bg-muted p-3">
+                          <div className="mb-2 flex items-center justify-between gap-3">
+                            <span className="text-[10px] font-black uppercase tracking-[0.16em] text-muted-foreground/60">
+                              Hotel star average to apply
+                            </span>
+                            {budgetHotelAveragesByStars && (
+                              <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground/50">
+                                Per apartment/night
+                              </span>
+                            )}
+                          </div>
+                          <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+                            {BUDGET_HOTEL_STAR_OPTIONS.map(star => {
+                              const selected = selectedBudgetHotelStars.includes(star);
+                              const averagePrice = budgetHotelAveragesByStars?.[String(star)];
+                              const sampleCount = budgetHotelDebugByStars?.[String(star)]?.length || 0;
+                              return (
+                                <button
+                                  key={star}
+                                  type="button"
+                                  onClick={() => applyBudgetHotelStar(star)}
+                                  className={`rounded-xl border px-3 py-3 text-left transition ${selected ? 'border-foreground bg-foreground text-background shadow-lg shadow-foreground/10' : 'border-border bg-background text-foreground hover:border-foreground/30'}`}
+                                >
+                                  <div className="text-[11px] font-black uppercase tracking-[0.14em]">
+                                    {star} Star
+                                  </div>
+                                  <div className={`mt-1 font-mono text-sm font-black ${selected ? 'text-background' : 'text-foreground'}`}>
+                                    {averagePrice ? `$${averagePrice.toLocaleString()}` : 'Manual'}
+                                  </div>
+                                  {budgetHotelDebugByStars && (
+                                    <div className={`mt-1 text-[9px] font-bold uppercase tracking-[0.1em] ${selected ? 'text-background/70' : 'text-muted-foreground/50'}`}>
+                                      {sampleCount} sample{sampleCount !== 1 ? 's' : ''}
+                                    </div>
+                                  )}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          {selectedBudgetHotelStars.length > 0 && (
+                            <div className="mt-3 rounded-xl border border-border bg-background px-3 py-2 text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+                              Applying {Math.max(...selectedBudgetHotelStars)}-star because it is the highest selected category.
+                            </div>
+                          )}
+                          {budgetHotelDebugByStars && (
+                            <div className="mt-4 space-y-3">
+                              <div className="flex items-center justify-between gap-3">
+                                <span className="text-[10px] font-black uppercase tracking-[0.16em] text-muted-foreground/60">
+                                  SerpApi hotel samples used
+                                </span>
+                                <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground/50">
+                                  Sorted by nightly price
+                                </span>
+                              </div>
+                              <div className="grid gap-3">
+                                {BUDGET_HOTEL_STAR_OPTIONS.map(star => {
+                                  const samples = budgetHotelDebugByStars[String(star)] || [];
+                                  const averagePrice = budgetHotelAveragesByStars?.[String(star)];
+                                  return (
+                                    <div key={`hotel-debug-${star}`} className="rounded-2xl border border-border bg-background p-3">
+                                      <div className="mb-2 flex items-center justify-between gap-3">
+                                        <div className="text-[11px] font-black uppercase tracking-[0.14em] text-foreground">
+                                          {star} Star
+                                        </div>
+                                        <div className="font-mono text-xs font-black text-foreground">
+                                          Avg {averagePrice ? `$${averagePrice.toLocaleString()}` : 'Manual'} / night
+                                        </div>
+                                      </div>
+                                      {samples.length > 0 ? (
+                                        <div className="max-h-44 space-y-2 overflow-y-auto pr-1">
+                                          {samples.map((sample: any, index: number) => (
+                                            <div key={`${star}-${sample.name}-${index}`} className="grid gap-2 rounded-xl border border-border/70 bg-muted px-3 py-2 text-xs sm:grid-cols-[1fr_auto]">
+                                              <div className="min-w-0">
+                                                <div className="truncate font-bold text-foreground">{sample.name}</div>
+                                                <div className="mt-0.5 text-[10px] text-muted-foreground">
+                                                  Parsed {sample.parsedStars || 'unknown'} star{sample.hotelClass ? ` / ${sample.hotelClass}` : ''}
+                                                </div>
+                                              </div>
+                                              <div className="font-mono text-sm font-black text-foreground">
+                                                ${Number(sample.nightlyPrice || 0).toLocaleString()}
+                                              </div>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      ) : (
+                                        <div className="rounded-xl border border-dashed border-border bg-muted px-3 py-3 text-xs text-muted-foreground">
+                                          No direct SerpApi samples for this bucket. The shown average is fallback-scaled from available hotel data.
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
                     <input
                       type="range"
                       min="0"
@@ -1661,7 +2024,12 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
         </button>
 
         {step === STEPS.length - 1 ? (
-          <button type="button" onClick={() => onComplete(data)} disabled={isLoading}
+          <button type="button" onClick={() => onComplete({
+            ...data,
+            budgetFlightCabins: selectedBudgetFlightCabins.length ? selectedBudgetFlightCabins : data.budgetFlightCabins,
+            budgetHotelStars: selectedBudgetHotelStars.length ? selectedBudgetHotelStars : data.budgetHotelStars,
+            includePlaceVisits,
+          })} disabled={isLoading}
             className="btn-primary flex items-center gap-3 px-10 py-4 group disabled:opacity-50">
             {isLoading ? (
               <div className="w-5 h-5 border-2 border-background/20 border-t-background rounded-full animate-spin" />

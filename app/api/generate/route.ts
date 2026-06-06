@@ -1,10 +1,24 @@
 import { NextResponse } from 'next/server';
 import { GoogleGenAI, Type } from '@google/genai';
-import { searchSerpApiFlights as searchGoogleFlights } from '../../google-api/google-flights';
-import { searchSerpApiHotels as searchGoogleHotels } from '../../google-api/google-hotels';
+import fs from 'fs';
+import path from 'path';
+import { searchSerpApiFlights as searchGoogleFlights } from '../google-api/google-flights';
+import { searchSerpApiHotels as searchGoogleHotels } from '../google-api/google-hotels';
+import { searchGoogleImagesLight } from '../google-api/google-images-light';
 
-const LOCATIONIQ_KEY = 'pk.35eee2d341d3d4fca912eeafc74ba5a4';
+const LOCATIONIQ_KEY = process.env.LOCATIONIQ_KEY || '';
 const SERPAPI_KEY = process.env.SERPAPI_API_KEY || '';
+
+function loadPromptTemplate(fileName: string) {
+  return fs.readFileSync(path.join(process.cwd(), 'app', 'ai-prompts', fileName), 'utf8');
+}
+
+function fillPromptTemplate(template: string, values: Record<string, string | number | boolean>) {
+  return Object.entries(values).reduce(
+    (result, [key, value]) => result.replaceAll(`{{${key}}}`, String(value)),
+    template
+  );
+}
 
 function createPlannerLogger() {
   const requestId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
@@ -130,124 +144,6 @@ async function geocodeCity(cityName: string, countryName: string = ''): Promise<
   return null;
 }
 
-/**
- * Geocode a place name using SerpApi Google Maps local results + Nominatim fallback.
- * Returns coordinates only if they are within maxDistKm of the destination.
- */
-async function geocodePlaceName(
-  placeName: string,
-  cityName: string,
-  countryName: string = '',
-  countryCode: string = '',
-  destLat: string = '',
-  destLon: string = '',
-  maxDistKm: number = 100
-): Promise<{
-  lat: string;
-  lon: string;
-  rating?: number;
-  reviewsCount?: number;
-  address?: string;
-  placeType?: string;
-  source?: string;
-} | null> {
-  const MAX_DIST = maxDistKm; // km - reject if further than this
-
-  const isCloseEnough = (lat: string, lon: string): boolean => {
-    if (!destLat || !destLon) return true;
-    const dist = haversineDistance(destLat, destLon, lat, lon);
-    return dist <= MAX_DIST;
-  };
-
-  // Attempt 1: SerpApi Google Maps local results
-  const placeQuery = countryName
-    ? `${placeName}, ${cityName}, ${countryName}`
-    : `${placeName}, ${cityName}`;
-
-  if (SERPAPI_KEY) {
-    try {
-      const searchParams = new URLSearchParams({
-        engine: 'google_maps',
-        type: 'search',
-        q: placeQuery,
-        api_key: SERPAPI_KEY,
-        no_cache: 'true',
-      });
-
-      if (countryCode) searchParams.set('gl', countryCode.toLowerCase());
-      if (destLat && destLon) searchParams.set('ll', `@${destLat},${destLon},13z`);
-
-      const res = await fetch(`https://serpapi.com/search.json?${searchParams.toString()}`);
-      if (!res.ok) {
-        console.warn(`  SerpApi Google Maps HTTP ${res.status} for place "${placeName}"`);
-      } else {
-        const data = await res.json();
-        const localResults = Array.isArray(data?.local_results) ? data.local_results : [];
-        const first = localResults[0];
-        const lat = first?.gps_coordinates?.latitude;
-        const lon = first?.gps_coordinates?.longitude;
-
-        if (lat !== undefined && lon !== undefined) {
-          const latStr = String(lat);
-          const lonStr = String(lon);
-          if (isCloseEnough(latStr, lonStr)) {
-            console.log(`  SerpApi Maps: "${placeName}" -> lat=${latStr}, lon=${lonStr} (OK)`);
-            return {
-              lat: latStr,
-              lon: lonStr,
-              rating: typeof first?.rating === 'number' ? first.rating : undefined,
-              reviewsCount: typeof first?.reviews === 'number' ? first.reviews : undefined,
-              address: typeof first?.address === 'string' ? first.address : undefined,
-              placeType: typeof first?.type === 'string' ? first.type : undefined,
-              source: 'serpapi_maps',
-            };
-          }
-
-          const dist = haversineDistance(destLat, destLon, latStr, lonStr);
-          console.log(`  SerpApi Maps: "${placeName}" -> lat=${latStr}, lon=${lonStr} -> ${dist.toFixed(0)} km (TOO FAR, trying Nominatim)`);
-        } else {
-          console.warn(`  SerpApi Maps returned no coordinates for place "${placeName}"`);
-        }
-      }
-    } catch (err) {
-      console.warn(`  SerpApi Maps lookup failed for place "${placeName}":`, err);
-    }
-  } else {
-    console.warn(`  SERPAPI_API_KEY missing, skipping SerpApi lookup for "${placeName}"`);
-  }
-
-  // Attempt 2: Nominatim fallback
-  const nomQuery = countryName
-    ? `${placeName}, ${cityName}, ${countryName}`
-    : `${placeName}, ${cityName}`;
-
-  try {
-    await new Promise(r => setTimeout(r, 1000));
-    const countryParam = countryCode ? `&countrycodes=${countryCode}` : '';
-    const res = await fetch(
-      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(nomQuery)}&format=json&limit=1${countryParam}`,
-      { headers: { 'User-Agent': 'TravelPlannerWebsite/1.0' } }
-    );
-
-    if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data) && data.length > 0) {
-        const { lat, lon } = data[0];
-        const dist = destLat && destLon ? haversineDistance(destLat, destLon, lat, lon) : 0;
-        console.log(`  NOMINATIM FALLBACK: "${placeName}" -> lat=${lat}, lon=${lon} -> ${dist.toFixed(1)} km`);
-        if (isCloseEnough(lat, lon)) {
-          return { lat, lon, source: 'nominatim' };
-        }
-        console.log(`  Nominatim result too far (${dist.toFixed(0)} km)`);
-      }
-    }
-  } catch {
-    // both failed
-  }
-
-  console.log(`  REJECTED - both geocoders failed for: "${placeName}"`);
-  return null;
-}
 async function findNearby(lat: string, lon: string, tag: string, radiusMeters: number = 20000, limit: number = 10): Promise<any[]> {
   try {
     const url = `https://us1.locationiq.com/v1/nearby?key=${LOCATIONIQ_KEY}&lat=${lat}&lon=${lon}&tag=${tag}&radius=${radiusMeters}&limit=${limit}&format=json`;
@@ -1052,6 +948,10 @@ type BudgetFilterInput = {
   hotels: any[];
   transport: any[];
   placesToVisit: any[];
+  includeFlight: boolean;
+  includeHotel: boolean;
+  includeTransport: boolean;
+  includePlaceVisits: boolean;
   budgetMode: string;
   totalBudget: number;
   flightBudget: number;
@@ -1059,6 +959,7 @@ type BudgetFilterInput = {
   transportBudget: number;
   dailyExpenseBudget: number;
   nights: number;
+  hotelRooms?: number;
   travelers: number;
   origin: string;
   destination: string;
@@ -1068,6 +969,14 @@ type BudgetFilterInput = {
   departureDate: string;
   returnDate?: string;
   vibes?: string[];
+};
+
+type BudgetPickResult<T = any> = {
+  items: T[];
+  selectedIndexes: number[];
+  cheapestPrice: number | null;
+  shownCount: number;
+  status: 'fit' | 'over_budget' | 'no_prices';
 };
 
 const BUDGET_TOLERANCE_PERCENT = 10;
@@ -1087,19 +996,26 @@ const BUDGET_CATEGORY_LABELS: Record<BudgetCategoryKey, string> = {
 function buildBudgetAllocations(input: BudgetFilterInput) {
   if (input.budgetMode === 'per_category') {
     return {
-      flights: Math.max(0, Number(input.flightBudget) || 0),
-      hotels: Math.max(0, Number(input.hotelBudget) || 0),
-      transport: Math.max(0, Number(input.transportBudget) || 0),
-      dailyExpenses: Math.max(0, Number(input.dailyExpenseBudget) || 0),
+      flights: input.includeFlight ? Math.max(0, Number(input.flightBudget) || 0) : 0,
+      hotels: input.includeHotel ? Math.max(0, Number(input.hotelBudget) || 0) : 0,
+      transport: input.includeTransport ? Math.max(0, Number(input.transportBudget) || 0) : 0,
+      dailyExpenses: input.includePlaceVisits ? Math.max(0, Number(input.dailyExpenseBudget) || 0) : 0,
     };
   }
 
   const total = Math.max(0, Number(input.totalBudget) || 0);
+  const enabledWeights = {
+    flights: input.includeFlight ? TOTAL_BUDGET_SPLIT.flights : 0,
+    hotels: input.includeHotel ? TOTAL_BUDGET_SPLIT.hotels : 0,
+    transport: input.includeTransport ? TOTAL_BUDGET_SPLIT.transport : 0,
+    dailyExpenses: input.includePlaceVisits ? TOTAL_BUDGET_SPLIT.dailyExpenses : 0,
+  };
+  const enabledTotal = Object.values(enabledWeights).reduce((sum, weight) => sum + weight, 0) || 1;
   return {
-    flights: Math.round(total * TOTAL_BUDGET_SPLIT.flights),
-    hotels: Math.round(total * TOTAL_BUDGET_SPLIT.hotels),
-    transport: Math.round(total * TOTAL_BUDGET_SPLIT.transport),
-    dailyExpenses: Math.round(total * TOTAL_BUDGET_SPLIT.dailyExpenses),
+    flights: Math.round(total * (enabledWeights.flights / enabledTotal)),
+    hotels: Math.round(total * (enabledWeights.hotels / enabledTotal)),
+    transport: Math.round(total * (enabledWeights.transport / enabledTotal)),
+    dailyExpenses: Math.round(total * (enabledWeights.dailyExpenses / enabledTotal)),
   };
 }
 
@@ -1176,7 +1092,6 @@ function summarizeBudgetPlaces(placesToVisit: any[], travelers: number) {
     description: place?.description || '',
     rating: place?.rating || null,
     distance: place?.distance || '',
-    mapped: !!(place?.lat && place?.lon),
   }));
 }
 
@@ -1205,99 +1120,45 @@ function buildBudgetAiPrompt(input: BudgetFilterInput) {
     dailyExpenses: Math.round(budgets.dailyExpenses * 1.1),
   };
 
-  return `Return ONLY valid JSON with no markdown.
-
-You are the AI budget filtering agent for a travel planner. You receive REAL options already fetched by the app:
-a) SerpApi flights
-b) SerpApi hotels
-c) transportation options
-d) vibes and places
-e) main budget and used/category budgets
-
-Your job:
-- Decide which real options fit the user's budget scenario and trip context.
-- Use the 10% up/down tolerance around each category budget.
-- For budgetMode "total", use the suggested split as guidance but reason across the complete trip: flights 45%, hotels 30%, transport 10%, daily/vibes 15%.
-- For budgetMode "per_category", respect each category budget directly.
-- Consider route, dates, travelers, nights, and vibes.
-- If no real option fits a category, return selectedIndexes as [] and give realistic examples in examples[] showing what it would actually cost.
-- Do not invent indexes. Only select indexes listed in the real options.
-- Do not select expensive options just to avoid an empty category. Empty category + examples is correct when nothing fits.
-
-Trip context:
-${JSON.stringify({
-  origin: input.origin,
-  destination: input.destination,
-  destinationCity: input.destinationCity,
-  destinationCountry: input.destinationCountry,
-  tripType: input.tripType,
-  departureDate: input.departureDate,
-  returnDate: input.returnDate,
-  travelers: input.travelers,
-  nights: input.nights,
-  vibes: input.vibes || [],
-}, null, 2)}
-
-Budget context:
-${JSON.stringify({
-  budgetMode: input.budgetMode,
-  totalBudget: input.totalBudget,
-  userCategoryBudgets: {
-    flights: input.flightBudget,
-    hotels: input.hotelBudget,
-    transport: input.transportBudget,
-    dailyExpenses: input.dailyExpenseBudget,
-  },
-  effectiveCategoryBudgets: budgets,
-  tolerancePercent: BUDGET_TOLERANCE_PERCENT,
-  toleranceUpperLimit: categoryUpper,
-}, null, 2)}
-
-Real options:
-${JSON.stringify({
-  flights: summarizeBudgetFlights(input.flights),
-  hotels: summarizeBudgetHotels(input.hotels, input.nights, 1),
-  transport: summarizeBudgetTransport(input.transport),
-  dailyExpenses: summarizeBudgetPlaces(input.placesToVisit, input.travelers),
-}, null, 2)}
-
-Return exactly this JSON shape:
-{
-  "summary": "short user-facing explanation of what fits and what does not",
-  "warnings": ["important warnings, especially impossible budgets"],
-  "categories": {
-    "flights": {
-      "status": "fit | over_budget | no_budget | no_data | no_prices",
-      "selectedIndexes": [0, 1],
-      "message": "explain selected flight options or why none fit",
-      "examples": ["If none fit, realistic flight cost example like Amman to Riyadh economy usually starts around $300 for this route/date."]
-    },
-    "hotels": {
-      "status": "fit | over_budget | no_budget | no_data | no_prices",
-      "selectedIndexes": [0, 1],
-      "message": "explain selected hotel options or why none fit",
-      "examples": ["If none fit, realistic hotel stay example with nightly/total cost."]
-    },
-    "transport": {
-      "status": "fit | over_budget | no_budget | no_data | no_prices",
-      "selectedIndexes": [0],
-      "message": "explain selected transport options or why none fit",
-      "examples": ["If none fit, realistic local transport cost example."]
-    },
-    "dailyExpenses": {
-      "status": "fit | over_budget | no_budget | no_data | no_prices",
-      "selectedIndexes": [0, 1],
-      "message": "explain selected vibe/activity options or why none fit",
-      "examples": ["If none fit, realistic daily activity/food/visit cost example."]
-    }
-  }
-}`;
+  return fillPromptTemplate(loadPromptTemplate('generate-budget-filter.txt'), {
+    TRIP_CONTEXT_JSON: JSON.stringify({
+      origin: input.origin,
+      destination: input.destination,
+      destinationCity: input.destinationCity,
+      destinationCountry: input.destinationCountry,
+      tripType: input.tripType,
+      departureDate: input.departureDate,
+      returnDate: input.returnDate,
+      travelers: input.travelers,
+      nights: input.nights,
+      vibes: input.vibes || [],
+    }, null, 2),
+    BUDGET_CONTEXT_JSON: JSON.stringify({
+      budgetMode: input.budgetMode,
+      totalBudget: input.totalBudget,
+      userCategoryBudgets: {
+        flights: input.flightBudget,
+        hotels: input.hotelBudget,
+        transport: input.transportBudget,
+        dailyExpenses: input.dailyExpenseBudget,
+      },
+      effectiveCategoryBudgets: budgets,
+      tolerancePercent: BUDGET_TOLERANCE_PERCENT,
+      toleranceUpperLimit: categoryUpper,
+    }, null, 2),
+    REAL_OPTIONS_JSON: JSON.stringify({
+      flights: summarizeBudgetFlights(input.flights),
+      hotels: summarizeBudgetHotels(input.hotels, input.nights, Math.max(1, Number(input.hotelRooms) || 1)),
+      transport: summarizeBudgetTransport(input.transport),
+      dailyExpenses: summarizeBudgetPlaces(input.placesToVisit, input.travelers),
+    }, null, 2),
+  });
 }
 
 async function callBudgetGemini(prompt: string) {
   const keys = [
-    { name: 'gemini_key_1', value: process.env.GEMINI_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY || '' },
-    { name: 'gemini_key_2', value: process.env.GEMINI_API_KEY_2 || '' },
+    { name: 'gemini_key_1', value: process.env.NEXT_PUBLIC_GEMINI_API_KEY || '' },
+    { name: 'gemini_key_2', value: process.env.NEXT_PUBLIC_GEMINI_API_KEY_V2 || '' },
   ];
 
   for (const key of keys) {
@@ -1318,7 +1179,39 @@ async function callBudgetGemini(prompt: string) {
     }
   }
 
-  throw new Error('Gemini budget filter failed');
+  const groqKey = process.env.NEXT_PUBLIC_GROQ_API_KEY || '';
+  if (groqKey) {
+    try {
+      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${groqKey}`,
+        },
+        body: JSON.stringify({
+          model: 'llama-3.3-70b-versatile',
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.15,
+          max_tokens: 4096,
+          response_format: { type: 'json_object' },
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Groq HTTP ${response.status}: ${await response.text()}`);
+      }
+
+      const data = await response.json();
+      return {
+        decision: parseBudgetAiJson(data.choices?.[0]?.message?.content || '{}'),
+        source: 'groq',
+      };
+    } catch (error: any) {
+      console.error('[Budget AI prompt] groq failed:', error?.message || error);
+    }
+  }
+
+  throw new Error('AI budget filter failed');
 }
 
 function pickAiSelectedItems<T>(items: T[], decision?: BudgetCategoryDecision) {
@@ -1335,12 +1228,45 @@ function getCategoryCheapestPrice(key: BudgetCategoryKey, input: BudgetFilterInp
     key === 'flights'
       ? input.flights.map(getNormalizedFlightPrice)
       : key === 'hotels'
-        ? input.hotels.map(hotel => getHotelStayPrice(hotel, input.nights, 1))
+        ? input.hotels.map(hotel => getHotelStayPrice(hotel, input.nights, Math.max(1, Number(input.hotelRooms) || 1)))
         : key === 'transport'
           ? input.transport.map(getTransportOptionPrice)
           : input.placesToVisit.map(place => getPlaceTotalPrice(place, input.travelers));
   const valid = prices.filter((price): price is number => typeof price === 'number' && Number.isFinite(price) && price > 0);
   return valid.length ? Math.min(...valid) : null;
+}
+
+function getCategoryPriceGetter(key: BudgetCategoryKey, input: BudgetFilterInput) {
+  if (key === 'flights') return (item: any) => getNormalizedFlightPrice(item);
+  if (key === 'hotels') return (item: any) => getHotelStayPrice(item, input.nights, Math.max(1, Number(input.hotelRooms) || 1));
+  if (key === 'transport') return (item: any) => getTransportOptionPrice(item);
+  return (item: any) => getPlaceTotalPrice(item, input.travelers);
+}
+
+function deterministicPickByBudget<T>(
+  items: T[],
+  budget: number,
+  getPrice: (item: T) => number | null,
+  maxItems: number
+): BudgetPickResult<T> {
+  const priced = items
+    .map((item, index) => ({ item, index, price: getPrice(item) }))
+    .filter((entry): entry is { item: T; index: number; price: number } => typeof entry.price === 'number' && Number.isFinite(entry.price) && entry.price > 0)
+    .sort((a, b) => a.price - b.price);
+  const upperBound = Math.round(Math.max(0, Number(budget) || 0) * (1 + BUDGET_TOLERANCE_PERCENT / 100));
+  const withinBudget = priced.filter(entry => entry.price <= upperBound);
+  const picked = (withinBudget.length ? withinBudget : priced.slice(0, 1)).slice(0, maxItems);
+  return {
+    items: picked.map(entry => entry.item),
+    selectedIndexes: picked.map(entry => entry.index),
+    cheapestPrice: priced[0]?.price ?? null,
+    shownCount: picked.length,
+    status: !priced.length
+      ? 'no_prices' as const
+      : picked.length && picked[0].price <= upperBound
+        ? 'fit' as const
+        : 'over_budget' as const,
+  };
 }
 
 function buildBudgetCategoryReport(
@@ -1370,31 +1296,90 @@ function buildBudgetCategoryReport(
 }
 
 function buildUnavailableBudgetResult(input: BudgetFilterInput, errorMessage: string) {
-  const emptyDecision = {
-    status: 'no_data' as const,
-    selectedIndexes: [],
-    message: `Gemini budget filtering was unavailable: ${errorMessage}`,
-    examples: ['Try increasing the budget or rerun the search to get current realistic prices.'],
+  const budgets = buildBudgetAllocations(input);
+  const flightPick = input.includeFlight ? deterministicPickByBudget(input.flights, budgets.flights, getCategoryPriceGetter('flights', input), 9) : { items: [], selectedIndexes: [], cheapestPrice: null, shownCount: 0, status: 'no_prices' as const };
+  const hotelPick = input.includeHotel ? deterministicPickByBudget(input.hotels, budgets.hotels, getCategoryPriceGetter('hotels', input), 10) : { items: [], selectedIndexes: [], cheapestPrice: null, shownCount: 0, status: 'no_prices' as const };
+  const transportPick = input.includeTransport ? deterministicPickByBudget(input.transport, budgets.transport, getCategoryPriceGetter('transport', input), 6) : { items: [], selectedIndexes: [], cheapestPrice: null, shownCount: 0, status: 'no_prices' as const };
+  const dailyPick = input.includePlaceVisits ? deterministicPickByBudget(input.placesToVisit, budgets.dailyExpenses, getCategoryPriceGetter('dailyExpenses', input), 12) : { items: [], selectedIndexes: [], cheapestPrice: null, shownCount: 0, status: 'no_prices' as const };
+
+  const makeDecision = (key: BudgetCategoryKey, pick: BudgetPickResult) => {
+    const cheapest = pick.cheapestPrice;
+    const message = pick.status === 'fit'
+      ? `${BUDGET_CATEGORY_LABELS[key]} were filtered by real prices using your ${input.budgetMode === 'total' ? 'fixed total budget split' : 'category budget'}.`
+      : pick.status === 'over_budget' && cheapest
+        ? `${BUDGET_CATEGORY_LABELS[key]} real prices are above this budget. Cheapest found is $${Math.round(cheapest).toLocaleString()}, so more budget is needed.`
+        : `No reliable ${BUDGET_CATEGORY_LABELS[key].toLowerCase()} prices were available to filter.`;
+    return {
+      status: pick.status,
+      selectedIndexes: pick.selectedIndexes,
+      message,
+      examples: [`AI budget filtering failed (${errorMessage}), so deterministic price filtering was used instead.`],
+    };
   };
+
   const categories = {
-    flights: buildBudgetCategoryReport('flights', input, emptyDecision, input.flights.length, 0, true),
-    hotels: buildBudgetCategoryReport('hotels', input, emptyDecision, input.hotels.length, 0, true),
-    transport: buildBudgetCategoryReport('transport', input, emptyDecision, input.transport.length, 0, true),
-    dailyExpenses: buildBudgetCategoryReport('dailyExpenses', input, emptyDecision, input.placesToVisit.length, 0, true),
+    flights: buildBudgetCategoryReport('flights', input, makeDecision('flights', flightPick), input.flights.length, flightPick.shownCount, input.includeFlight),
+    hotels: buildBudgetCategoryReport('hotels', input, makeDecision('hotels', hotelPick), input.hotels.length, hotelPick.shownCount, input.includeHotel),
+    transport: buildBudgetCategoryReport('transport', input, makeDecision('transport', transportPick), input.transport.length, transportPick.shownCount, input.includeTransport),
+    dailyExpenses: buildBudgetCategoryReport('dailyExpenses', input, makeDecision('dailyExpenses', dailyPick), input.placesToVisit.length, dailyPick.shownCount, input.includePlaceVisits),
   };
 
   return {
-    flights: [],
-    hotels: [],
-    transport: [],
-    placesToVisit: [],
+    flights: flightPick.items,
+    hotels: hotelPick.items,
+    transport: transportPick.items,
+    placesToVisit: dailyPick.items,
     budgetFitAgent: {
       tolerancePercent: BUDGET_TOLERANCE_PERCENT,
-      modelSource: 'unavailable',
+      modelSource: 'deterministic_fallback',
       categories,
       warnings: [errorMessage],
-      summary: 'Gemini could not filter these options, so no budget-fit options are shown.',
+      summary: 'AI budget filtering was unavailable, so the planner filtered real prices deterministically against your budget.',
     },
+  };
+}
+
+function buildEnabledTripSummary(input: {
+  aiSummary: any;
+  destinationCity: string;
+  destinationCountry: string;
+  tripType: string;
+  nights: number;
+  effectiveBudget: number;
+  includeFlight: boolean;
+  includeHotel: boolean;
+  includeTransport: boolean;
+  includePlaceVisits: boolean;
+  flights: any[];
+  hotels: any[];
+  transport: any[];
+  placesToVisit: any[];
+}) {
+  const destinationLabel = [input.destinationCity, input.destinationCountry].filter(Boolean).join(', ') || input.destinationCity || 'your destination';
+  const tripLabel = input.tripType === 'round_trip' ? 'round-trip' : input.tripType === 'one_way' ? 'one-way' : input.tripType?.replace(/_/g, ' ') || 'trip';
+  const enabledParts = [
+    input.includeFlight ? `${input.flights.length} flight option${input.flights.length === 1 ? '' : 's'}` : '',
+    input.includeHotel ? `${input.hotels.length} stay option${input.hotels.length === 1 ? '' : 's'}` : '',
+    input.includeTransport ? `${input.transport.length} transport option${input.transport.length === 1 ? '' : 's'}` : '',
+    input.includePlaceVisits ? `${input.placesToVisit.length} place${input.placesToVisit.length === 1 ? '' : 's'} to visit` : '',
+  ].filter(Boolean);
+  const disabledParts = [
+    !input.includeFlight ? 'flights' : '',
+    !input.includeHotel ? 'hotels' : '',
+    !input.includeTransport ? 'transport' : '',
+    !input.includePlaceVisits ? 'places' : '',
+  ].filter(Boolean);
+  const title = input.aiSummary?.title || `Your Journey to ${input.destinationCity || destinationLabel}`;
+  const enabledText = enabledParts.length
+    ? `The planner selected ${enabledParts.join(', ')} from real options using your enabled budget sections.`
+    : 'No budget sections are enabled, so this plan is limited to the destination summary.';
+  const disabledText = disabledParts.length
+    ? ` Disabled sections were not used: ${disabledParts.join(', ')}.`
+    : '';
+
+  return {
+    title,
+    description: `This ${tripLabel} ${input.nights ? `for ${input.nights} night${input.nights === 1 ? '' : 's'} ` : ''}to ${destinationLabel} is built around your ${input.effectiveBudget ? `$${Math.round(input.effectiveBudget).toLocaleString()}` : 'selected'} budget. ${enabledText}${disabledText}`,
   };
 }
 
@@ -1413,23 +1398,36 @@ async function applyGeminiBudgetFilter(input: BudgetFilterInput) {
   const hotelDecision = aiDecision.categories?.hotels;
   const transportDecision = aiDecision.categories?.transport;
   const dailyDecision = aiDecision.categories?.dailyExpenses;
-  const flights = pickAiSelectedItems(input.flights, flightDecision);
-  const hotels = pickAiSelectedItems(input.hotels, hotelDecision);
-  const transport = pickAiSelectedItems(input.transport, transportDecision);
-  const placesToVisit = pickAiSelectedItems(input.placesToVisit, dailyDecision);
+  const budgets = buildBudgetAllocations(input);
+  const fallbackFlights = input.includeFlight ? deterministicPickByBudget(input.flights, budgets.flights, getCategoryPriceGetter('flights', input), 9) : { items: [], selectedIndexes: [], cheapestPrice: null, shownCount: 0, status: 'no_prices' as const };
+  const fallbackHotels = input.includeHotel ? deterministicPickByBudget(input.hotels, budgets.hotels, getCategoryPriceGetter('hotels', input), 10) : { items: [], selectedIndexes: [], cheapestPrice: null, shownCount: 0, status: 'no_prices' as const };
+  const fallbackTransport = input.includeTransport ? deterministicPickByBudget(input.transport, budgets.transport, getCategoryPriceGetter('transport', input), 6) : { items: [], selectedIndexes: [], cheapestPrice: null, shownCount: 0, status: 'no_prices' as const };
+  const fallbackDaily = input.includePlaceVisits ? deterministicPickByBudget(input.placesToVisit, budgets.dailyExpenses, getCategoryPriceGetter('dailyExpenses', input), 12) : { items: [], selectedIndexes: [], cheapestPrice: null, shownCount: 0, status: 'no_prices' as const };
+  const flights = input.includeFlight ? pickAiSelectedItems(input.flights, flightDecision) : [];
+  const hotels = input.includeHotel ? pickAiSelectedItems(input.hotels, hotelDecision) : [];
+  const transport = input.includeTransport ? pickAiSelectedItems(input.transport, transportDecision) : [];
+  const placesToVisit = input.includePlaceVisits ? pickAiSelectedItems(input.placesToVisit, dailyDecision) : [];
+  const finalFlights = input.includeFlight ? (flights.length ? flights : fallbackFlights.items) : [];
+  const finalHotels = input.includeHotel ? (hotels.length ? hotels : fallbackHotels.items) : [];
+  const finalTransport = input.includeTransport ? (transport.length ? transport : fallbackTransport.items) : [];
+  const finalPlacesToVisit = input.includePlaceVisits ? (placesToVisit.length ? placesToVisit : fallbackDaily.items) : [];
+  const flightReportDecision = flights.length ? flightDecision : { status: fallbackFlights.status, selectedIndexes: fallbackFlights.selectedIndexes, message: flightDecision?.message };
+  const hotelReportDecision = hotels.length ? hotelDecision : { status: fallbackHotels.status, selectedIndexes: fallbackHotels.selectedIndexes, message: hotelDecision?.message };
+  const transportReportDecision = transport.length ? transportDecision : { status: fallbackTransport.status, selectedIndexes: fallbackTransport.selectedIndexes, message: transportDecision?.message };
+  const dailyReportDecision = placesToVisit.length ? dailyDecision : { status: fallbackDaily.status, selectedIndexes: fallbackDaily.selectedIndexes, message: dailyDecision?.message };
 
   const categories = {
-    flights: buildBudgetCategoryReport('flights', input, flightDecision, input.flights.length, flights.length, true),
-    hotels: buildBudgetCategoryReport('hotels', input, hotelDecision, input.hotels.length, hotels.length, true),
-    transport: buildBudgetCategoryReport('transport', input, transportDecision, input.transport.length, transport.length, true),
-    dailyExpenses: buildBudgetCategoryReport('dailyExpenses', input, dailyDecision, input.placesToVisit.length, placesToVisit.length, true),
+    flights: buildBudgetCategoryReport('flights', input, flightReportDecision, input.flights.length, finalFlights.length, input.includeFlight),
+    hotels: buildBudgetCategoryReport('hotels', input, hotelReportDecision, input.hotels.length, finalHotels.length, input.includeHotel),
+    transport: buildBudgetCategoryReport('transport', input, transportReportDecision, input.transport.length, finalTransport.length, input.includeTransport),
+    dailyExpenses: buildBudgetCategoryReport('dailyExpenses', input, dailyReportDecision, input.placesToVisit.length, finalPlacesToVisit.length, input.includePlaceVisits),
   };
 
   return {
-    flights,
-    hotels,
-    transport,
-    placesToVisit,
+    flights: finalFlights,
+    hotels: finalHotels,
+    transport: finalTransport,
+    placesToVisit: finalPlacesToVisit,
     budgetFitAgent: {
       tolerancePercent: BUDGET_TOLERANCE_PERCENT,
       modelSource: source,
@@ -1450,10 +1448,27 @@ export async function POST(request: Request) {
       destinationCountryCode: inputDestinationCountryCode,
       destinationStates,
       adults, children,
+      includeFlight, includeHotel,
+      hotelRooms, hotelRoomsPerApartment, budgetFlightCabins, budgetHotelStars,
       budgetMode, totalBudget, flightBudget, hotelBudget, transportBudget, dailyExpenseBudget,
+      includePlaceVisits,
       nights,
       vibes,
     } = body;
+    const enabledInputs = {
+      includeFlight: includeFlight !== false,
+      includeHotel: includeHotel !== false,
+      includeTransport: body.includeTransport !== false,
+      includePlaceVisits: includePlaceVisits !== false && Number(dailyExpenseBudget || 0) > 0,
+    };
+    const selectedFlightCabins = Array.isArray(budgetFlightCabins)
+      ? Array.from(new Set(
+          budgetFlightCabins
+            .map((cabin: any) => String(cabin).toLowerCase())
+            .filter((cabin: string) => cabin === 'economy' || cabin === 'business')
+        ))
+      : [];
+    if (selectedFlightCabins.length === 0) selectedFlightCabins.push('economy');
 
     const log = createPlannerLogger();
     log.start();
@@ -1469,7 +1484,7 @@ export async function POST(request: Request) {
       },
       travelers: { adults, children },
       stay: { nights },
-      budget: { budgetMode, totalBudget, flightBudget, hotelBudget, transportBudget, dailyExpenseBudget },
+      budget: { budgetMode, totalBudget, flightBudget, hotelBudget, transportBudget, dailyExpenseBudget, budgetFlightCabins: selectedFlightCabins, budgetHotelStars, ...enabledInputs },
       vibes,
     });
 
@@ -1545,6 +1560,7 @@ export async function POST(request: Request) {
           tripType,
           adults,
           children,
+          cabinClass: selectedFlightCabins[0],
         });
 
         console.log('✈️ SerpApi raw response keys:', Object.keys(serpApiResults || {}));
@@ -1602,6 +1618,7 @@ export async function POST(request: Request) {
                 tripType,
                 adults,
                 children,
+                cabinClass: selectedFlightCabins[0],
                 departureToken: offer.departure_token,
               });
               const returnItineraries = getSerpApiItineraries(returnResults);
@@ -1629,6 +1646,46 @@ export async function POST(request: Request) {
           })).then((items: any[]) => items.flat()) : outboundFlights;
         }
 
+
+        for (const extraCabin of selectedFlightCabins.slice(1)) {
+          try {
+            console.log(`Searching additional SerpApi Google Flights cabin: ${extraCabin}`);
+            const extraCabinResults = await searchGoogleFlights({
+              origin,
+              destination,
+              departureDate,
+              returnDate,
+              tripType,
+              adults,
+              children,
+              cabinClass: extraCabin,
+            });
+            const extraItineraries = getSerpApiItineraries(extraCabinResults);
+            logSerpApiItineraries(`${extraCabin} best_flights + other_flights`, extraItineraries, returnDate || '');
+            const extraFlights = extraItineraries
+              .map((itinerary: any) => normalizeSerpApiItinerary(itinerary, returnDate || '', passengers))
+              .filter((offer: any) => offer.slices.length > 0);
+            flights = [...flights, ...extraFlights];
+          } catch (extraCabinErr: any) {
+            console.warn(`SerpApi ${extraCabin} flight search error:`, extraCabinErr.message);
+          }
+        }
+
+        const seenFlightKeys = new Set<string>();
+        flights = flights.filter((flight: any) => {
+          const routeKey = (flight?.slices || []).map((slice: any) =>
+            (slice?.segments || []).map((segment: any) => [
+              segment?.origin?.iata_code,
+              segment?.destination?.iata_code,
+              segment?.departing_at,
+              segment?.cabin_class,
+            ].join('-')).join('_')
+          ).join('|');
+          const key = [flight?.owner?.name || '', flight?.total_amount || '', routeKey].join('|');
+          if (seenFlightKeys.has(key)) return false;
+          seenFlightKeys.add(key);
+          return true;
+        });
 
         console.log('✈️ Normalized SerpApi flights returned to handler:', flights.length);
         const flightCountBeforePriceFilter = flights.length;
@@ -1664,7 +1721,16 @@ export async function POST(request: Request) {
     let hotels: any[] = [];
     {
       try {
-        const hotelQuery = [destinationCity, destinationCountry, 'hotels'].filter(Boolean).join(' ');
+        const selectedHotelStars = Array.isArray(budgetHotelStars)
+          ? budgetHotelStars.map((star: any) => Math.round(Number(star))).filter((star: number) => star >= 1 && star <= 5)
+          : [];
+        const appliedHotelStar = selectedHotelStars.length
+          ? Math.max(...selectedHotelStars)
+          : Math.max(1, Math.min(5, Math.round(Number(body.hotelStars) || 3)));
+        const roomsPerApartment = Math.max(1, Number(hotelRoomsPerApartment) || 1);
+        const roomText = roomsPerApartment > 1 ? `${roomsPerApartment} bedroom apartment` : 'apartment hotel';
+        const hotelQuery = [destinationCity, destinationCountry, `${appliedHotelStar} star`, roomText].filter(Boolean).join(' ');
+        const searchAsVacationRental = roomsPerApartment > 1;
         const checkInDate = departureDate;
         const checkOutDate = (() => {
           const outDate = new Date(departureDate);
@@ -1682,6 +1748,9 @@ export async function POST(request: Request) {
           adults,
           children,
           countryCode: countryCode || 'us',
+          bedrooms: searchAsVacationRental ? roomsPerApartment : undefined,
+          hotelClass: searchAsVacationRental ? undefined : appliedHotelStar,
+          vacationRentals: searchAsVacationRental,
         });
 
         console.log('🏨 SerpApi hotel raw response keys:', Object.keys(serpApiHotelResults || {}));
@@ -1842,6 +1911,28 @@ export async function POST(request: Request) {
       })),
     });
 
+    let destinationImages: any[] = [];
+    try {
+      const imageQuery = [destinationCity, destinationCountry, 'official tourism landmark skyline city view'].filter(Boolean).join(' ');
+      destinationImages = await searchGoogleImagesLight({
+        query: imageQuery,
+        location: destinationCity && destinationCountry ? `${destinationCity}, ${destinationCountry}` : destinationCity || destinationCountry,
+        countryCode: countryCode || inputDestinationCountryCode || 'us',
+        limit: 8,
+      });
+      log.step(6, 'Destination images fetched from SerpApi Google Images', {
+        query: imageQuery,
+        count: destinationImages.length,
+        sample: destinationImages.slice(0, 3).map((image: any) => ({
+          title: image.title,
+          source: image.source,
+        })),
+      });
+    } catch (imageErr: any) {
+      console.warn('SerpApi Google Images search error:', imageErr.message);
+      log.warn('Destination image search failed', imageErr.message);
+    }
+
     let transport: any[] = [];
     {
       const prefetchedTransport = Array.isArray(body.transportOptions)
@@ -1880,7 +1971,14 @@ export async function POST(request: Request) {
       })),
     });
 
-    const effectiveBudget = budgetMode === 'total' ? totalBudget : (flightBudget + hotelBudget + transportBudget + dailyExpenseBudget);
+    const effectiveBudget = budgetMode === 'total'
+      ? totalBudget
+      : (
+          (enabledInputs.includeFlight ? Number(flightBudget) || 0 : 0) +
+          (enabledInputs.includeHotel ? Number(hotelBudget) || 0 : 0) +
+          (enabledInputs.includeTransport ? Number(transportBudget) || 0 : 0) +
+          (enabledInputs.includePlaceVisits ? Number(dailyExpenseBudget) || 0 : 0)
+        );
     // Use the user-provided nights from the wizard (no hardcoded fallback)
     const tripNights = typeof nights === 'number' && nights > 0 ? nights : null;
     if (tripNights === null) {
@@ -1955,31 +2053,17 @@ export async function POST(request: Request) {
         ? `\n\nREAL HOTELS found within 20km of ${destinationLabel} (lat: ${geoLat}, lon: ${geoLon}):\n${hotels.map((h, i) => `${i + 1}. "${h.name}" — ${h.rating}-star, $${h.price}/night, located at ${h.location}`).join('\n')}`
         : '';
 
-      const prompt = `You are an elite AI travel concierge planning a trip to ${targetAreaLabel}.
-
-CRITICAL LOCATION CONSTRAINT:
-- Main country: ${mainCountryLabel}
-- Arrival airport/city: ${airportName} (${destination}) in ${destinationCity}, GPS coordinates: latitude ${geoLat}, longitude ${geoLon}
-${hasSelectedRegions ? `- User-selected regions/states to consider: ${selectedRegionLabel}
+      const regionConstraint = hasSelectedRegions
+        ? `- User-selected regions/states to consider: ${selectedRegionLabel}
 - The selected regions are the preferred discovery area. Recommend vibe-matching places inside these selected regions when possible.
-- You may include ${destinationCity} only when it is in or directly useful for reaching the selected regions.` : `- No specific regions/states were selected. Use ${destinationCity} and its practical surrounding area.`}
-- Suggest places that are either:
-  (a) In the selected region/state list within ${mainCountryLabel}, OR
-  (b) Right near the arrival airport when it helps the trip plan, OR
-  (c) In ${destinationCity} city center when no selected region is a better match
-- For each place, mention in the description which area it is in and approximately how far from ${destination}
-- DO NOT suggest any place outside ${mainCountryLabel}
-${hasSelectedRegions ? `- DO NOT prioritize places outside these selected regions unless they are essential airport/city transfer context: ${selectedRegionLabel}` : `- DO NOT suggest any place that is not in ${destinationCity} or the area near ${destination}`}
-- DO NOT hallucinate or invent fictional places
-
-CRITICAL QUALITY RULES FOR "placesToVisit":
-- Each place MUST be a genuine tourist attraction, landmark, museum, park, restaurant, or cultural experience
-- DO NOT include utility locations like ATMs, banks, pharmacies, bus stops, parking lots, gas stations, or transport hubs
-- DO NOT include hotels, hostels, or any type of accommodation in the Places to Visit list
-- DO NOT return duplicate places — every entry in the list must have a UNIQUE name
-- If the source data contains duplicates, keep only the first occurrence
-${hasVibes ? `
-*** MOST IMPORTANT INSTRUCTION — VIBE FILTER ***
+- You may include ${destinationCity} only when it is in or directly useful for reaching the selected regions.`
+        : `- No specific regions/states were selected. Use ${destinationCity} and its practical surrounding area.`;
+      const regionExclusion = hasSelectedRegions
+        ? `- DO NOT prioritize places outside these selected regions unless they are essential airport/city transfer context: ${selectedRegionLabel}`
+        : `- DO NOT suggest any place that is not in ${destinationCity} or the area near ${destination}`;
+      const vibeFilter = hasVibes
+        ? `
+*** MOST IMPORTANT INSTRUCTION - VIBE FILTER ***
 The user has selected these travel vibes: ${vibeLabels}
 
 You MUST return places that match ONLY these travel vibes. Here is what each vibe means:
@@ -1996,27 +2080,38 @@ Do NOT return aviation museums, transport museums, aircraft exhibitions, motorcy
 Do NOT return generic popular attractions that don't match the selected vibes.
 Every single result MUST clearly belong to one of the selected vibes: ${vibes.join(', ')}.
 If you are unsure whether a place matches, do NOT include it.
-` : ''}
-
-Trip Details:
-- Route: ${origin} → ${destination} (IATA: ${destination}, City: ${destinationCity})
-- Main country: ${mainCountryLabel}
-${hasSelectedRegions ? `- Selected regions/states: ${selectedRegionLabel}` : '- Selected regions/states: none'}
-- Trip type: ${tripType}
-- Departure: ${departureDate} ${returnDate ? '/ Return: ' + returnDate : ''}
-- Travelers: ${adults} adults, ${children} children
-- Budget: $${effectiveBudget.toLocaleString()} (${budgetMode === 'total' ? 'AI-allocated' : 'per-category'})
-- Stay length: ${tripNights} night${tripNights === 1 ? '' : 's'}
-- Transport: general destination transport
-
-There are ${flights.length} flight options ranging from $${flights.length > 0 ? Math.min(...flights.map((f: any) => parseFloat(f.total_amount))).toLocaleString() : '0'} to $${flights.length > 0 ? Math.max(...flights.map((f: any) => parseFloat(f.total_amount))).toLocaleString() : '0'}.
-${hotelContext}${attractionContext}
-
-Please provide a JSON response with:
-1. "aiSummary" - An object with "title" (catchy trip title mentioning ${hasSelectedRegions ? selectedRegionLabel : destinationCity}) and "description" (2-3 sentence persuasive trip summary about visiting ${targetAreaLabel})
-2. "placesToVisit" - Array of 12 objects (extra buffer for filtering). Each MUST be a UNIQUE real place in ${targetAreaLabel}.${hasVibes ? ` CRITICAL: Each place MUST match one of these vibes: ${vibes.join(', ')}. Do NOT return aviation museums, transport museums, aircraft exhibitions, or motorcycle museums. ONLY return places matching the selected vibes.` : ''} NO duplicates allowed. Each object has "name" (the full real name of the place, minimum 4 characters), "description" (1-2 sentences about this specific place, including the region/state or city area), and "estimatedCost" (estimated daily cost in USD as a number)
-3. "upsellOptions" - Array of 3 objects, each with "extraAmount" (number, like 100, 250, 500), "title" (what you get), and "description" (1 sentence explanation of the upgrade)
-`;
+`
+        : '';
+      const prompt = fillPromptTemplate(loadPromptTemplate('generate-trip-concierge.txt'), {
+        TARGET_AREA_LABEL: targetAreaLabel,
+        MAIN_COUNTRY_LABEL: mainCountryLabel,
+        AIRPORT_NAME: airportName,
+        DESTINATION: destination,
+        DESTINATION_CITY: destinationCity,
+        GEO_LAT: geoLat,
+        GEO_LON: geoLon,
+        REGION_CONSTRAINT: regionConstraint,
+        REGION_EXCLUSION: regionExclusion,
+        VIBE_FILTER: vibeFilter,
+        ORIGIN: origin,
+        SELECTED_REGIONS_TEXT: hasSelectedRegions ? selectedRegionLabel : 'none',
+        TRIP_TYPE: tripType,
+        DEPARTURE_DATE: departureDate,
+        RETURN_DATE_TEXT: returnDate ? ` / Return: ${returnDate}` : '',
+        ADULTS: adults,
+        CHILDREN: children,
+        EFFECTIVE_BUDGET: effectiveBudget.toLocaleString(),
+        BUDGET_MODE_LABEL: budgetMode === 'total' ? 'AI-allocated' : 'per-category',
+        TRIP_NIGHTS: tripNights,
+        TRIP_NIGHTS_SUFFIX: tripNights === 1 ? '' : 's',
+        FLIGHT_COUNT: flights.length,
+        MIN_FLIGHT_PRICE: flights.length > 0 ? Math.min(...flights.map((f: any) => parseFloat(f.total_amount))).toLocaleString() : '0',
+        MAX_FLIGHT_PRICE: flights.length > 0 ? Math.max(...flights.map((f: any) => parseFloat(f.total_amount))).toLocaleString() : '0',
+        HOTEL_CONTEXT: hotelContext,
+        ATTRACTION_CONTEXT: attractionContext,
+        SUMMARY_TITLE_AREA: hasSelectedRegions ? selectedRegionLabel : destinationCity,
+        PLACES_VIBE_RULE: hasVibes ? ` CRITICAL: Each place MUST match one of these vibes: ${vibes.join(', ')}. Do NOT return aviation museums, transport museums, aircraft exhibitions, or motorcycle museums. ONLY return places matching the selected vibes.` : '',
+      });
 
       // ═══════════ STEP 6: GEMINI PROMPT CONSTRUCTION ═══════════
       console.log('\n═══════════ STEP 6: GEMINI PROMPT CONSTRUCTION ═══════════');
@@ -2092,9 +2187,9 @@ Please provide a JSON response with:
 
       let response: any;
       let aiResult: any = {};
-      const primaryKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
-      const secondaryKey = process.env.GEMINI_API_KEY_2;
-      const groqKey = process.env.GROQ_API_KEY;
+      const primaryKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY || '';
+      const secondaryKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY_V2 || '';
+      const groqKey = process.env.NEXT_PUBLIC_GROQ_API_KEY || '';
 
       // Layer 1: Gemini primary key
       try {
@@ -2131,10 +2226,7 @@ Please provide a JSON response with:
                   },
                   body: JSON.stringify({
                     model: 'llama-3.3-70b-versatile',
-                    messages: [
-                      { role: 'system', content: 'You are an elite AI travel concierge. Respond ONLY with valid JSON matching the requested schema. No markdown, no code fences, just raw JSON.' },
-                      { role: 'user', content: prompt },
-                    ],
+                    messages: [{ role: 'user', content: prompt }],
                     temperature: 0.7,
                     max_tokens: 4096,
                     response_format: { type: 'json_object' },
@@ -2154,7 +2246,7 @@ Please provide a JSON response with:
                 throw groqErr; // let the outer catch handle hardcoded fallback
               }
             } else {
-              console.error('❌ No GROQ_API_KEY configured — falling back to hardcoded response');
+              console.error('❌ No NEXT_PUBLIC_GROQ_API_KEY configured — falling back to hardcoded response');
               throw secondaryErr;
             }
           }
@@ -2173,10 +2265,7 @@ Please provide a JSON response with:
                 },
                 body: JSON.stringify({
                   model: 'llama-3.3-70b-versatile',
-                  messages: [
-                    { role: 'system', content: 'You are an elite AI travel concierge. Respond ONLY with valid JSON matching the requested schema. No markdown, no code fences, just raw JSON.' },
-                    { role: 'user', content: prompt },
-                  ],
+                  messages: [{ role: 'user', content: prompt }],
                   temperature: 0.7,
                   max_tokens: 4096,
                   response_format: { type: 'json_object' },
@@ -2283,52 +2372,7 @@ Please provide a JSON response with:
       }
 
       // ── STEP D: Geocode each place, compute distance, validate ──
-      if (geoLat && geoLon) {
-        // Try geocoding top candidates, but keep places even if geocoding fails.
-        const geocodeCandidates = dedupedPlaces;
-        const geocodeSearchArea = hasSelectedRegions ? selectedRegionLabel : destinationCity;
-        const geocodeMaxDistanceKm = hasSelectedRegions ? 900 : 100;
-        const geocodeResults = await Promise.all(
-          geocodeCandidates.map(async (place) => {
-            const coords = await geocodePlaceName(place.name, geocodeSearchArea, destinationCountry, countryCode, geoLat, geoLon, geocodeMaxDistanceKm);
-            if (coords) {
-              const dist = haversineDistance(geoLat, geoLon, coords.lat, coords.lon);
-              console.log(`  PLACE COORDS: "${place.name}" -> lat=${coords.lat}, lon=${coords.lon} -> distance: ${dist.toFixed(1)} km`);
-              return {
-                ...place,
-                lat: coords.lat,
-                lon: coords.lon,
-                distance: `${dist.toFixed(1)} km from ${destinationLabel}`,
-                rating: (coords as any).rating,
-                reviewsCount: (coords as any).reviewsCount,
-                address: (coords as any).address,
-                placeType: (coords as any).placeType,
-                geoSource: (coords as any).source || 'unknown',
-                _geoOk: true,
-                _geoDistanceKm: dist,
-              };
-            }
-            return {
-              ...place,
-              geoStatus: 'missing_coordinates',
-              _geoOk: false,
-            };
-          })
-        );
-
-        const geocoded = geocodeResults
-          .filter((p: any) => p._geoOk)
-          .sort((a: any, b: any) => (a._geoDistanceKm || 0) - (b._geoDistanceKm || 0));
-        const notGeocoded = geocodeResults.filter((p: any) => !p._geoOk);
-
-        // Prioritize geocoded places first, then backfill with non-geocoded results.
-        placesToVisit = [...geocoded, ...notGeocoded]
-          .map(({ _vibeScore, _geoOk, _geoDistanceKm, ...rest }: any) => rest);
-
-        console.log(`  Geocode summary: ${geocoded.length} with coordinates, ${notGeocoded.length} without coordinates (kept as fallback)`);
-      } else {
-        placesToVisit = dedupedPlaces.map(({ _vibeScore, ...rest }: any) => rest);
-      }
+      placesToVisit = dedupedPlaces.map(({ _vibeScore, lat, lon, distance, geoSource, geoStatus, _geoOk, _geoDistanceKm, ...rest }: any) => rest);
 
       // ═══════════ STEP 8: PLACES GEOCODING + FILTERING ═══════════
       console.log('\n═══════════ STEP 8: PLACES GEOCODING + FILTERING ═══════════');
@@ -2377,11 +2421,21 @@ Please provide a JSON response with:
       budgetMode,
       tolerancePercent: BUDGET_TOLERANCE_PERCENT,
     });
-    const budgetFit = await applyGeminiBudgetFilter({
+    const budgetSourceOptions = {
       flights,
       hotels,
       transport,
       placesToVisit,
+    };
+    const budgetFit = await applyGeminiBudgetFilter({
+      flights: enabledInputs.includeFlight ? flights : [],
+      hotels: enabledInputs.includeHotel ? hotels : [],
+      transport: enabledInputs.includeTransport ? transport : [],
+      placesToVisit: enabledInputs.includePlaceVisits ? placesToVisit : [],
+      includeFlight: enabledInputs.includeFlight,
+      includeHotel: enabledInputs.includeHotel,
+      includeTransport: enabledInputs.includeTransport,
+      includePlaceVisits: enabledInputs.includePlaceVisits,
       budgetMode: budgetMode === 'per_category' ? 'per_category' : 'total',
       totalBudget: Number(totalBudget) || 0,
       flightBudget: Number(flightBudget) || 0,
@@ -2389,6 +2443,7 @@ Please provide a JSON response with:
       transportBudget: Number(transportBudget) || 0,
       dailyExpenseBudget: Number(dailyExpenseBudget) || 0,
       nights: tripNights,
+      hotelRooms: Math.max(1, Number(hotelRooms) || 1),
       travelers: travelerCount,
       origin,
       destination,
@@ -2403,6 +2458,19 @@ Please provide a JSON response with:
     hotels = budgetFit.hotels;
     transport = budgetFit.transport;
     placesToVisit = budgetFit.placesToVisit;
+    aiSummary = buildEnabledTripSummary({
+      aiSummary,
+      destinationCity,
+      destinationCountry,
+      tripType,
+      nights: tripNights,
+      effectiveBudget,
+      ...enabledInputs,
+      flights,
+      hotels,
+      transport,
+      placesToVisit,
+    });
     log.step(11, 'Gemini budget filter finished', {
       modelSource: budgetFit.budgetFitAgent.modelSource,
       selected: {
@@ -2461,6 +2529,8 @@ Please provide a JSON response with:
       transport,
       budgetBreakdown,
       budgetFitAgent: budgetFit.budgetFitAgent,
+      budgetSourceOptions,
+      destinationImages,
       aiSummary,
       placesToVisit,
       upsellOptions,

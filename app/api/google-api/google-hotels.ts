@@ -7,6 +7,9 @@ export async function searchSerpApiHotels(params: {
   adults: number;
   children: number;
   countryCode: string;
+  bedrooms?: number;
+  hotelClass?: number | string;
+  vacationRentals?: boolean;
 }) {
   if (!SERPAPI_KEY) {
     throw new Error('SERPAPI_API_KEY is not set');
@@ -25,6 +28,22 @@ export async function searchSerpApiHotels(params: {
     api_key: SERPAPI_KEY,
     no_cache: 'true',
   });
+
+  const useVacationRentals = !!params.vacationRentals;
+
+  if (useVacationRentals) {
+    searchParams.set('vacation_rentals', 'true');
+  }
+  if (useVacationRentals && Number(params.bedrooms || 0) > 0) {
+    searchParams.set('bedrooms', String(Math.max(1, Number(params.bedrooms))));
+  }
+  if (!useVacationRentals && params.hotelClass) {
+    searchParams.set('hotel_class', String(params.hotelClass));
+  }
+
+  const debugParams = new URLSearchParams(searchParams);
+  debugParams.set('api_key', '[hidden]');
+  console.log(`[SerpApi Google Hotels] ${debugParams.toString()}`);
 
   const response = await fetch(`https://serpapi.com/search.json?${searchParams.toString()}`);
   if (!response.ok) {

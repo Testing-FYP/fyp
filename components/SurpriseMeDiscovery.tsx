@@ -193,7 +193,7 @@ export default function SurpriseMeDiscovery({ onDestinationSelect }: SurpriseMeD
     setDestinations([]);
 
     try {
-      const response = await fetch('/api/planner/surprise', {
+      const response = await fetch('/api/surprise', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

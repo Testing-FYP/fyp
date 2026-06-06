@@ -173,6 +173,11 @@ function getFlightPrice(flight: any) {
   return asNumber(flight?.display_price ?? flight?.total_amount ?? flight?.price);
 }
 
+function getFlightCabin(flight: any) {
+  const firstSegment = flight?.slices?.[0]?.segments?.[0];
+  return String(firstSegment?.cabin_class || flight?.cabin_class || 'economy').toLowerCase();
+}
+
 function getDurationMinutes(flight: any) {
   const { first, last, slice } = getFlightEndpoints(flight);
   const start = first?.departing_at ? new Date(first.departing_at).getTime() : NaN;
@@ -303,6 +308,109 @@ function getHotelStarCount(hotel: any) {
   return 0;
 }
 
+function getHotelStayPrice(hotel: any, plannerData: any) {
+  const total = asNumber(hotel?.totalPrice ?? hotel?.total_price ?? hotel?.total);
+  if (total !== null) return total;
+  const nightly = asNumber(hotel?.price ?? hotel?.nightlyPrice ?? hotel?.rate_per_night);
+  if (nightly === null) return null;
+  const nights = Math.max(1, Number(plannerData?.nights) || 1);
+  const apartments = Math.max(1, Number(plannerData?.hotelRooms) || 1);
+  return nightly * nights * apartments;
+}
+
+function normalizeBudgetFlightCabins(plannerData: any) {
+  const selected = Array.isArray(plannerData?.budgetFlightCabins)
+    ? plannerData.budgetFlightCabins.filter((cabin: any) => cabin === 'economy' || cabin === 'business')
+    : [];
+  if (selected.length) return selected;
+  return [plannerData?.cabinClass === 'business' ? 'business' : 'economy'];
+}
+
+function normalizeBudgetHotelStars(plannerData: any) {
+  const selected = Array.isArray(plannerData?.budgetHotelStars)
+    ? plannerData.budgetHotelStars.map((star: any) => Math.round(Number(star))).filter((star: number) => star >= 1 && star <= 5)
+    : [];
+  if (selected.length) return selected;
+  return [Math.max(1, Math.min(5, Math.round(Number(plannerData?.hotelStars) || 3)))];
+}
+
+function buildBudgetInsight(items: any[], budget: number, getPrice: (item: any) => number | null) {
+  const priced = items
+    .map(item => ({ item, price: getPrice(item) }))
+    .filter((entry): entry is { item: any; price: number } => entry.price !== null)
+    .sort((a, b) => a.price - b.price);
+  const inBudget = priced.filter(entry => entry.price <= budget);
+  const aboveBudget = priced.filter(entry => entry.price > budget);
+  const cheapest = priced[0] || null;
+  const nearestAbove = aboveBudget[0] || null;
+  const bestInBudget = inBudget[0] || null;
+  return {
+    budget,
+    priced,
+    inBudget,
+    aboveBudget,
+    cheapest,
+    nearestAbove,
+    bestInBudget,
+    status: !priced.length
+      ? 'no_prices'
+      : budget <= 0
+        ? 'no_budget'
+        : cheapest && cheapest.price > budget
+          ? 'over_budget'
+          : 'fit',
+  };
+}
+
+function BudgetDecisionPanel({ title, context, insight }: { title: string; context: string; insight: any }) {
+  const budget = Number(insight?.budget || 0);
+  const cheapest = insight?.cheapest;
+  const nearestAbove = insight?.nearestAbove;
+  const bestInBudget = insight?.bestInBudget;
+  const status = insight?.status;
+  const tone = status === 'over_budget' ? 'red' : status === 'fit' ? 'green' : 'amber';
+  const titleText = status === 'over_budget'
+    ? `Budget is lower than real ${title.toLowerCase()} prices`
+    : status === 'fit'
+      ? `${title} budget can work`
+      : `${title} needs price data`;
+
+  return (
+    <section className="rounded-3xl border border-border bg-card p-5">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <p className="small-caps">{context}</p>
+          <h3 className="mt-2 text-2xl title-text text-foreground">{titleText}</h3>
+          <p className="mt-2 max-w-3xl text-sm leading-relaxed text-muted-foreground">
+            {status === 'over_budget' && cheapest
+              ? `You set ${formatMoney(budget)}. The cheapest real option found is ${formatMoney(cheapest.price)}, so you need ${formatMoney(cheapest.price - budget)} more for this choice.`
+              : status === 'fit' && bestInBudget
+                ? `You set ${formatMoney(budget)}. There are ${insight.inBudget.length} option(s) at or under that budget.`
+                : 'No reliable prices were available for this category in the current result set.'}
+          </p>
+        </div>
+        <Badge tone={tone as any} strong>
+          {status === 'over_budget' ? 'Need more budget' : status === 'fit' ? 'Fits budget' : 'Check data'}
+        </Badge>
+      </div>
+      <div className="mt-5 grid gap-3 md:grid-cols-3">
+        <Detail icon={CircleDollarSign} label="Your budget" value={formatMoney(budget)} />
+        <Detail icon={BadgeCheck} label="Cheapest real option" value={cheapest ? formatMoney(cheapest.price) : 'Unavailable'} />
+        <Detail
+          icon={TrendingUp}
+          label="Next option above"
+          value={nearestAbove ? `${formatMoney(nearestAbove.price)} (${formatMoney(nearestAbove.price - budget)} more)` : 'None found'}
+        />
+      </div>
+      {status === 'fit' && bestInBudget && budget > bestInBudget.price ? (
+        <p className="mt-4 rounded-2xl border border-emerald-500/25 bg-emerald-500/10 px-4 py-3 text-sm font-semibold text-emerald-700 dark:text-emerald-300">
+          You can save {formatMoney(budget - bestInBudget.price)} by choosing the cheapest fitting option.
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
 function HotelStars({ hotel }: { hotel: any }) {
   const starCount = getHotelStarCount(hotel);
   if (!starCount) return <Badge>Class unavailable</Badge>;
@@ -355,45 +463,116 @@ export function WarningBanner({ title, children }: { title: string; children: Re
   );
 }
 
-function BudgetFitPanel({ agent }: { agent: any }) {
+function BudgetFitPanel({ agent, backgroundImage = '' }: { agent: any; backgroundImage?: string }) {
   if (!agent?.categories) return null;
   const categories = Object.values(agent.categories).filter((category: any) => category?.status !== 'disabled') as any[];
+  const hasBudgetProblem = categories.some((category: any) => ['over_budget', 'no_budget'].includes(category?.status));
+  const allFit = categories.length > 0 && categories.every((category: any) => category?.status === 'fit');
+  const panelTone = hasBudgetProblem ? 'red' : allFit ? 'green' : 'blue';
+  const panelTitle = hasBudgetProblem ? 'Budget needs attention' : 'Budget fits your trip';
+  const panelCopy = hasBudgetProblem
+    ? 'Some real prices are above the budget you selected. Review the highlighted categories before choosing options.'
+    : agent.summary || 'Real prices are checked against your budget with a 10% tolerance.';
+  const StatusIcon = hasBudgetProblem ? AlertTriangle : BadgeCheck;
+  const categoryIcons: Record<string, any> = {
+    flights: PlaneTakeoff,
+    hotels: Hotel,
+    transport: Bus,
+    dailyExpenses: MapPin,
+  };
 
   return (
-    <section className="rounded-3xl border border-border bg-card p-5">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <p className="small-caps">Budget Fit Agent</p>
-          <h2 className="mt-2 text-3xl title-text text-foreground">Real-price budget check</h2>
-          <p className="mt-2 max-w-3xl text-sm leading-relaxed text-muted-foreground">
-            {agent.summary || 'Real prices are checked against your budget with a 10% tolerance.'}
-          </p>
-        </div>
-        <Badge tone="blue" strong>{agent.tolerancePercent || 10}% tolerance</Badge>
-      </div>
-      <div className="mt-5 grid gap-3 md:grid-cols-2">
-        {categories.map((category: any) => {
-          const overBudget = category.status === 'over_budget';
-          const noBudget = category.status === 'no_budget';
-          const tone = overBudget ? 'red' : noBudget ? 'amber' : category.status === 'fit' ? 'green' : 'neutral';
-          return (
-            <div key={category.key} className="rounded-2xl border border-border bg-background p-4">
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-sm font-black text-foreground">{category.label}</p>
-                <Badge tone={tone as any} strong>{String(category.status || 'checked').replace(/_/g, ' ')}</Badge>
-              </div>
-              <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
-                <span>Budget {formatMoney(category.budget)}</span>
-                <span>Upper {formatMoney(category.upperBound)}</span>
-                <span>Cheapest {formatMoney(category.cheapestPrice)}</span>
-                <span>Shown {category.shownCount}/{category.originalCount}</span>
-              </div>
-              <p className="mt-3 text-sm leading-relaxed text-muted-foreground">{category.message}</p>
+    <motion.section
+      initial={{ opacity: 0, y: 18, boxShadow: `0 0 0 0 ${hasBudgetProblem ? 'rgba(239,68,68,0.55)' : 'rgba(16,185,129,0.55)'}` }}
+      animate={{
+        opacity: 1,
+        y: 0,
+        boxShadow: [
+          `0 0 0 0 ${hasBudgetProblem ? 'rgba(239,68,68,0.45)' : 'rgba(16,185,129,0.45)'}`,
+          `0 0 0 14px ${hasBudgetProblem ? 'rgba(239,68,68,0.12)' : 'rgba(16,185,129,0.12)'}`,
+          `0 0 0 0 ${hasBudgetProblem ? 'rgba(239,68,68,0)' : 'rgba(16,185,129,0)'}`,
+        ],
+      }}
+      transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
+      className="relative overflow-hidden rounded-3xl border border-border bg-card p-5"
+    >
+      {backgroundImage ? (
+        <img
+          src={backgroundImage}
+          alt=""
+          className="absolute inset-0 h-full w-full object-cover opacity-12"
+          referrerPolicy="no-referrer"
+          loading="lazy"
+        />
+      ) : null}
+      <div className="absolute inset-0 bg-gradient-to-br from-background via-background/95 to-background/80" />
+      <div className={`absolute inset-x-0 top-0 h-1 ${panelTone === 'red' ? 'bg-red-500' : panelTone === 'green' ? 'bg-emerald-500' : 'bg-sky-500'}`} />
+
+      <div className="relative">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex gap-4">
+            <div className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border ${
+              panelTone === 'red'
+                ? 'border-red-500/25 bg-red-500/10 text-red-600 dark:text-red-300'
+                : 'border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+            }`}>
+              <StatusIcon className="h-7 w-7" />
             </div>
-          );
-        })}
+            <div>
+              <p className="small-caps">Budget Fit Agent</p>
+              <h2 className="mt-2 text-3xl title-text text-foreground">{panelTitle}</h2>
+              <p className="mt-2 max-w-3xl text-sm leading-relaxed text-muted-foreground">
+                {panelCopy}
+              </p>
+            </div>
+          </div>
+          <Badge tone={panelTone as any} strong>{agent.tolerancePercent || 10}% tolerance</Badge>
+        </div>
+
+        <div className="mt-5 grid gap-3 md:grid-cols-2">
+          {categories.map((category: any) => {
+            const overBudget = category.status === 'over_budget';
+            const noBudget = category.status === 'no_budget';
+            const tone = overBudget ? 'red' : noBudget ? 'amber' : category.status === 'fit' ? 'green' : 'neutral';
+            const Icon = categoryIcons[category.key] || CircleDollarSign;
+            return (
+              <div key={category.key} className="relative overflow-hidden rounded-2xl border border-border bg-background/85 p-4 shadow-sm backdrop-blur">
+                <div className={`absolute inset-y-0 left-0 w-1 ${tone === 'red' ? 'bg-red-500' : tone === 'amber' ? 'bg-amber-500' : tone === 'green' ? 'bg-emerald-500' : 'bg-muted-foreground'}`} />
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-border bg-muted text-foreground">
+                      <Icon className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-black text-foreground">{category.label}</p>
+                      <p className="mt-1 text-xs font-semibold text-muted-foreground">
+                        {category.shownCount}/{category.originalCount} option{category.originalCount === 1 ? '' : 's'} shown
+                      </p>
+                    </div>
+                  </div>
+                  <Badge tone={tone as any} strong>{String(category.status || 'checked').replace(/_/g, ' ')}</Badge>
+                </div>
+                <div className="mt-4 grid grid-cols-3 gap-2">
+                  <MiniMetric label="Budget" value={formatMoney(category.budget)} />
+                  <MiniMetric label="Cheapest" value={formatMoney(category.cheapestPrice)} />
+                  <MiniMetric label="Upper" value={formatMoney(category.upperBound)} />
+                </div>
+                <p className="mt-4 text-sm leading-relaxed text-muted-foreground">{category.message}</p>
+              </div>
+            );
+          })}
+        </div>
       </div>
-    </section>
+    </motion.section>
+  );
+}
+
+function MiniMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl border border-border bg-card/80 px-3 py-2">
+      <p className="text-[9px] font-black uppercase tracking-[0.12em] text-muted-foreground">{label}</p>
+      <p className="mt-1 text-xs font-black text-foreground">{value}</p>
+    </div>
   );
 }
 
@@ -458,82 +637,119 @@ function SectionHeader({ icon: Icon, eyebrow, title, children }: { icon: any; ey
 
 export function TripHeader({ results, plannerData }: { results: any; plannerData: any }) {
   const destination = getDestinationDisplay(results, plannerData);
-  const route = `${plannerData?.origin || 'Origin'} -> ${plannerData?.destination || results?._debug?.resolvedDestination?.iata || 'Destination'}`;
+  const originCode = plannerData?.origin || 'Origin';
+  const destinationCode = plannerData?.destination || results?._debug?.resolvedDestination?.iata || 'Destination';
+  const tripType = plannerData?.tripType || 'one_way';
+  const isRoundTrip = tripType === 'round_trip';
+  const routeConnector = tripType === 'round_trip' ? '<->' : '->';
+  const route = `${originCode} ${routeConnector} ${destinationCode}`;
   const budget = plannerData?.budgetMode === 'per_category'
     ? (plannerData?.flightBudget || 0) + (plannerData?.hotelBudget || 0) + (plannerData?.transportBudget || 0) + (plannerData?.dailyExpenseBudget || 0)
     : plannerData?.totalBudget || results?.budgetBreakdown?.totalBudget;
+  const destinationImages = Array.isArray(results?.destinationImages) ? results.destinationImages : [];
+  const fallbackImages = [
+    {
+      title: `${destination} city view`,
+      source: 'Fallback image',
+      thumbnail: 'https://images.unsplash.com/photo-1512453979798-5ea266f8880c?q=80&w=800&auto=format&fit=crop',
+      original: 'https://images.unsplash.com/photo-1512453979798-5ea266f8880c?q=80&w=2000&auto=format&fit=crop',
+    },
+    {
+      title: `${destination} skyline`,
+      source: 'Fallback image',
+      thumbnail: 'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?q=80&w=800&auto=format&fit=crop',
+      original: 'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?q=80&w=2000&auto=format&fit=crop',
+    },
+    {
+      title: `${destination} travel landmark`,
+      source: 'Fallback image',
+      thumbnail: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?q=80&w=800&auto=format&fit=crop',
+      original: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?q=80&w=2000&auto=format&fit=crop',
+    },
+  ];
+  const heroImage = destinationImages.find((image: any) => image?.original)?.original
+    || destinationImages.find((image: any) => image?.thumbnail)?.thumbnail
+    || fallbackImages[0].original;
+  const destinationName = destination.split(',')[0] || destinationCode;
+  const secondaryName = destination.includes(',') ? destination.split(',').slice(1).join(',').trim() : destination;
 
   return (
-    <section className="relative overflow-hidden rounded-3xl border border-border bg-card">
-      <div className="absolute inset-0 bg-gradient-to-br from-amber-500/10 via-transparent to-emerald-500/10" />
-      <div className="relative grid gap-8 p-6 sm:p-8 lg:grid-cols-[1.25fr_0.75fr]">
-        <div>
+    <section className="relative min-h-[680px] overflow-hidden rounded-3xl border border-border bg-black text-white shadow-2xl">
+      <img
+        src={heroImage}
+        alt={`${destinationName} travel view`}
+        className="absolute inset-0 h-full w-full object-cover"
+        referrerPolicy="no-referrer"
+        loading="eager"
+      />
+      <div className="absolute inset-0 bg-gradient-to-r from-black/85 via-black/35 to-black/10" />
+      <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-transparent to-black/25" />
+
+      <div className="relative flex min-h-[680px] flex-col justify-between p-5 sm:p-8">
+        <div className="flex items-start justify-between gap-4">
           <div className="flex flex-wrap gap-2">
-            <Badge tone="amber" strong>Recommended</Badge>
-            <Badge strong>{(plannerData?.tripType || 'one_way').replace(/_/g, ' ')}</Badge>
+            <span className="rounded-xl border border-white/25 bg-white/90 px-3 py-1.5 text-xs font-black lowercase text-black shadow-lg">
+              {tripType === 'round_trip' ? 'two ways' : 'one way'}
+            </span>
           </div>
-          <h1 className="mt-5 text-5xl title-text leading-none text-foreground">{route}</h1>
-          <p className="mt-3 text-lg font-semibold text-muted-foreground">{destination}</p>
-          <div className="mt-7 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <HeaderFact icon={CalendarDays} label="Departure" value={formatDate(plannerData?.departureDate)} />
-            <HeaderFact icon={Users} label="Travelers" value={getTravelerLabel(plannerData)} />
-            <HeaderFact icon={CircleDollarSign} label="Budget" value={formatMoney(budget)} />
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-white/20 bg-black/50 text-white backdrop-blur">
+            <Compass className="h-6 w-6" />
           </div>
         </div>
-        <div className="rounded-3xl border border-border bg-background/70 p-5">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="small-caps">Trip Readiness</p>
-              <p className="mt-2 text-3xl title-text text-foreground">Value first</p>
+
+        <div>
+          <p className="text-xs font-black uppercase tracking-[0.24em] text-white/65">{secondaryName || 'Destination'}</p>
+          <h1 className="mt-4 max-w-5xl text-6xl title-text leading-none text-white sm:text-7xl lg:text-8xl">
+            {destinationName}
+          </h1>
+          <p className="mt-5 text-3xl title-text text-white/95 sm:text-5xl">{route}</p>
+            <div className={`mt-7 grid max-w-4xl gap-3 sm:grid-cols-2 ${isRoundTrip ? 'lg:grid-cols-4' : 'lg:grid-cols-3'}`}>
+              <HeaderFact icon={CalendarDays} label="Departure" value={formatDate(plannerData?.departureDate)} dark />
+              {isRoundTrip ? (
+                <HeaderFact icon={PlaneLanding} label="Return" value={formatDate(plannerData?.returnDate)} dark />
+              ) : null}
+              <HeaderFact icon={Users} label="Travelers" value={getTravelerLabel(plannerData)} dark />
+              <HeaderFact icon={CircleDollarSign} label="Budget" value={formatMoney(budget)} dark />
             </div>
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-foreground text-background">
-              <Compass className="h-6 w-6" />
-            </div>
-          </div>
-          <div className="mt-6 space-y-3">
-            <ReadinessBar label="Flight fit" value={88} />
-            <ReadinessBar label="Stay fit" value={64} />
-            <ReadinessBar label="Daily cushion" value={72} />
-          </div>
         </div>
       </div>
     </section>
   );
 }
 
-function HeaderFact({ icon: Icon, label, value }: { icon: any; label: string; value: string }) {
+function HeaderFact({ icon: Icon, label, value, dark = false }: { icon: any; label: string; value: string; dark?: boolean }) {
   return (
-    <div className="rounded-2xl border border-border bg-background/70 p-3">
-      <Icon className="h-4 w-4 text-muted-foreground" />
-      <p className="mt-2 text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">{label}</p>
-      <p className="mt-1 text-sm font-black text-foreground">{value}</p>
+    <div className={`rounded-2xl border p-3 ${dark ? 'border-white/20 bg-white/10 text-white backdrop-blur' : 'border-border bg-background/70'}`}>
+      <Icon className={`h-4 w-4 ${dark ? 'text-white/70' : 'text-muted-foreground'}`} />
+      <p className={`mt-2 text-[10px] font-black uppercase tracking-[0.14em] ${dark ? 'text-white/60' : 'text-muted-foreground'}`}>{label}</p>
+      <p className={`mt-1 text-sm font-black ${dark ? 'text-white' : 'text-foreground'}`}>{value}</p>
     </div>
   );
 }
 
-function ReadinessBar({ label, value }: { label: string; value: number }) {
+function ReadinessBar({ label, value, dark = false }: { label: string; value: number; dark?: boolean }) {
   return (
     <div>
-      <div className="mb-1 flex items-center justify-between text-xs font-semibold text-muted-foreground">
+      <div className={`mb-1 flex items-center justify-between text-xs font-semibold ${dark ? 'text-black/70' : 'text-muted-foreground'}`}>
         <span>{label}</span>
         <span>{value}%</span>
       </div>
-      <div className="h-2 overflow-hidden rounded-full bg-muted">
-        <div className="h-full rounded-full bg-foreground" style={{ width: `${value}%` }} />
+      <div className={`h-2 overflow-hidden rounded-full ${dark ? 'bg-black/10' : 'bg-muted'}`}>
+        <div className={`h-full rounded-full ${dark ? 'bg-black' : 'bg-foreground'}`} style={{ width: `${value}%` }} />
       </div>
     </div>
   );
 }
 
 export function BudgetBreakdown({ breakdown, plannerData }: { breakdown: any; plannerData: any }) {
-  const total = asNumber(breakdown?.totalBudget ?? plannerData?.totalBudget) || 0;
   const items = [
-    { label: 'Flight budget', value: breakdown?.flights ?? plannerData?.flightBudget, color: 'bg-foreground' },
-    { label: 'Hotel budget', value: breakdown?.hotels ?? plannerData?.hotelBudget, color: 'bg-muted-foreground' },
-    { label: 'Transport budget', value: breakdown?.transport ?? plannerData?.transportBudget, color: 'bg-amber-500' },
-    { label: 'Daily expenses', value: breakdown?.dailyExpenses ?? plannerData?.dailyExpenseBudget, color: 'bg-emerald-500' },
-  ];
+    { label: 'Flight budget', value: breakdown?.flights ?? plannerData?.flightBudget, color: 'bg-sky-500', icon: PlaneTakeoff, enabled: plannerData?.includeFlight !== false },
+    { label: 'Hotel budget', value: breakdown?.hotels ?? plannerData?.hotelBudget, color: 'bg-violet-500', icon: Hotel, enabled: plannerData?.includeHotel !== false },
+    { label: 'Transport budget', value: breakdown?.transport ?? plannerData?.transportBudget, color: 'bg-amber-500', icon: Bus, enabled: plannerData?.includeTransport !== false },
+    { label: 'Daily expenses', value: breakdown?.dailyExpenses ?? plannerData?.dailyExpenseBudget, color: 'bg-emerald-500', icon: MapPin, enabled: plannerData?.includePlaceVisits !== false },
+  ].filter(item => item.enabled);
   const allocated = items.reduce((sum, item) => sum + (asNumber(item.value) || 0), 0);
+  const total = asNumber(breakdown?.totalBudget ?? plannerData?.totalBudget) || allocated || 0;
 
   return (
     <section className="grid gap-4 lg:grid-cols-[0.85fr_1.15fr]">
@@ -541,8 +757,11 @@ export function BudgetBreakdown({ breakdown, plannerData }: { breakdown: any; pl
         <p className="small-caps">Budget Breakdown</p>
         <div className="mt-4 flex items-end justify-between gap-4">
           <div>
-            <p className="text-4xl title-text text-foreground">{formatMoney(total)}</p>
-            <p className="mt-1 text-sm text-muted-foreground">Recommended total allocation</p>
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-border bg-muted text-foreground">
+              <CircleDollarSign className="h-6 w-6" />
+            </div>
+            <p className="mt-5 text-4xl title-text text-foreground">{formatMoney(total)}</p>
+            <p className="mt-1 text-sm text-muted-foreground">Budget Amount</p>
           </div>
           <div className="flex h-28 w-28 items-center justify-center rounded-full border-[14px] border-foreground bg-background text-sm font-black text-foreground">
             {total ? Math.round((allocated / total) * 100) : 0}%
@@ -553,10 +772,16 @@ export function BudgetBreakdown({ breakdown, plannerData }: { breakdown: any; pl
         {items.map(item => {
           const value = asNumber(item.value) || 0;
           const percent = total ? Math.min(100, Math.round((value / total) * 100)) : 0;
+          const Icon = item.icon;
           return (
             <div key={item.label} className="rounded-3xl border border-border bg-card p-4">
               <div className="flex items-center justify-between gap-3">
-                <p className="text-sm font-black text-foreground">{item.label}</p>
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-border bg-muted text-foreground">
+                    <Icon className="h-5 w-5" />
+                  </div>
+                  <p className="text-sm font-black text-foreground">{item.label}</p>
+                </div>
                 <p className="font-black text-foreground">{formatMoney(value)}</p>
               </div>
               <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted">
@@ -1040,21 +1265,19 @@ export function TransportCard({ transport, selected = false }: { transport: any;
 }
 
 export function PlaceCard({ place }: { place: any }) {
-  const hasCoordinates = place?.lat && place?.lon;
   return (
     <article className="rounded-3xl border border-border bg-card p-5 shadow-sm">
       <div className="flex items-start justify-between gap-4">
         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
           <MapPin className="h-5 w-5" />
         </div>
-        <Badge tone={hasCoordinates ? 'green' : 'red'} strong>{hasCoordinates ? place?.distance || 'Mapped' : 'Coordinates unavailable'}</Badge>
+        <Badge tone="green" strong>{formatMoney(place?.estimatedCost ?? 0, 'Cost varies')}</Badge>
       </div>
       <h3 className="mt-4 text-lg font-black text-foreground">{place?.name || 'Place unavailable'}</h3>
       <p className="mt-2 min-h-16 text-sm leading-relaxed text-muted-foreground">{place?.description || 'Description unavailable from the current data source.'}</p>
       <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-border pt-4">
         <Badge tone="amber" strong><Star className="h-4 w-4" />{place?.rating ? `${place.rating}` : 'Rating N/A'}</Badge>
         <Badge strong>{place?.reviewsCount ? `${place.reviewsCount.toLocaleString()} reviews` : 'Reviews N/A'}</Badge>
-        <Badge tone="green" strong>{formatMoney(place?.estimatedCost ?? 0, 'Cost varies')}</Badge>
       </div>
     </article>
   );
@@ -1072,13 +1295,65 @@ export function UpsellCard({ option, onSelect, disabled }: { option: any; onSele
         <Badge tone="amber" strong>+{formatMoney(option?.extraAmount || 0)}</Badge>
         <ChevronRight className="h-5 w-5 text-muted-foreground transition group-hover:translate-x-1" />
       </div>
-      <h3 className="mt-4 text-lg font-black text-foreground">{option?.title || 'Upgrade option'}</h3>
       <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{option?.description || 'Unlock a more comfortable version of this itinerary.'}</p>
     </button>
   );
 }
 
-function AISummary({ summary, destination }: { summary: any; destination: string }) {
+function getFlightLabel(flight: any) {
+  const { first, last } = getFlightEndpoints(flight);
+  const carrier = first?.marketing_carrier?.name || flight?.owner?.name || 'Flight option';
+  const route = `${first?.origin?.iata_code || 'DEP'} -> ${last?.destination?.iata_code || 'ARR'}`;
+  return { title: carrier, detail: route, price: getFlightPrice(flight) };
+}
+
+function getHotelLabel(hotel: any, plannerData: any) {
+  return {
+    title: hotel?.name || 'Hotel option',
+    detail: `${getHotelStarCount(hotel) || 'Class'} star${hotel?.location ? ` / ${hotel.location}` : ''}`,
+    price: getHotelStayPrice(hotel, plannerData),
+  };
+}
+
+function getTransportLabel(option: any) {
+  return {
+    title: option?.displayName || option?.operator || option?.type || 'Transport option',
+    detail: (option?.transportType || option?.type || option?.bestUseCase || 'Transport').replace(/_/g, ' '),
+    price: asNumber(option?.estimatedPrice ?? option?.price ?? option?.totalPrice),
+  };
+}
+
+function SelectedOptionMiniCard({ icon: Icon, title, detail, price }: { icon: any; title: string; detail: string; price: number | null }) {
+  return (
+    <div className="rounded-2xl border border-border bg-background/80 p-4">
+      <div className="flex items-start gap-3">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-muted text-foreground">
+          <Icon className="h-5 w-5" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-black text-foreground">{title}</p>
+          <p className="mt-1 truncate text-xs font-semibold capitalize text-muted-foreground">{detail}</p>
+        </div>
+        <p className="shrink-0 text-sm font-black text-foreground">{formatMoney(price, 'Price varies')}</p>
+      </div>
+    </div>
+  );
+}
+
+function SelectedOptionEmptyCard({ icon: Icon, label }: { icon: any; label: string }) {
+  return (
+    <div className="rounded-2xl border border-dashed border-border bg-background/60 p-4">
+      <div className="flex items-center gap-3">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
+          <Icon className="h-5 w-5" />
+        </div>
+        <p className="text-sm font-bold text-muted-foreground">No {label} option fit this budget yet.</p>
+      </div>
+    </div>
+  );
+}
+
+function AISummary({ summary, destination, selections, plannerData }: { summary: any; destination: string; selections: any; plannerData: any }) {
   return (
     <section className="rounded-3xl border border-border bg-card p-6">
       <div className="flex flex-col gap-4 md:flex-row md:items-start">
@@ -1095,6 +1370,23 @@ function AISummary({ summary, destination }: { summary: any; destination: string
           </p>
         </div>
       </div>
+      <div className="mt-6 grid gap-3 lg:grid-cols-3">
+        {plannerData?.includeFlight !== false && selections.flights.length === 0 ? <SelectedOptionEmptyCard icon={PlaneTakeoff} label="flight" /> : null}
+        {plannerData?.includeFlight !== false && selections.flights.slice(0, 2).map((flight: any, index: number) => {
+          const item = getFlightLabel(flight);
+          return <SelectedOptionMiniCard key={`summary-flight-${index}`} icon={PlaneTakeoff} {...item} />;
+        })}
+        {plannerData?.includeHotel !== false && selections.hotels.length === 0 ? <SelectedOptionEmptyCard icon={Hotel} label="hotel" /> : null}
+        {plannerData?.includeHotel !== false && selections.hotels.slice(0, 2).map((hotel: any, index: number) => {
+          const item = getHotelLabel(hotel, plannerData);
+          return <SelectedOptionMiniCard key={`summary-hotel-${index}`} icon={Hotel} {...item} />;
+        })}
+        {plannerData?.includeTransport !== false && selections.transport.length === 0 ? <SelectedOptionEmptyCard icon={Bus} label="transport" /> : null}
+        {plannerData?.includeTransport !== false && selections.transport.slice(0, 2).map((transport: any, index: number) => {
+          const item = getTransportLabel(transport);
+          return <SelectedOptionMiniCard key={`summary-transport-${index}`} icon={Bus} {...item} />;
+        })}
+      </div>
     </section>
   );
 }
@@ -1108,9 +1400,24 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
 
   const destination = getDestinationDisplay(results, plannerData);
   const budgetAgent = results?.budgetFitAgent;
+  const fitPanelBackground = Array.isArray(results?.destinationImages)
+    ? (results.destinationImages.find((image: any) => image?.original)?.original || results.destinationImages.find((image: any) => image?.thumbnail)?.thumbnail || '')
+    : '';
+  const sourceFlights = Array.isArray(results?.budgetSourceOptions?.flights) && results.budgetSourceOptions.flights.length
+    ? results.budgetSourceOptions.flights
+    : results?.flights || [];
+  const sourceHotels = Array.isArray(results?.budgetSourceOptions?.hotels) && results.budgetSourceOptions.hotels.length
+    ? results.budgetSourceOptions.hotels
+    : results?.hotels || [];
+  const budgetFlightCabins = normalizeBudgetFlightCabins(plannerData);
+  const budgetHotelStars = normalizeBudgetHotelStars(plannerData);
+  const appliedFlightCabin = budgetFlightCabins.includes('business') ? 'business' : budgetFlightCabins[0] || 'economy';
+  const appliedHotelStar = budgetHotelStars.length ? Math.max(...budgetHotelStars) : 0;
 
   const flights = useMemo(() => {
-    const pricedFlights = [...(results?.flights || [])].filter(flight => getFlightPrice(flight) !== null);
+    const cabinFiltered = [...sourceFlights].filter(flight => getFlightCabin(flight) === appliedFlightCabin);
+    const matchedFlights = cabinFiltered.length ? cabinFiltered : [...sourceFlights];
+    const pricedFlights = matchedFlights.filter(flight => getFlightPrice(flight) !== null);
     pricedFlights.sort((a, b) => {
       const aPrice = getFlightPrice(a) ?? Number.POSITIVE_INFINITY;
       const bPrice = getFlightPrice(b) ?? Number.POSITIVE_INFINITY;
@@ -1120,10 +1427,12 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
     if (flightFilter === 'fastest') return pricedFlights.sort((a, b) => getDurationMinutes(a) - getDurationMinutes(b));
     if (flightFilter === 'nonstop') return pricedFlights.filter(flight => getFlightEndpoints(flight).segments.length <= 1);
     return pricedFlights;
-  }, [results?.flights, flightFilter]);
+  }, [sourceFlights, appliedFlightCabin, flightFilter]);
 
   const hotels = useMemo(() => {
-    const withFlags = [...(results?.hotels || [])].map(hotel => ({
+    const starFiltered = [...sourceHotels].filter(hotel => budgetHotelStars.includes(getHotelStarCount(hotel)));
+    const matchedHotels = starFiltered.length ? starFiltered : [...sourceHotels];
+    const withFlags = matchedHotels.map(hotel => ({
       hotel,
       suspicious: isHotelSuspicious(hotel, results, destination),
       distance: getHotelDistanceKm(hotel, results),
@@ -1131,13 +1440,21 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
     if (hotelFilter === 'cheapest') return withFlags.sort((a, b) => (asNumber(a.hotel?.price ?? a.hotel?.totalPrice) ?? Infinity) - (asNumber(b.hotel?.price ?? b.hotel?.totalPrice) ?? Infinity));
     if (hotelFilter === 'location-check') return withFlags.filter(item => item.suspicious);
     return withFlags.sort((a, b) => Number(a.suspicious) - Number(b.suspicious));
-  }, [results, destination, hotelFilter]);
+  }, [sourceHotels, budgetHotelStars, results, destination, hotelFilter]);
+
+  const flightBudgetInsight = useMemo(
+    () => buildBudgetInsight(flights, Number(plannerData?.flightBudget) || 0, getFlightPrice),
+    [flights, plannerData?.flightBudget]
+  );
+  const hotelBudgetInsight = useMemo(
+    () => buildBudgetInsight(hotels.map(item => item.hotel), Number(plannerData?.hotelBudget) || 0, hotel => getHotelStayPrice(hotel, plannerData)),
+    [hotels, plannerData]
+  );
 
   const places = useMemo(() => {
     const all = [...(results?.placesToVisit || [])];
-    if (placeFilter === 'mapped') return all.filter(place => place?.lat && place?.lon);
     if (placeFilter === 'popular') return all.filter(place => (place?.reviewsCount || 0) >= 1000);
-    if (placeFilter === 'unmapped') return all.filter(place => !place?.lat || !place?.lon);
+    if (placeFilter === 'paid') return all.filter(place => (asNumber(place?.estimatedCost) || 0) > 0);
     return all;
   }, [results?.placesToVisit, placeFilter]);
 
@@ -1152,12 +1469,12 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
 
   const sectionTabs = [
     { id: 'overview', label: 'Overview' },
-    { id: 'flights', label: 'Flights', count: flights.length },
-    { id: 'hotels', label: 'Hotels', count: hotels.length },
-    { id: 'transport', label: 'Transport', count: transportOptions.length },
-    { id: 'places', label: 'Places', count: places.length },
+    plannerData?.includeFlight !== false ? { id: 'flights', label: 'Flights', count: flights.length } : null,
+    plannerData?.includeHotel !== false ? { id: 'hotels', label: 'Hotels', count: hotels.length } : null,
+    plannerData?.includeTransport !== false ? { id: 'transport', label: 'Transport', count: transportOptions.length } : null,
+    plannerData?.includePlaceVisits !== false ? { id: 'places', label: 'Places', count: places.length } : null,
     { id: 'upgrades', label: 'Upgrades', count: results?.upsellOptions?.length || 3 },
-  ];
+  ].filter(Boolean) as Tab[];
 
   const getFlightKey = (flight: any, index: number) => {
     const route = (flight?.slices || [])
@@ -1214,8 +1531,18 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
           className="space-y-5"
         >
           <BudgetBreakdown breakdown={results?.budgetBreakdown} plannerData={plannerData} />
-          <BudgetFitPanel agent={budgetAgent} />
-          <AISummary summary={results?.aiSummary} destination={destination} />
+
+          <BudgetFitPanel agent={budgetAgent} backgroundImage={fitPanelBackground} />
+          <AISummary
+            summary={results?.aiSummary}
+            destination={destination}
+            plannerData={plannerData}
+            selections={{
+              flights,
+              hotels: hotels.map(item => item.hotel),
+              transport: selectedTransport.length ? selectedTransport : transportOptions,
+            }}
+          />
         </motion.section>
       )}
 
@@ -1239,9 +1566,14 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
               ]}
             />
           </SectionHeader>
+          <BudgetDecisionPanel
+            title="Flights"
+            context={`${cabinLabel(appliedFlightCabin)} selected in budget`}
+            insight={flightBudgetInsight}
+          />
           <BudgetCategoryNotice agent={budgetAgent} categoryKey="flights" />
           {flightCards.length > 0 ? flightCards : (
-            <BudgetEmptyState icon={PlaneTakeoff} title="No Gemini-selected flights fit" body="Gemini did not select a flight option for this budget." category={budgetAgent?.categories?.flights} />
+            <BudgetEmptyState icon={PlaneTakeoff} title="No matching flight options" body="No live flight option matched the selected cabin and budget filters." category={budgetAgent?.categories?.flights} />
           )}
         </motion.section>
       )}
@@ -1265,6 +1597,11 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
               ]}
             />
           </SectionHeader>
+          <BudgetDecisionPanel
+            title="Hotels"
+            context={`${[...budgetHotelStars].sort((a, b) => a - b).join(', ') || 'Selected'}-star selected in budget`}
+            insight={hotelBudgetInsight}
+          />
           <BudgetCategoryNotice agent={budgetAgent} categoryKey="hotels" />
           {suspiciousHotelCount > 0 ? (
             <WarningBanner title="Some hotel locations look inconsistent">
@@ -1274,7 +1611,7 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
           {hotels.length ? hotels.map(({ hotel, suspicious, distance }, index) => (
             <HotelCard key={`${hotel?.id || hotel?.name || 'hotel'}-${hotel?.price || ''}-${index}`} hotel={hotel} suspicious={suspicious} distanceKm={distance} />
           )) : (
-            <BudgetEmptyState icon={Hotel} title="No Gemini-selected hotels fit" body="Gemini did not select a hotel option for this budget." category={budgetAgent?.categories?.hotels} />
+            <BudgetEmptyState icon={Hotel} title="No matching hotel options" body="No live hotel option matched the selected star category and budget filters." category={budgetAgent?.categories?.hotels} />
           )}
         </motion.section>
       )}
@@ -1318,9 +1655,8 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
               onChange={setPlaceFilter}
               tabs={[
                 { id: 'all', label: 'All', count: results?.placesToVisit?.length || 0 },
-                { id: 'mapped', label: 'Mapped' },
                 { id: 'popular', label: 'Popular' },
-                { id: 'unmapped', label: 'Missing Coordinates' },
+                { id: 'paid', label: 'Paid' },
               ]}
             />
           </SectionHeader>
@@ -1332,29 +1668,6 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
           ) : (
             <BudgetEmptyState icon={MapPin} title="No Gemini-selected places fit" body="Gemini did not select a place or activity option for this budget." category={budgetAgent?.categories?.dailyExpenses} />
           )}
-        </motion.section>
-      )}
-
-      {activeSection === 'upgrades' && (
-        <motion.section
-          key="upgrades"
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.25 }}
-          className="space-y-5"
-        >
-          <SectionHeader icon={TrendingUp} eyebrow="Upsell Options" title="Upgrade paths" />
-          <div className="grid gap-4 md:grid-cols-3">
-            {(results?.upsellOptions || []).length ? results.upsellOptions.map((option: any, index: number) => (
-              <UpsellCard key={`${option?.title || 'upsell'}-${index}`} option={option} onSelect={onUpsell} disabled={isUpselling} />
-            )) : (
-              <>
-                <UpsellCard option={{ extraAmount: 100, title: 'Comfort Upgrade', description: 'Add a little more room for better flight times or a stronger hotel match.' }} onSelect={onUpsell} disabled={isUpselling} />
-                <UpsellCard option={{ extraAmount: 250, title: 'Premium Stay Upgrade', description: 'Move the stay budget toward better reviewed hotels in a stronger location.' }} onSelect={onUpsell} disabled={isUpselling} />
-                <UpsellCard option={{ extraAmount: 500, title: 'Luxury Experience', description: 'Unlock premium routing, private transfer options, and signature destination experiences.' }} onSelect={onUpsell} disabled={isUpselling} />
-              </>
-            )}
-          </div>
         </motion.section>
       )}
     </motion.div>

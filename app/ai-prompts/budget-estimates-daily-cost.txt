@@ -1,0 +1,17 @@
+Return ONLY valid JSON with no markdown.
+
+Use current, grounded public information for tourist spending in {{DESTINATION}} for travel around {{DATES}}. Consider seasonality, attraction entry fees, food/drink/activity patterns implied by these vibes: {{VIBES}}, and selected regions: {{REGIONS}}.
+
+Estimate in USD:
+- placeVisitCost: average daily spend for one traveler on one place/activity matching the selected vibes. Include typical entrance/activity costs, not hotel, flight, or local transportation.
+- currencyNote: one short note about local currency/pricing confidence.
+- basis: one short sentence naming the real factors you used, such as museum/activity tickets, food/drink patterns, or current attraction prices.
+
+Return this exact JSON object shape, using real estimated numbers:
+{
+  "placeVisitCost": <number>,
+  "currencyNote": <string>,
+  "basis": <string>
+}
+
+Do not copy placeholder values. Do not use generic worldwide averages. The numeric field must be calculated from the destination, dates, season, selected vibes, and current grounded search results.

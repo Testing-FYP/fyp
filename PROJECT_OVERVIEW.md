@@ -19,12 +19,12 @@ Legend:
 
 | API | Type | State | Where it is used | Purpose |
 | --- | --- | --- | --- | --- |
-| `POST /api/planner/generate` | Next route | Used | `app/page.tsx` | Main trip-plan generator that returns flights, hotels, transport, places, budget breakdown, and upsell options |
-| `POST /api/planner/surprise` | Next route | Used | `components/SurpriseMeDiscovery.tsx` | Generates surprise destination suggestions based on budget, region, climate, pace, and interests |
-| `POST /api/planner/budget-estimates` | Next route | Used | `components/TripPlannerWizard.tsx` | Auto-allocates live budget estimates for flights, hotel, transport, and daily place visits |
-| `POST /api/planner/transport` | Next route | Used | `app/api/planner/budget-estimates/route.ts` | Returns transport mode pricing that budget estimates consume |
+| `POST /api/generate` | Next route | Used | `app/page.tsx` | Main trip-plan generator that returns flights, hotels, transport, places, budget breakdown, and upsell options |
+| `POST /api/surprise` | Next route | Used | `components/SurpriseMeDiscovery.tsx` | Generates surprise destination suggestions based on budget, region, climate, pace, and interests |
+| `POST /api/budget-estimates` | Next route | Used | `components/TripPlannerWizard.tsx` | Auto-allocates live budget estimates for flights, hotel, transport, and daily place visits |
+| `POST /api/transport` | Next route | Used | `app/api/budget-estimates/route.ts` | Returns transport mode pricing that budget estimates consume |
 | `GET /api/geocoded/cities` | Next route | Used | `components/TripPlannerWizard.tsx` | Loads state and city options for the destination country |
-| `GET /api/google-api/google-flights-suggestions-api` | Pages API route | Used | `components/AirportAutocomplete.tsx` | Airport autocomplete for origin and destination fields, backed by SerpApi |
+| `GET /api/google-api/google-flights-suggestions` | Next route | Used | `components/AirportAutocomplete.tsx` | Airport autocomplete for origin and destination fields, backed by SerpApi |
 | `POST /api/auth/signup` | Backend route | Used | `hooks/useAuth.tsx`, `app/auth/page.tsx` | Creates a user account and returns a JWT |
 | `POST /api/auth/login` | Backend route | Used | `hooks/useAuth.tsx`, `app/auth/page.tsx` | Authenticates a user and returns a JWT |
 | `POST /api/auth/logout` | Backend route | Not used | No caller found | Stateless logout endpoint; frontend clears local auth itself |
@@ -46,14 +46,14 @@ Legend:
 
 | Service | Used in | Purpose |
 | --- | --- | --- |
-| Google Gemini / `@google/genai` | `app/api/planner/*`, `app/api/planner/surprise/route.ts`, `app/api/planner/transport/route.ts` | Generates trip content, destination suggestions, and transport data |
-| Groq chat completions | `app/api/planner/generate/route.ts`, `app/api/planner/surprise/route.ts`, `app/api/planner/transport/route.ts` | Fallback AI provider when Gemini is unavailable |
-| SerpApi Google Flights | `app/api/google-api/google-flights.ts`, `app/api/planner/generate/route.ts`, `app/api/planner/budget-estimates/route.ts` | Flight search and flight price sampling |
-| SerpApi Google Hotels | `app/api/google-api/google-hotels.ts`, `app/api/planner/generate/route.ts`, `app/api/planner/budget-estimates/route.ts` | Hotel search and hotel price sampling |
-| LocationIQ | `app/api/planner/generate/route.ts` | Geocodes cities and nearby places |
-| Nominatim / OpenStreetMap | `app/api/planner/generate/route.ts` | Fallback geocoding source |
+| Google Gemini / `@google/genai` | `app/api/generate/route.ts`, `app/api/surprise/route.ts`, `app/api/transport/route.ts` | Generates trip content, destination suggestions, and transport data |
+| Groq chat completions | `app/api/generate/route.ts`, `app/api/surprise/route.ts`, `app/api/transport/route.ts` | Fallback AI provider when Gemini is unavailable |
+| SerpApi Google Flights | `app/api/google-api/google-flights.ts`, `app/api/generate/route.ts`, `app/api/budget-estimates/route.ts` | Flight search and flight price sampling |
+| SerpApi Google Hotels | `app/api/google-api/google-hotels.ts`, `app/api/generate/route.ts`, `app/api/budget-estimates/route.ts` | Hotel search and hotel price sampling |
+| LocationIQ | `app/api/generate/route.ts` | Geocodes cities and nearby places |
+| Nominatim / OpenStreetMap | `app/api/generate/route.ts` | Fallback geocoding source |
 | Geocoded.me | `app/api/geocoded/cities/route.ts` | Country, state, and city lookup for the wizard |
-| SerpApi Google Flights Autocomplete | `pages/api/google-api/google-flights-suggestions-api.ts` | Airport suggestions for the planner step 1 fields |
+| SerpApi Google Flights Autocomplete | `app/api/google-api/google-flights-suggestions/route.ts` | Airport suggestions for the planner step 1 fields |
 | SQL Server via `mssql` | `backend/routes/*.js`, `backend/db/*` | Stores users, profiles, trips, and reservations |
 | `ui-avatars.com`, `picsum.photos`, `pravatar.cc`, Unsplash | Several UI components and the home hero | Placeholder and hero imagery |
 
@@ -98,12 +98,12 @@ Legend:
 
 | Step | Label | Main UI pieces | Main data/API dependency |
 | --- | --- | --- | --- |
-| 1 | Where To | Airport autocomplete, trip type toggle | `/api/google-api/google-flights-suggestions-api` |
+| 1 | Where To | Airport autocomplete, trip type toggle | `/api/google-api/google-flights-suggestions` |
 | 2 | When | Date inputs and range handling | Local state only |
 | 3 | Who | Passenger counters, baggage controls | Local state only |
-| 4 | Budget | Budget sliders and auto-allocate button | `/api/planner/budget-estimates` |
+| 4 | Budget | Budget sliders and auto-allocate button | `/api/budget-estimates` |
 | 5 | Your Vibe | Vibe chips and destination regions | `/api/geocoded/cities` |
-| 6 | Review | Summary cards and final submit button | `/api/planner/generate` |
+| 6 | Review | Summary cards and final submit button | `/api/generate` |
 
 ## Short read
 

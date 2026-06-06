@@ -8,6 +8,15 @@ import TripPlannerResults from '@/components/TripPlannerResults';
 import SurpriseMeDiscovery from '@/components/SurpriseMeDiscovery';
 import Image from 'next/image';
 
+const GENERATOR_TRANSPORT_TYPES = [
+  'metro_subway',
+  'train',
+  'public_bus',
+  'taxi',
+  'rideshare_uber',
+  'rental_car',
+];
+
 export default function Home() {
   const [results, setResults] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -33,16 +42,50 @@ export default function Home() {
     };
   };
 
+  const buildGeneratePayload = (data: PlannerData) => ({
+    origin: data.origin,
+    destination: data.destination,
+    tripType: data.tripType,
+    departureDate: data.departureDate,
+    returnDate: data.returnDate,
+    adults: data.adults,
+    children: data.children,
+    includeFlight: data.includeFlight,
+    budgetMode: data.budgetMode,
+    totalBudget: data.totalBudget,
+    flightBudget: data.flightBudget,
+    hotelBudget: data.hotelBudget,
+    transportBudget: data.transportBudget,
+    dailyExpenseBudget: data.dailyExpenseBudget,
+    includePlaceVisits: data.includePlaceVisits,
+    budgetFlightCabins: data.includeFlight ? data.budgetFlightCabins : [],
+    budgetHotelStars: data.includeHotel ? data.budgetHotelStars : [],
+    includeHotel: data.includeHotel,
+    hotelStars: data.includeHotel ? data.hotelStars : undefined,
+    hotelRooms: data.includeHotel ? data.hotelRooms : undefined,
+    hotelRoomsPerApartment: data.includeHotel ? data.hotelRoomsPerApartment : undefined,
+    nights: data.nights,
+    includeTransport: data.includeTransport,
+    transportTypes: data.includeTransport ? GENERATOR_TRANSPORT_TYPES : [],
+    vibes: data.vibes,
+    destinationStates: data.destinationStates,
+    destinationCity: data.destinationCity,
+    destinationCountry: data.destinationCountry,
+    destinationCountryCode: data.destinationCountryCode,
+    transportOptions: data.includeTransport ? data.transportOptions : undefined,
+    transportDataSource: data.includeTransport ? data.transportDataSource : undefined,
+  });
+
   const handleComplete = async (data: PlannerData) => {
     setIsLoading(true);
     setError(null);
     setPlannerData(data);
 
     try {
-      const res = await fetch('/api/planner/generate', {
+      const res = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
+        body: JSON.stringify(buildGeneratePayload(data)),
       });
       const json = await res.json();
 
@@ -75,10 +118,10 @@ export default function Home() {
     };
 
     try {
-      const res = await fetch('/api/planner/generate', {
+      const res = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updatedData),
+        body: JSON.stringify(buildGeneratePayload(updatedData)),
       });
       const json = await res.json();
       if (json.error) throw new Error(json.error);

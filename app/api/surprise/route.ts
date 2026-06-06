@@ -1,5 +1,18 @@
 import { NextResponse } from 'next/server';
 import { GoogleGenAI } from '@google/genai';
+import fs from 'fs';
+import path from 'path';
+
+function loadPromptTemplate(fileName: string) {
+  return fs.readFileSync(path.join(process.cwd(), 'app', 'ai-prompts', fileName), 'utf8');
+}
+
+function fillPromptTemplate(template: string, values: Record<string, string | number | boolean>) {
+  return Object.entries(values).reduce(
+    (result, [key, value]) => result.replaceAll(`{{${key}}}`, String(value)),
+    template
+  );
+}
 
 type SurprisePreferences = {
   origin?: string;
@@ -82,9 +95,9 @@ function parseAiJson(raw: string) {
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 async function generateAiJson(prompt: string) {
-  const primaryKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
-  const secondaryKey = process.env.GEMINI_API_KEY_2;
-  const groqKey = process.env.GROQ_API_KEY;
+  const primaryKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY || '';
+  const secondaryKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY_V2 || '';
+  const groqKey = process.env.NEXT_PUBLIC_GROQ_API_KEY || '';
   const errors: string[] = [];
 
   const tryGemini = async (apiKey: string, label: string) => {
@@ -134,13 +147,7 @@ async function generateAiJson(prompt: string) {
         },
         body: JSON.stringify({
           model: 'llama-3.3-70b-versatile',
-          messages: [
-            {
-              role: 'system',
-              content: 'You are an elite AI travel concierge. Respond ONLY with valid JSON matching the requested schema. No markdown, no code fences, just raw JSON.',
-            },
-            { role: 'user', content: prompt },
-          ],
+          messages: [{ role: 'user', content: prompt }],
           temperature: 0.7,
           max_tokens: 4096,
           response_format: { type: 'json_object' },
@@ -202,45 +209,18 @@ export async function POST(request: Request) {
       ? `${preferences.departureDate}${preferences.returnDate ? ` to ${preferences.returnDate}` : ''}`
       : 'flexible dates';
 
-    const prompt = `You are a travel discovery assistant. Recommend 5 real travel destinations for someone who does not know where to go yet.
-
-User preferences:
-- Origin airport IATA: ${preferences.origin}
-- Dates: ${dateText}
-- Travelers: ${travelers}
-- Approximate total budget in USD: ${preferences.budget || 'flexible'}
-- Region preference: ${preferences.region || 'open'}
-- Climate preference: ${preferences.climate || 'open'}
-- Trip pace: ${preferences.pace || 'balanced'}
-- Interests: ${interests}
-- Include flights: ${preferences.includeFlight !== false}
-- Include hotels: ${preferences.includeHotel !== false}
-
-Return ONLY valid JSON with this exact shape:
-{
-  "destinations": [
-    {
-      "city": "City name",
-      "country": "Country name",
-      "iata": "Primary arrival airport IATA",
-      "airportName": "Airport name",
-      "matchScore": 90,
-      "headline": "One short sentence explaining the fit",
-      "reasons": ["reason one", "reason two", "reason three"],
-      "tags": ["family", "beach", "shopping"],
-      "bestFor": "Short phrase",
-      "estimatedBudget": 2200,
-      "flightTimeHint": "Short realistic hint"
-    }
-  ]
-}
-
-Rules:
-- Use only real destinations with real commercial airport IATA codes.
-- Avoid the origin city as a recommendation.
-- Make the options meaningfully different from each other.
-- Favor practical choices for the user's budget, dates, group size, and interests.
-- Keep all text concise.`;
+    const prompt = fillPromptTemplate(loadPromptTemplate('surprise-destinations.txt'), {
+      ORIGIN: preferences.origin || '',
+      DATES: dateText,
+      TRAVELERS: travelers,
+      BUDGET: preferences.budget || 'flexible',
+      REGION: preferences.region || 'open',
+      CLIMATE: preferences.climate || 'open',
+      PACE: preferences.pace || 'balanced',
+      INTERESTS: interests,
+      INCLUDE_FLIGHTS: preferences.includeFlight !== false,
+      INCLUDE_HOTELS: preferences.includeHotel !== false,
+    });
 
     const { json: parsed, source } = await generateAiJson(prompt);
     const destinations = (Array.isArray(parsed?.destinations) ? parsed.destinations : [])
@@ -254,7 +234,7 @@ Rules:
 
     return NextResponse.json({ destinations, source });
   } catch (error: any) {
-    console.error('Surprise Me API error:', error?.message);
+    console.error('Surprise API error:', error?.message);
     return NextResponse.json({ error: error?.message || 'AI destination generation failed.' }, { status: 503 });
   }
 }

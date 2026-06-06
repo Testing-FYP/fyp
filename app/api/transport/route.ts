@@ -14,7 +14,6 @@ type TransportMode =
 type TransportDataSource =
   | 'gemini_key_1_grounded'
   | 'gemini_key_2_grounded'
-  | 'gemini_parametric'
   | 'groq'
   | 'static_fallback';
 
@@ -52,6 +51,17 @@ const TRANSPORT_MODES: { id: TransportMode; displayName: string }[] = [
 const MODEL = 'gemini-2.5-flash';
 const REQUEST_TIMEOUT_MS = 18000;
 const GEMINI_GROUNDING_TIMEOUT_MS = 40000;
+
+function loadPromptTemplate(fileName: string) {
+  return fs.readFileSync(path.join(process.cwd(), 'app', 'ai-prompts', fileName), 'utf8');
+}
+
+function fillPromptTemplate(template: string, values: Record<string, string | number | boolean>) {
+  return Object.entries(values).reduce(
+    (result, [key, value]) => result.replaceAll(`{{${key}}}`, String(value)),
+    template
+  );
+}
 
 function readEnvValue(name: string) {
   if (process.env[name]) return process.env[name];
@@ -244,52 +254,11 @@ function staticTransportFallback(destinationCity: string, dataSource: TransportD
 
 function buildTransportPrompt(destinationCity: string, destinationCountry: string, destination: string, transportPriority: string) {
   const place = [destinationCity, destinationCountry].filter(Boolean).join(', ') || destination || 'the destination city';
-  return `Return ONLY valid JSON with no markdown for real tourist transportation in ${place}.
+  return fillPromptTemplate(loadPromptTemplate('transport-pricing.txt'), {
+    PLACE: place,
+    TRANSPORT_PRIORITY: transportPriority || 'cheapest',
+  });
 
-Use current 2026 destination-specific public information when available. For grounded Gemini calls, prioritize the most recently published official fares from transit authority websites, airport transport providers, taxi regulators, and official operator pages. Do not use historical fare data when a newer official fare exists. Include all six fixed transport modes exactly as these keys: metro_subway, train, public_bus, taxi, rideshare_uber, rental_car.
-
-For each mode include:
-- available: boolean
-- displayName: string
-- estimatedPrice: number or null, in USD, using a typical single ride or daily baseline
-- priceLabel: short readable price string containing a number and currency symbol
-- notes: short practical tourist note
-
-PRICE FIELD RULES:
-- Every price field must include the destination's local currency price first, followed by an approximate USD equivalent in parentheses.
-- Format examples: "\u20BA44 single ride (~$0.96 USD)" for Istanbul, "\u20AC3.80 single ride (~$4.10 USD)" for Berlin, "\u00A32.80 single ride (~$3.50 USD)" for London.
-- For Groq fallback, use your best knowledge of current 2026 local transport prices and current exchange rates.
-- Required format for all price-like fields: local numeric price or range with the correct local currency symbol, then "(~$X USD)".
-- You must return actual numeric prices with currency symbols for every transport type.
-- A price string without the USD equivalent is invalid, even if it has a local currency symbol.
-- Examples of valid price strings: "€2.90", "€7.10", "€15-25", "$35/day", "£6.50-12".
-- Never return fare category descriptions where a price is expected.
-- Invalid examples: "Single ride (AB zone)", "Short trip", "Per day economy", "Zone-based fare", "Varies by route".
-- If you cannot find an exact current price, give a realistic estimated range with currency.
-- All price-like fields must contain at least one digit, a local currency symbol or currency code, and the USD equivalent in parentheses: priceLabel, singleTicketPrice, dayPassPrice, priceRange, estimatedFareRange, pricePerDay.
-- Put descriptions only in notes, pricingNotes, travelTimeNotes, meterInfo, surgePricingNotes, extraCosts, bestUseCase, or pricingType.
-
-Mode-specific details:
-- metro_subway: singleTicketPrice, dayPassPrice
-- train: priceRange, travelTimeNotes, pricingType
-- public_bus: singleTicketPrice
-- taxi: estimatedFareRange, pricingNotes, meterInfo
-- rideshare_uber: estimatedFareRange, surgePricingNotes
-- rental_car: pricePerDay, extraCosts, bestUseCase
-
-The user's priority is ${transportPriority || 'cheapest'}. Do not omit unavailable modes; set available to false and explain briefly in notes.
-
-Required JSON shape. Every price string in this shape must follow the local currency plus USD equivalent format:
-{
-  "options": {
-    "metro_subway": { "available": true, "displayName": "Metro / Subway", "estimatedPrice": 2.9, "priceLabel": "€2.90 single ride", "singleTicketPrice": "€2.90", "dayPassPrice": "€8.80", "notes": "" },
-    "train": { "available": true, "displayName": "Train", "estimatedPrice": 12, "priceLabel": "€8-18", "priceRange": "€8-18", "travelTimeNotes": "", "pricingType": "", "notes": "" },
-    "public_bus": { "available": true, "displayName": "Public Bus", "estimatedPrice": 2.5, "priceLabel": "€2.50 single ride", "singleTicketPrice": "€2.50", "notes": "" },
-    "taxi": { "available": true, "displayName": "Taxi", "estimatedPrice": 22, "priceLabel": "€15-30 typical city ride", "estimatedFareRange": "€15-30", "pricingNotes": "", "meterInfo": "", "notes": "" },
-    "rideshare_uber": { "available": true, "displayName": "Rideshare / Uber", "estimatedPrice": 20, "priceLabel": "€14-28 typical city ride", "estimatedFareRange": "€14-28", "surgePricingNotes": "", "notes": "" },
-    "rental_car": { "available": true, "displayName": "Rental Car", "estimatedPrice": 35, "priceLabel": "€35/day", "pricePerDay": "€35/day", "extraCosts": "", "bestUseCase": "", "notes": "" }
-  }
-}`;
 }
 
 async function withTimeout<T>(task: Promise<T>, timeoutMs: number): Promise<T> {
@@ -345,7 +314,7 @@ async function callGemini(apiKey: string, prompt: string, grounded: boolean) {
 }
 
 async function callGroq(apiKey: string, prompt: string) {
-  if (!apiKey) throw new Error('GROQ_API_KEY is not configured');
+  if (!apiKey) throw new Error('NEXT_PUBLIC_GROQ_API_KEY is not configured');
   const response = await withTimeout(
     fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
@@ -355,13 +324,7 @@ async function callGroq(apiKey: string, prompt: string) {
       },
       body: JSON.stringify({
         model: 'llama-3.3-70b-versatile',
-        messages: [
-          {
-            role: 'system',
-            content: 'You are a travel transportation data assistant. Respond only with valid JSON matching the requested schema.',
-          },
-          { role: 'user', content: prompt },
-        ],
+        messages: [{ role: 'user', content: prompt }],
         temperature: 0.2,
         max_tokens: 2500,
         response_format: { type: 'json_object' },
@@ -381,9 +344,9 @@ async function callGroq(apiKey: string, prompt: string) {
 }
 
 async function getTransportOptions(prompt: string, destinationCity: string) {
-  const geminiKey1 = readEnvValue('GEMINI_API_KEY') || readEnvValue('NEXT_PUBLIC_GEMINI_API_KEY');
-  const geminiKey2 = readEnvValue('GEMINI_API_KEY_2');
-  const groqKey = readEnvValue('GROQ_API_KEY');
+  const geminiKey1 = readEnvValue('NEXT_PUBLIC_GEMINI_API_KEY');
+  const geminiKey2 = readEnvValue('NEXT_PUBLIC_GEMINI_API_KEY_V2');
+  const groqKey = readEnvValue('NEXT_PUBLIC_GROQ_API_KEY');
   let raw: any;
   let dataSource: TransportDataSource;
 
@@ -409,18 +372,6 @@ async function getTransportOptions(prompt: string, destinationCity: string) {
     return { options: normalizeOptions(raw, dataSource), dataSource };
   } catch (error: any) {
     console.error(`❌ [Transport] Gemini Key 2 + Grounding failed: ${error?.message || error}`);
-  }
-
-  // Layer 2: Plain Gemini parametric knowledge without grounding.
-  console.log('🔍 [Transport] Trying Gemini Key 1 without Grounding (parametric)...');
-  try {
-    raw = await callGemini(geminiKey1, prompt, false);
-    dataSource = 'gemini_parametric';
-    console.log('✅ [Transport] Success via Gemini parametric knowledge');
-    console.log(`📊 [Transport] Final data source used: ${dataSource}`);
-    return { options: normalizeOptions(raw, dataSource), dataSource };
-  } catch (error: any) {
-    console.error(`❌ [Transport] Gemini parametric failed: ${error?.message || error}`);
   }
 
   // Layer 3: Groq fallback with the same transport prompt.

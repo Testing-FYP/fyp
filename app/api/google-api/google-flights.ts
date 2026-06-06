@@ -8,6 +8,8 @@ export async function searchSerpApiFlights(params: {
   tripType: string;
   adults: number;
   children: number;
+  cabinClass?: string;
+  includeBaggage?: boolean;
   departureToken?: string;
 }) {
   if (!SERPAPI_KEY) {
@@ -36,10 +38,17 @@ export async function searchSerpApiFlights(params: {
     searchParams.set('return_date', params.returnDate);
   }
 
-  searchParams.set('travel_class', '1');
+  const travelClassMap: Record<string, string> = {
+    economy: '1',
+    premium_economy: '2',
+    business: '3',
+    first: '4',
+  };
+  searchParams.set('travel_class', travelClassMap[params.cabinClass || 'economy'] || '1');
 
   if (params.adults > 0) searchParams.set('adults', String(params.adults));
   if (params.children > 0) searchParams.set('children', String(params.children));
+  if (params.includeBaggage) searchParams.set('bags', '1');
   if (params.departureToken) searchParams.set('departure_token', params.departureToken);
 
   const response = await fetch(`https://serpapi.com/search.json?${searchParams.toString()}`);
