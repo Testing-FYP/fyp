@@ -940,7 +940,7 @@ export function BudgetBreakdown({ breakdown, plannerData }: { breakdown: any; pl
   );
 }
 
-export function FlightCard({ flight, index, travelerCount = 1, isExpanded, onToggle }: { flight: any; index: number; travelerCount?: number; isExpanded: boolean; onToggle: () => void }) {
+export function FlightCard({ flight, index, travelerCount = 1, isExpanded, onToggle, onAddToTrip }: { flight: any; index: number; travelerCount?: number; isExpanded: boolean; onToggle: () => void; onAddToTrip?: () => void }) {
   const [activeSliceIndex, setActiveSliceIndex] = useState(0);
   const { slice, segments, first, last } = getFlightEndpoints(flight);
   const slices = Array.isArray(flight?.slices) && flight.slices.length > 0 ? flight.slices : [slice].filter(Boolean);
@@ -1045,6 +1045,16 @@ export function FlightCard({ flight, index, travelerCount = 1, isExpanded, onTog
               <p className="mt-1 text-sm font-bold text-muted-foreground">
                 {formatMoney(perTravelerPrice)} per traveler x {travelerCount}
               </p>
+            ) : null}
+            {onAddToTrip ? (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onAddToTrip?.(); }}
+                className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border border-foreground px-4 py-2 text-xs font-black transition hover:bg-foreground hover:text-background"
+              >
+                <ShoppingCart className="h-3.5 w-3.5" />
+                Add to trip
+              </button>
             ) : null}
           </div>
           <div className="flex items-center justify-end">
@@ -1250,7 +1260,7 @@ function Amenity({ enabled, icon: Icon, label }: { enabled: boolean; icon: any; 
   );
 }
 
-export function HotelCard({ hotel, suspicious, distanceKm }: { hotel: any; suspicious: boolean; distanceKm: number | null }) {
+export function HotelCard({ hotel, suspicious, distanceKm, onAddToTrip }: { hotel: any; suspicious: boolean; distanceKm: number | null; onAddToTrip?: () => void }) {
   const photos = Array.isArray(hotel?.images) ? hotel.images : [];
   const amenities = Array.isArray(hotel?.amenities) ? hotel.amenities.slice(0, 6) : [];
   const nearby = Array.isArray(hotel?.nearbyPlaces) ? hotel.nearbyPlaces.slice(0, 3) : [];
@@ -1305,6 +1315,16 @@ export function HotelCard({ hotel, suspicious, distanceKm }: { hotel: any; suspi
                 ) : null}
                 {totalPrice ? (
                   <p className="mt-1 text-sm font-bold text-foreground">{formatMoney(totalPrice)} total{priceIsEstimated ? ' est.' : ''}</p>
+                ) : null}
+                {onAddToTrip ? (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); onAddToTrip?.(); }}
+                    className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border border-foreground px-4 py-2 text-xs font-black transition hover:bg-foreground hover:text-background sm:w-auto"
+                  >
+                    <ShoppingCart className="h-3.5 w-3.5" />
+                    Add to trip
+                  </button>
                 ) : null}
               </div>
             ) : (
@@ -1479,13 +1499,9 @@ function buildSummaryCartItems(selections: any, plannerData: any) {
   const items = [];
   const flight = plannerData?.includeFlight !== false ? selections.flights?.[0] : null;
   const hotel = plannerData?.includeHotel !== false ? selections.hotels?.[0] : null;
-  const transport = plannerData?.includeTransport !== false ? selections.transport?.[0] : null;
-  const place = plannerData?.includePlaceVisits !== false ? selections.places?.[0] : null;
 
   if (flight) items.push({ type: 'flight', icon: 'flight', ...getFlightLabel(flight) });
   if (hotel) items.push({ type: 'hotel', icon: 'hotel', ...getHotelLabel(hotel, plannerData) });
-  if (transport) items.push({ type: 'transport', icon: 'transport', ...getTransportLabel(transport) });
-  if (place) items.push({ type: 'daily', icon: 'place', ...getPlaceLabel(place) });
   return items.map((item, index) => ({
     id: `${item.type}-${index}`,
     ...item,
@@ -1544,6 +1560,7 @@ function AISummary({ summary, destination, selections, plannerData }: { summary:
       createdAt: new Date().toISOString(),
     };
     window.localStorage.setItem('travelEliteCart', JSON.stringify(cart));
+    window.localStorage.setItem('travelEliteCartAI', JSON.stringify(cart));
     router.push('/cart');
   };
 
@@ -1596,16 +1613,6 @@ function AISummary({ summary, destination, selections, plannerData }: { summary:
         {plannerData?.includeHotel !== false && selections.hotels.slice(0, 1).map((hotel: any, index: number) => {
           const item = getHotelLabel(hotel, plannerData);
           return <SelectedOptionMiniCard key={`summary-hotel-${index}`} icon={Hotel} {...item} />;
-        })}
-        {plannerData?.includeTransport !== false && selections.transport.length === 0 ? <SelectedOptionEmptyCard icon={Bus} label="transport" /> : null}
-        {plannerData?.includeTransport !== false && selections.transport.slice(0, 1).map((transport: any, index: number) => {
-          const item = getTransportLabel(transport);
-          return <SelectedOptionMiniCard key={`summary-transport-${index}`} icon={Bus} {...item} />;
-        })}
-        {plannerData?.includePlaceVisits !== false && selections.places.length === 0 ? <SelectedOptionEmptyCard icon={MapPin} label="daily expense" /> : null}
-        {plannerData?.includePlaceVisits !== false && selections.places.slice(0, 1).map((place: any, index: number) => {
-          const item = getPlaceLabel(place);
-          return <SelectedOptionMiniCard key={`summary-place-${index}`} icon={MapPin} {...item} />;
         })}
       </div>
     </section>
@@ -1711,6 +1718,37 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
     ].join('-');
   };
 
+  const summary = results?.aiSummary;
+  const addToCart = (type: 'flight' | 'hotel', newItem: { title: string; detail: string; price: number }) => {
+    try {
+      const raw = localStorage.getItem('travelEliteCart');
+      let cart = raw ? JSON.parse(raw) : null;
+      if (!cart) {
+        cart = {
+          tripTitle: summary?.title || `Trip to ${destination}`,
+          destination,
+          tripType: plannerData?.tripType,
+          departureDate: plannerData?.departureDate,
+          returnDate: plannerData?.returnDate,
+          nights: plannerData?.nights,
+          travelers: Math.max(1, (plannerData?.adults || 0) + (plannerData?.children || 0)),
+          vibes: [],
+          items: [],
+          total: 0,
+          createdAt: new Date().toISOString(),
+        };
+      }
+      const existingIndex = cart.items.findIndex((item: any) => item.type === type);
+      if (existingIndex >= 0) {
+        cart.items[existingIndex] = { ...cart.items[existingIndex], ...newItem, type };
+      } else {
+        cart.items.push({ type, icon: type, ...newItem });
+      }
+      cart.total = cart.items.reduce((sum: number, item: any) => sum + (item.price || 0), 0);
+      localStorage.setItem('travelEliteCart', JSON.stringify(cart));
+    } catch { return; }
+  };
+
   const flightCards = flights.map((flight: any, index: number) => (
     <FlightCard
       key={getFlightKey(flight, index)}
@@ -1724,6 +1762,17 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
           if (next.has(index)) next.delete(index);
           else next.add(index);
           return next;
+        });
+      }}
+      onAddToTrip={() => {
+        const price = getFlightPrice(flight) || 0;
+        const airline = flight?.slices?.[0]?.segments?.[0]?.operating_carrier?.name || flight?.airline || flight?.carrier || 'Flight';
+        const origin = flight?.slices?.[0]?.origin?.iata_code || plannerData?.originCode || '';
+        const dest = flight?.slices?.[0]?.destination?.iata_code || plannerData?.destinationCode || '';
+        addToCart('flight', {
+          title: airline,
+          detail: `${origin} → ${dest}`,
+          price,
         });
       }}
     />
@@ -1830,7 +1879,21 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
             </WarningBanner>
           ) : null}
           {hotels.length ? hotels.map(({ hotel, suspicious, distance }, index) => (
-            <HotelCard key={`${hotel?.id || hotel?.name || 'hotel'}-${hotel?.price || ''}-${index}`} hotel={hotel} suspicious={suspicious} distanceKm={distance} />
+            <HotelCard
+              key={`${hotel?.id || hotel?.name || 'hotel'}-${hotel?.price || ''}-${index}`}
+              hotel={hotel}
+              suspicious={suspicious}
+              distanceKm={distance}
+              onAddToTrip={() => {
+                const totalPrice = asNumber(hotel?.totalPrice);
+                const nightlyPrice = asNumber(hotel?.price);
+                addToCart('hotel', {
+                  title: hotel?.name || 'Hotel',
+                  detail: `${hotel?.stars ? hotel.stars + ' star' : ''} / ${hotel?.city || hotel?.location || ''}`.trim().replace(/^\/\s*/, ''),
+                  price: totalPrice || nightlyPrice || 0,
+                });
+              }}
+            />
           )) : (
             <BudgetEmptyState icon={Hotel} title="No matching hotel options" body="No live hotel option matched the selected star category and budget filters." category={budgetAgent?.categories?.hotels} />
           )}

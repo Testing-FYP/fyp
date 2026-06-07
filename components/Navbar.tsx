@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '@/hooks/useAuth';
-import { PlaneTakeoff, User, Calendar, BookOpen, LogIn, LogOut, Menu, X, Sparkles } from 'lucide-react';
+import { PlaneTakeoff, User, Calendar, BookOpen, LogIn, LogOut, Menu, X, Sparkles, ShoppingCart } from 'lucide-react';
 
 export default function Navbar() {
   const { user, isAuthenticated, logout } = useAuth();
@@ -12,11 +12,25 @@ export default function Navbar() {
   const router = useRouter();
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [cartCount, setCartCount] = useState(0);
 
   useEffect(() => {
     const handleScroll = () => setScrolled(window.scrollY > 20);
     window.addEventListener('scroll', handleScroll);
     return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  useEffect(() => {
+    const readCart = () => {
+      try {
+        const raw = localStorage.getItem('travelEliteCart');
+        const cart = raw ? JSON.parse(raw) : null;
+        setCartCount(cart?.items?.length || 0);
+      } catch { setCartCount(0); }
+    };
+    readCart();
+    window.addEventListener('storage', readCart);
+    return () => window.removeEventListener('storage', readCart);
   }, []);
 
   const navLinks = [
@@ -64,6 +78,17 @@ export default function Navbar() {
           </nav>
 
           {/* Desktop Auth */}
+          <Link
+            href="/cart"
+            className="relative hidden h-9 w-9 items-center justify-center rounded-2xl transition hover:bg-muted md:flex"
+          >
+            <ShoppingCart className="h-4 w-4" />
+            {cartCount > 0 ? (
+              <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-foreground text-[10px] font-black text-background">
+                {cartCount}
+              </span>
+            ) : null}
+          </Link>
           <div className="hidden md:flex items-center gap-3">
             {isAuthenticated ? (
               <>
@@ -143,6 +168,18 @@ export default function Navbar() {
               </div>
 
               <div className="pt-8 border-t border-border mt-auto space-y-4">
+                <Link
+                  href="/cart"
+                  onClick={() => setMobileOpen(false)}
+                  className="relative flex h-9 w-9 items-center justify-center rounded-2xl transition hover:bg-muted"
+                >
+                  <ShoppingCart className="h-4 w-4" />
+                  {cartCount > 0 ? (
+                    <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-foreground text-[10px] font-black text-background">
+                      {cartCount}
+                    </span>
+                  ) : null}
+                </Link>
                 {isAuthenticated ? (
                   <>
                     <Link href="/profile" onClick={() => setMobileOpen(false)}

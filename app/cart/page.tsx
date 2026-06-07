@@ -78,6 +78,24 @@ export default function CartPage() {
     expiry: '',
     cvc: '',
   });
+  const [aiSnapshot, setAiSnapshot] = useState<any>(null);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('travelEliteCartAI');
+      if (raw) setAiSnapshot(JSON.parse(raw));
+    } catch { /* ignore */ }
+  }, []);
+
+  const restoreAiSelection = () => {
+    try {
+      const raw = localStorage.getItem('travelEliteCartAI');
+      if (!raw) return;
+      const snapshot = JSON.parse(raw);
+      localStorage.setItem('travelEliteCart', raw);
+      setCart(snapshot);
+    } catch { /* ignore */ }
+  };
 
   useEffect(() => {
     const raw = window.localStorage.getItem('travelEliteCart');
@@ -150,7 +168,7 @@ export default function CartPage() {
           </div>
           <h1 className="mt-6 text-5xl title-text">Your cart is empty</h1>
           <p className="mt-3 text-sm text-muted-foreground">Select a trip summary first, then return here to checkout.</p>
-          <button onClick={() => router.push('/')} className="mt-8 rounded-2xl bg-foreground px-6 py-3 text-sm font-black text-background">
+          <button onClick={() => router.back()} className="mt-8 rounded-2xl bg-foreground px-6 py-3 text-sm font-black text-background">
             Back to planner
           </button>
         </div>
@@ -178,13 +196,13 @@ export default function CartPage() {
   return (
     <main className="min-h-screen bg-background px-6 pb-20 pt-28">
       <div className="mx-auto max-w-6xl">
-        <button onClick={() => router.push('/')} className="mb-6 flex items-center gap-2 text-sm font-semibold text-muted-foreground transition hover:text-foreground">
+        <button onClick={() => router.back()} className="mb-6 flex items-center gap-2 text-sm font-semibold text-muted-foreground transition hover:text-foreground">
           <ArrowLeft className="h-4 w-4" />
           Back to planner
         </button>
 
-        <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-          <section className="rounded-3xl border border-border bg-card p-6">
+        <div className="grid gap-6 lg:grid-cols-3">
+          <section className="rounded-3xl border border-border bg-card p-6 lg:col-span-2">
             <div className="flex items-start gap-4">
               <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-foreground text-background">
                 <ShoppingCart className="h-5 w-5" />
@@ -215,6 +233,24 @@ export default function CartPage() {
               </div>
             </div>
 
+            {cart.createdAt && aiSnapshot ? (
+              <div className="mt-4 flex items-center justify-between gap-4 rounded-2xl border border-border bg-muted/50 px-4 py-3">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <p className="text-xs font-semibold text-muted-foreground">
+                    AI suggested selection based on your budget
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={restoreAiSelection}
+                  className="shrink-0 rounded-xl border border-border bg-background px-3 py-1.5 text-xs font-black transition hover:bg-foreground hover:text-background"
+                >
+                  Restore AI selection
+                </button>
+              </div>
+            ) : null}
+
             <div className="mt-6 space-y-3">
               {cart.items.map(item => {
                 const Icon = itemIcon(item.type);
@@ -234,24 +270,41 @@ export default function CartPage() {
             </div>
           </section>
 
-          <section className="rounded-3xl border border-border bg-card p-6">
-            <div className="flex items-center justify-between gap-4">
+          <section className="rounded-3xl border border-border bg-card p-6 lg:sticky lg:top-8 lg:self-start">
+            <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="small-caps">Payment</p>
-                <h2 className="mt-2 text-3xl title-text">{formatMoney(total)}</h2>
+                <h2 className="mt-2 text-4xl font-black text-foreground">{formatMoney(total)}</h2>
               </div>
               <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-muted text-foreground">
                 <CreditCard className="h-6 w-6" />
               </div>
             </div>
 
-            <div className="mt-6 space-y-3">
-              <input value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} placeholder="Cardholder name" className="w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-foreground" />
-              <input value={form.email} onChange={event => setForm({ ...form, email: event.target.value })} placeholder="Email receipt" className="w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-foreground" />
-              <input value={form.card} onChange={event => setForm({ ...form, card: event.target.value })} placeholder="Card number" inputMode="numeric" className="w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-foreground" />
+            <hr className="mt-6 border-border" />
+
+            <div className="mt-6 space-y-4">
+              <label className="block">
+                <span className="text-xs font-bold text-muted-foreground">Cardholder name</span>
+                <input value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} placeholder="Cardholder name" className="mt-2 w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none transition focus:border-foreground" />
+              </label>
+              <label className="block">
+                <span className="text-xs font-bold text-muted-foreground">Email receipt</span>
+                <input value={form.email} onChange={event => setForm({ ...form, email: event.target.value })} placeholder="Email receipt" className="mt-2 w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none transition focus:border-foreground" />
+              </label>
+              <label className="block">
+                <span className="text-xs font-bold text-muted-foreground">Card number</span>
+                <input value={form.card} onChange={event => setForm({ ...form, card: event.target.value })} placeholder="Card number" inputMode="numeric" className="mt-2 w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none transition focus:border-foreground" />
+              </label>
               <div className="grid grid-cols-2 gap-3">
-                <input value={form.expiry} onChange={event => setForm({ ...form, expiry: event.target.value })} placeholder="MM/YY" className="rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-foreground" />
-                <input value={form.cvc} onChange={event => setForm({ ...form, cvc: event.target.value })} placeholder="CVC" inputMode="numeric" className="rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-foreground" />
+                <label className="block">
+                  <span className="text-xs font-bold text-muted-foreground">MM/YY</span>
+                  <input value={form.expiry} onChange={event => setForm({ ...form, expiry: event.target.value })} placeholder="MM/YY" className="mt-2 w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none transition focus:border-foreground" />
+                </label>
+                <label className="block">
+                  <span className="text-xs font-bold text-muted-foreground">CVC</span>
+                  <input value={form.cvc} onChange={event => setForm({ ...form, cvc: event.target.value })} placeholder="CVC" inputMode="numeric" className="mt-2 w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none transition focus:border-foreground" />
+                </label>
               </div>
             </div>
 

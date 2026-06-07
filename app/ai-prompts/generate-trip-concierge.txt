@@ -32,12 +32,11 @@ Trip Details:
 - Travelers: {{ADULTS}} adults, {{CHILDREN}} children
 - Budget: ${{EFFECTIVE_BUDGET}} ({{BUDGET_MODE_LABEL}})
 - Stay length: {{TRIP_NIGHTS}} night{{TRIP_NIGHTS_SUFFIX}}
-- Transport: general destination transport
 
 There are {{FLIGHT_COUNT}} flight options ranging from ${{MIN_FLIGHT_PRICE}} to ${{MAX_FLIGHT_PRICE}}.
 {{HOTEL_CONTEXT}}{{ATTRACTION_CONTEXT}}
 
 Please provide a JSON response with:
-1. "aiSummary" - An object with "title" (catchy trip title mentioning {{SUMMARY_TITLE_AREA}}) and "description" (2-3 sentence persuasive trip summary about visiting {{TARGET_AREA_LABEL}})
+1. "aiSummary" - An object with "title" (catchy trip title mentioning {{SUMMARY_TITLE_AREA}}) and "description" (2-3 sentence persuasive trip summary about visiting {{TARGET_AREA_LABEL}}. Only mention flights and hotel options. Do NOT mention transport, buses, taxis, or any ground transportation in this description.)
 2. "placesToVisit" - Array of 12 objects (extra buffer for filtering). Each MUST be a UNIQUE real place in {{TARGET_AREA_LABEL}}.{{PLACES_VIBE_RULE}} NO duplicates allowed. Each object has "name" (the full real name of the place, minimum 4 characters), "description" (1-2 sentences about this specific place, including the region/state or city area), and "estimatedCost" (estimated daily cost in USD as a number)
 3. "upsellOptions" - Array of 3 objects, each with "extraAmount" (number, like 100, 250, 500), "title" (what you get), and "description" (1 sentence explanation of the upgrade)

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { motion } from 'motion/react';
 import { Compass, Sparkles, RotateCcw } from 'lucide-react';
 import TripPlannerWizard, { PlannerData } from '@/components/TripPlannerWizard';
@@ -25,6 +25,16 @@ export default function Home() {
   const [plannerData, setPlannerData] = useState<PlannerData | null>(null);
   const [editStep, setEditStep] = useState<number>(0);
   const [plannerMode, setPlannerMode] = useState<'classic' | 'surprise'>('classic');
+
+  useEffect(() => {
+    try {
+      const savedResults = localStorage.getItem('travelEliteResults');
+      const savedPlannerData = localStorage.getItem('travelElitePlannerData');
+      if (savedResults) setResults(JSON.parse(savedResults));
+      if (savedPlannerData) setPlannerData(JSON.parse(savedPlannerData));
+    } catch { /* ignore */ }
+  }, []);
+
   const resultsRef = useRef<HTMLDivElement>(null);
 
   const attachPrefetchedTransport = (json: any, data: PlannerData) => {
@@ -76,22 +86,25 @@ export default function Home() {
     transportDataSource: data.includeTransport ? data.transportDataSource : undefined,
   });
 
-  const handleComplete = async (data: PlannerData) => {
+  const handleComplete = async (plannerData: PlannerData) => {
     setIsLoading(true);
     setError(null);
-    setPlannerData(data);
+    setPlannerData(plannerData);
 
     try {
       const res = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(buildGeneratePayload(data)),
+        body: JSON.stringify(buildGeneratePayload(plannerData)),
       });
       const json = await res.json();
 
       if (json.error) throw new Error(json.error);
 
-      setResults(attachPrefetchedTransport(json, data));
+      const generatedResults = attachPrefetchedTransport(json, plannerData);
+      setResults(generatedResults);
+      localStorage.setItem('travelEliteResults', JSON.stringify(generatedResults));
+      localStorage.setItem('travelElitePlannerData', JSON.stringify(plannerData));
 
       // Scroll to results
       setTimeout(() => {
@@ -139,6 +152,11 @@ export default function Home() {
   };
 
   const handleReset = () => {
+    localStorage.removeItem('travelEliteResults');
+    localStorage.removeItem('travelElitePlannerData');
+    localStorage.removeItem('travelEliteCart');
+    localStorage.removeItem('travelEliteCartAI');
+    window.dispatchEvent(new Event('storage'));
     setResults(null);
     setPlannerData(null);
     setEditStep(0);
