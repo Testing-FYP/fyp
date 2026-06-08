@@ -27,8 +27,6 @@ export default function ReservationsPage() {
   const router = useRouter();
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [cancellingId, setCancellingId] = useState<string | null>(null);
-  const [confirmCancel, setConfirmCancel] = useState<string | null>(null);
 
   useEffect(() => {
     if (!authLoading && !isAuthenticated) router.push('/auth');
@@ -41,20 +39,6 @@ export default function ReservationsPage() {
       .then(data => { setReservations(data.reservations || []); setIsLoading(false); })
       .catch(() => setIsLoading(false));
   }, [token]);
-
-  const handleCancel = async (id: string) => {
-    if (!token) return;
-    setCancellingId(id);
-    const res = await fetch(`${BACKEND_URL}/api/reservations/${id}/cancel`, {
-      method: 'PUT',
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (res.ok) {
-      setReservations(r => r.map(x => x.id === id ? { ...x, status: 'cancelled' } : x));
-    }
-    setCancellingId(null);
-    setConfirmCancel(null);
-  };
 
   if (authLoading || isLoading) {
     return (
@@ -71,7 +55,7 @@ export default function ReservationsPage() {
         {/* Header */}
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="mb-12">
           <button onClick={() => router.push('/')} className="flex items-center gap-2 text-muted-foreground hover:text-foreground text-sm mb-6 transition-colors">
-            <ArrowLeft className="w-4 h-4" /> Back to Home
+            <ArrowLeft className="w-4 h-4" /> Back to Planner
           </button>
           <div className="flex items-center gap-3 text-muted-foreground mb-2">
             <BanknoteIcon className="w-5 h-5" />
@@ -121,7 +105,11 @@ export default function ReservationsPage() {
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1 flex-wrap">
-                          <h3 className="text-lg font-medium">{res.origin} → {res.destination}</h3>
+                          <h3 className="text-lg font-medium">
+                            {res.reservation_type === 'flight'
+                              ? `${res.origin} → ${res.destination?.split(',')[0]?.trim() || res.destination}`
+                              : res.destination}
+                          </h3>
                           <span className={`text-xs px-3 py-1 rounded-full small-caps tracking-wider flex items-center gap-1 ${sc.style}`}>
                             <StatusIcon className="w-3 h-3" /> {sc.label}
                           </span>
@@ -162,30 +150,6 @@ export default function ReservationsPage() {
                       </div>
                     </div>
 
-                    {res.status !== 'cancelled' && (
-                      <div className="flex-shrink-0">
-                        {confirmCancel === res.id ? (
-                          <div className="flex flex-col gap-2 items-end">
-                            <span className="text-xs text-muted-foreground">Confirm cancel?</span>
-                            <div className="flex gap-2">
-                              <button onClick={() => handleCancel(res.id)} disabled={cancellingId === res.id}
-                                className="text-xs px-3 py-1.5 bg-red-500 text-white rounded-xl hover:bg-red-600 transition-colors disabled:opacity-50">
-                                {cancellingId === res.id ? '...' : 'Yes'}
-                              </button>
-                              <button onClick={() => setConfirmCancel(null)}
-                                className="text-xs px-3 py-1.5 border border-border rounded-xl hover:bg-muted transition-colors">
-                                No
-                              </button>
-                            </div>
-                          </div>
-                        ) : (
-                          <button onClick={() => setConfirmCancel(res.id)}
-                            className="text-xs px-4 py-2 border border-border text-muted-foreground hover:border-red-500/40 hover:text-red-400 rounded-xl transition-all small-caps tracking-wider">
-                            Cancel
-                          </button>
-                        )}
-                      </div>
-                    )}
                   </div>
                 </motion.div>
               );

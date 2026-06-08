@@ -113,7 +113,7 @@ export default function ProfilePage() {
         {/* Header */}
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="mb-12">
           <button onClick={() => router.push('/')} className="flex items-center gap-2 text-muted-foreground hover:text-foreground text-sm mb-6 transition-colors">
-            <ArrowLeft className="w-4 h-4" /> Back to Home
+            <ArrowLeft className="w-4 h-4" /> Back to Planner
           </button>
           <div className="flex items-center gap-3 text-muted-foreground mb-2">
             <User className="w-5 h-5" />
@@ -283,10 +283,6 @@ export default function ProfilePage() {
                 {saveMsg}
               </motion.span>
             )}
-            <button onClick={() => { logout(); router.push('/auth'); }}
-              className="ml-auto text-sm text-muted-foreground hover:text-red-500 transition-colors small-caps tracking-wider">
-              Sign Out
-            </button>
           </motion.div>
         </div>
       </div>

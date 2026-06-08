@@ -1493,12 +1493,10 @@ function buildEnabledTripSummary(input: {
   const enabledParts = [
     input.includeFlight ? `${input.flights.length} flight option${input.flights.length === 1 ? '' : 's'}` : '',
     input.includeHotel ? `${input.hotels.length} stay option${input.hotels.length === 1 ? '' : 's'}` : '',
-    input.includePlaceVisits ? `${input.placesToVisit.length} place${input.placesToVisit.length === 1 ? '' : 's'} to visit` : '',
   ].filter(Boolean);
   const disabledParts = [
     !input.includeFlight ? 'flights' : '',
     !input.includeHotel ? 'hotels' : '',
-    !input.includePlaceVisits ? 'places' : '',
   ].filter(Boolean);
   const title = input.aiSummary?.title || `Your Journey to ${input.destinationCity || destinationLabel}`;
   const enabledText = enabledParts.length

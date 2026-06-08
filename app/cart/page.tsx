@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion } from 'motion/react';
+import { useAuth, BACKEND_URL } from '@/hooks/useAuth';
 import {
   ArrowLeft,
   BadgeCheck,
@@ -29,6 +30,7 @@ type CartItem = {
 
 type TripCart = {
   tripTitle: string;
+  origin?: string;
   destination: string;
   tripType?: string;
   departureDate?: string;
@@ -79,6 +81,7 @@ export default function CartPage() {
     cvc: '',
   });
   const [aiSnapshot, setAiSnapshot] = useState<any>(null);
+  const { token, isAuthenticated } = useAuth();
 
   useEffect(() => {
     try {
@@ -117,9 +120,9 @@ export default function CartPage() {
   const validatePayment = () => {
     if (!form.name.trim()) return 'Enter the cardholder name.';
     if (!/^\S+@\S+\.\S+$/.test(form.email)) return 'Enter a valid email address.';
-    if (form.card.replace(/\D/g, '').length < 12) return 'Enter a valid card number.';
-    if (!/^\d{2}\/\d{2}$/.test(form.expiry)) return 'Use MM/YY for the expiry date.';
-    if (form.cvc.replace(/\D/g, '').length < 3) return 'Enter a valid CVC.';
+    if (form.card.replace(/\s/g, '').length < 13) return 'Card number must be at least 13 digits.';
+    if (form.expiry.length !== 5) return 'Expiry must be in MM/YY format.';
+    if (form.cvc.length !== 3) return 'CVC must be 3 digits.';
     return '';
   };
 
@@ -133,22 +136,95 @@ export default function CartPage() {
       setError('Your cart is empty.');
       return;
     }
+    if (!isAuthenticated || !token) {
+      setError('Please sign in to complete your booking.');
+      return;
+    }
 
     setError('');
     setIsPaying(true);
-    await new Promise(resolve => setTimeout(resolve, 900));
-    const confirmation = {
-      id: `TE-${Date.now()}`,
-      ...cart,
-      total,
-      paidAt: new Date().toISOString(),
-      payer: { name: form.name, email: form.email },
-      status: 'confirmed',
-    };
-    window.localStorage.setItem('travelEliteLastPayment', JSON.stringify(confirmation));
-    window.localStorage.removeItem('travelEliteCart');
-    setPaid(true);
-    setIsPaying(false);
+
+    try {
+      const flightItem = cart.items.find((item: any) => item.type === 'flight');
+      const hotelItem = cart.items.find((item: any) => item.type === 'hotel');
+
+      const reservationPromises = [];
+
+      if (flightItem) {
+        reservationPromises.push(
+          fetch(`${BACKEND_URL}/api/reservations`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              reservation_type: 'flight',
+              provider: flightItem.title || null,
+              origin: cart.origin || flightItem.detail?.split('→')[0]?.trim() || 'BEY',
+              destination: cart.destination || flightItem.detail?.split('→')[1]?.trim() || '',
+              departure_datetime: cart.departureDate ? new Date(cart.departureDate).toISOString() : null,
+              passengers: cart.travelers || 1,
+              total_amount: flightItem.price || null,
+              currency: 'USD',
+              cabin_class: null,
+              booking_details: {
+                cartItem: flightItem,
+                payer: { name: form.name, email: form.email },
+                bookedAt: new Date().toISOString(),
+              },
+            }),
+          })
+        );
+      }
+
+      if (hotelItem) {
+        reservationPromises.push(
+          fetch(`${BACKEND_URL}/api/reservations`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              reservation_type: 'hotel',
+              provider: hotelItem.title || null,
+              origin: cart.destination || '',
+              destination: cart.destination || '',
+              departure_datetime: cart.departureDate ? new Date(cart.departureDate).toISOString() : null,
+              arrival_datetime: cart.returnDate ? new Date(cart.returnDate).toISOString() : null,
+              passengers: cart.travelers || 1,
+              total_amount: hotelItem.price || null,
+              currency: 'USD',
+              booking_details: {
+                cartItem: hotelItem,
+                payer: { name: form.name, email: form.email },
+                bookedAt: new Date().toISOString(),
+              },
+            }),
+          })
+        );
+      }
+
+      const responses = await Promise.all(reservationPromises);
+      const failed = responses.find(r => !r.ok);
+      if (failed) {
+        const errData = await failed.json();
+        throw new Error(errData.error || 'Booking failed. Please try again.');
+      }
+
+      window.localStorage.removeItem('travelEliteCart');
+      window.localStorage.removeItem('travelEliteCartAI');
+      window.localStorage.removeItem('travelEliteResults');
+      window.localStorage.removeItem('travelElitePlannerData');
+      window.dispatchEvent(new Event('storage'));
+
+      setPaid(true);
+    } catch (err: any) {
+      setError(err.message || 'Something went wrong. Please try again.');
+    } finally {
+      setIsPaying(false);
+    }
   };
 
   if (!loaded) {
@@ -184,7 +260,9 @@ export default function CartPage() {
             <BadgeCheck className="h-10 w-10" />
           </div>
           <h1 className="mt-6 text-5xl title-text">Payment confirmed</h1>
-          <p className="mt-3 text-muted-foreground">Your selected travel cart has been confirmed locally for this demo checkout.</p>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Your booking has been saved to your reservations. Check <a href="/reservations" className="font-black underline underline-offset-2">My Reservations</a> to view your booking details.
+          </p>
           <button onClick={() => router.push('/reservations')} className="mt-8 rounded-2xl bg-foreground px-6 py-3 text-sm font-black text-background">
             View reservations
           </button>
@@ -255,7 +333,7 @@ export default function CartPage() {
               {cart.items.map(item => {
                 const Icon = itemIcon(item.type);
                 return (
-                  <div key={item.id} className="flex items-center gap-4 rounded-2xl border border-border bg-background/70 p-4">
+                  <div key={item.id || item.type} className="flex items-center gap-4 rounded-2xl border border-border bg-background/70 p-4">
                     <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-muted text-foreground">
                       <Icon className="h-5 w-5" />
                     </div>
@@ -294,16 +372,48 @@ export default function CartPage() {
               </label>
               <label className="block">
                 <span className="text-xs font-bold text-muted-foreground">Card number</span>
-                <input value={form.card} onChange={event => setForm({ ...form, card: event.target.value })} placeholder="Card number" inputMode="numeric" className="mt-2 w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none transition focus:border-foreground" />
+                <input
+                  value={form.card}
+                  onChange={e => {
+                    const digits = e.target.value.replace(/\D/g, '').slice(0, 16);
+                    const formatted = digits.replace(/(.{4})/g, '$1 ').trim();
+                    setForm({ ...form, card: formatted });
+                  }}
+                  placeholder="Card number"
+                  inputMode="numeric"
+                  maxLength={19}
+                  className="w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-foreground"
+                />
               </label>
               <div className="grid grid-cols-2 gap-3">
                 <label className="block">
                   <span className="text-xs font-bold text-muted-foreground">MM/YY</span>
-                  <input value={form.expiry} onChange={event => setForm({ ...form, expiry: event.target.value })} placeholder="MM/YY" className="mt-2 w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none transition focus:border-foreground" />
+                  <input
+                    value={form.expiry}
+                    onChange={e => {
+                      const digits = e.target.value.replace(/\D/g, '').slice(0, 4);
+                      const formatted = digits.length > 2 ? `${digits.slice(0, 2)}/${digits.slice(2)}` : digits;
+                      setForm({ ...form, expiry: formatted });
+                    }}
+                    placeholder="MM/YY"
+                    inputMode="numeric"
+                    maxLength={5}
+                    className="rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-foreground"
+                  />
                 </label>
                 <label className="block">
                   <span className="text-xs font-bold text-muted-foreground">CVC</span>
-                  <input value={form.cvc} onChange={event => setForm({ ...form, cvc: event.target.value })} placeholder="CVC" inputMode="numeric" className="mt-2 w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none transition focus:border-foreground" />
+                  <input
+                    value={form.cvc}
+                    onChange={e => {
+                      const digits = e.target.value.replace(/\D/g, '').slice(0, 3);
+                      setForm({ ...form, cvc: digits });
+                    }}
+                    placeholder="CVC"
+                    inputMode="numeric"
+                    maxLength={3}
+                    className="rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-foreground"
+                  />
                 </label>
               </div>
             </div>

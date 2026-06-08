@@ -1719,7 +1719,7 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
   };
 
   const summary = results?.aiSummary;
-  const addToCart = (type: 'flight' | 'hotel', newItem: { title: string; detail: string; price: number }) => {
+  const addToCart = (type: 'flight' | 'hotel', newItem: { title: string; detail: string; price: number | null }) => {
     try {
       const raw = localStorage.getItem('travelEliteCart');
       let cart = raw ? JSON.parse(raw) : null;
@@ -1746,6 +1746,7 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
       }
       cart.total = cart.items.reduce((sum: number, item: any) => sum + (item.price || 0), 0);
       localStorage.setItem('travelEliteCart', JSON.stringify(cart));
+      window.dispatchEvent(new Event('storage'));
     } catch { return; }
   };
 
@@ -1765,15 +1766,8 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
         });
       }}
       onAddToTrip={() => {
-        const price = getFlightPrice(flight) || 0;
-        const airline = flight?.slices?.[0]?.segments?.[0]?.operating_carrier?.name || flight?.airline || flight?.carrier || 'Flight';
-        const origin = flight?.slices?.[0]?.origin?.iata_code || plannerData?.originCode || '';
-        const dest = flight?.slices?.[0]?.destination?.iata_code || plannerData?.destinationCode || '';
-        addToCart('flight', {
-          title: airline,
-          detail: `${origin} → ${dest}`,
-          price,
-        });
+        const item = getFlightLabel(flight);
+        addToCart('flight', item);
       }}
     />
   ));
