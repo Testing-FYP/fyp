@@ -34,7 +34,7 @@ export async function searchSerpApiHotels(params: {
   if (useVacationRentals) {
     searchParams.set('vacation_rentals', 'true');
   }
-  if (useVacationRentals && Number(params.bedrooms || 0) > 0) {
+  if (Number(params.bedrooms || 0) > 0) {
     searchParams.set('bedrooms', String(Math.max(1, Number(params.bedrooms))));
   }
   if (!useVacationRentals && params.hotelClass) {

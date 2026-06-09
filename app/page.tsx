@@ -62,6 +62,8 @@ export default function Home() {
     children: data.children,
     includeFlight: data.includeFlight,
     budgetMode: data.budgetMode,
+    budgetMin: data.budgetMin,
+    budgetMax: data.budgetMax,
     totalBudget: data.totalBudget,
     flightBudget: data.flightBudget,
     hotelBudget: data.hotelBudget,
@@ -123,6 +125,7 @@ export default function Home() {
 
     const updatedData = {
       ...plannerData,
+      budgetMax: plannerData.totalBudget + extraBudget,
       totalBudget: plannerData.totalBudget + extraBudget,
       flightBudget: plannerData.flightBudget + Math.round(extraBudget * 0.45),
       hotelBudget: plannerData.hotelBudget + Math.round(extraBudget * 0.30),

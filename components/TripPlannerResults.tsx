@@ -17,6 +17,7 @@ import {
   Clock3,
   Compass,
   Crown,
+  ExternalLink,
   Hotel,
   MapPin,
   PlaneLanding,
@@ -940,7 +941,7 @@ export function BudgetBreakdown({ breakdown, plannerData }: { breakdown: any; pl
   );
 }
 
-export function FlightCard({ flight, index, travelerCount = 1, isExpanded, onToggle, onAddToTrip }: { flight: any; index: number; travelerCount?: number; isExpanded: boolean; onToggle: () => void; onAddToTrip?: () => void }) {
+export function FlightCard({ flight, index, travelerCount = 1, isExpanded, onToggle, onAddToTrip, bookingToken }: { flight: any; index: number; travelerCount?: number; isExpanded: boolean; onToggle: () => void; onAddToTrip?: () => void; bookingToken?: string }) {
   const [activeSliceIndex, setActiveSliceIndex] = useState(0);
   const { slice, segments, first, last } = getFlightEndpoints(flight);
   const slices = Array.isArray(flight?.slices) && flight.slices.length > 0 ? flight.slices : [slice].filter(Boolean);
@@ -1055,6 +1056,18 @@ export function FlightCard({ flight, index, travelerCount = 1, isExpanded, onTog
                 <ShoppingCart className="h-3.5 w-3.5" />
                 Add to trip
               </button>
+            ) : null}
+            {false && bookingToken ? (
+              <a
+                href={`https://www.google.com/flights?booking_token=${bookingToken}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="mt-2 flex w-full items-center justify-center gap-2 rounded-2xl border border-border px-4 py-2 text-xs font-black text-muted-foreground transition hover:border-foreground hover:text-foreground"
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+                View on Google Flights
+              </a>
             ) : null}
           </div>
           <div className="flex items-center justify-end">
@@ -1260,7 +1273,7 @@ function Amenity({ enabled, icon: Icon, label }: { enabled: boolean; icon: any; 
   );
 }
 
-export function HotelCard({ hotel, suspicious, distanceKm, onAddToTrip }: { hotel: any; suspicious: boolean; distanceKm: number | null; onAddToTrip?: () => void }) {
+export function HotelCard({ hotel, suspicious, distanceKm, onAddToTrip, website }: { hotel: any; suspicious: boolean; distanceKm: number | null; onAddToTrip?: () => void; website?: string }) {
   const photos = Array.isArray(hotel?.images) ? hotel.images : [];
   const amenities = Array.isArray(hotel?.amenities) ? hotel.amenities.slice(0, 6) : [];
   const nearby = Array.isArray(hotel?.nearbyPlaces) ? hotel.nearbyPlaces.slice(0, 3) : [];
@@ -1325,6 +1338,17 @@ export function HotelCard({ hotel, suspicious, distanceKm, onAddToTrip }: { hote
                     <ShoppingCart className="h-3.5 w-3.5" />
                     Add to trip
                   </button>
+                ) : null}
+                {website ? (
+                  <a
+                    href={website}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-2 flex w-full items-center justify-center gap-2 rounded-2xl border border-border px-4 py-2 text-xs font-black text-muted-foreground transition hover:border-foreground hover:text-foreground sm:w-auto"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    View on Google Hotels
+                  </a>
                 ) : null}
               </div>
             ) : (
@@ -1757,6 +1781,7 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
       index={index}
       travelerCount={travelerCount}
       isExpanded={expandedCards.has(index)}
+      bookingToken={flight?.booking_token || flight?.departure_token || undefined}
       onToggle={() => {
         setExpandedCards(prev => {
           const next = new Set(prev);
@@ -1878,6 +1903,7 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
               hotel={hotel}
               suspicious={suspicious}
               distanceKm={distance}
+              website={hotel?.website || undefined}
               onAddToTrip={() => {
                 const totalPrice = asNumber(hotel?.totalPrice);
                 const nightlyPrice = asNumber(hotel?.price);

@@ -1882,7 +1882,7 @@ export async function POST(request: Request) {
           adults,
           children,
           countryCode: countryCode || 'us',
-          bedrooms: searchAsVacationRental ? roomsPerApartment : undefined,
+          bedrooms: roomsPerApartment,
           hotelClass: searchAsVacationRental ? undefined : appliedHotelStar,
           vacationRentals: searchAsVacationRental,
         });

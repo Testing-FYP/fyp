@@ -88,6 +88,8 @@ export interface PlannerData {
   destinationStates: string[];
   // Step 8 — Budget
   budgetMode: BudgetMode;
+  budgetMin: number;
+  budgetMax: number;
   totalBudget: number;
   flightBudget: number;
   hotelBudget: number;
@@ -156,6 +158,54 @@ const STEPS = [
 
 const STEP_CONTENT_IDS = [0, 1, 2, 9, 6, 8] as const;
 
+interface DualRangeSliderProps {
+  min: number;
+  max: number;
+  step: number;
+  valueMin: number;
+  valueMax: number;
+  onChange: (min: number, max: number) => void;
+}
+
+function DualRangeSlider({ min, max, step, valueMin, valueMax, onChange }: DualRangeSliderProps) {
+  const range = max - min;
+  const clampedMin = Math.min(Math.max(valueMin, min), max - step);
+  const clampedMax = Math.max(Math.min(valueMax, max), min + step);
+  const safeMin = Math.min(clampedMin, clampedMax - step);
+  const safeMax = Math.max(clampedMax, safeMin + step);
+  const leftPercent = ((safeMin - min) / range) * 100;
+  const rightPercent = ((safeMax - min) / range) * 100;
+  const rangeInputClass = "pointer-events-none absolute inset-x-0 top-1/2 h-2 -translate-y-1/2 appearance-none bg-transparent accent-foreground [&::-moz-range-thumb]:pointer-events-auto [&::-moz-range-thumb]:h-5 [&::-moz-range-thumb]:w-5 [&::-moz-range-thumb]:appearance-none [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-2 [&::-moz-range-thumb]:border-background [&::-moz-range-thumb]:bg-foreground [&::-moz-range-thumb]:shadow-md [&::-moz-range-track]:h-2 [&::-moz-range-track]:bg-transparent [&::-webkit-slider-runnable-track]:h-2 [&::-webkit-slider-runnable-track]:bg-transparent [&::-webkit-slider-thumb]:pointer-events-auto [&::-webkit-slider-thumb]:h-5 [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-background [&::-webkit-slider-thumb]:bg-foreground [&::-webkit-slider-thumb]:shadow-md";
+
+  return (
+    <div className="relative h-10">
+      <div className="absolute inset-x-0 top-1/2 h-2 -translate-y-1/2 rounded-full bg-muted" />
+      <div
+        className="absolute top-1/2 h-2 -translate-y-1/2 rounded-full bg-foreground"
+        style={{ left: `${leftPercent}%`, width: `${rightPercent - leftPercent}%` }}
+      />
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={safeMin}
+        onChange={event => onChange(Math.min(Number(event.target.value), safeMax - step), safeMax)}
+        className={`${rangeInputClass} z-20`}
+      />
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={safeMax}
+        onChange={event => onChange(safeMin, Math.max(Number(event.target.value), safeMin + step))}
+        className={`${rangeInputClass} z-30`}
+      />
+    </div>
+  );
+}
+
 export default function TripPlannerWizard({ onComplete, isLoading, initialStep = 0, initialData }: TripPlannerWizardProps) {
   const [step, setStep] = useState(Math.min(Math.max(initialStep, 0), STEPS.length - 1));
   const [direction, setDirection] = useState(1);
@@ -163,44 +213,63 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
   // 'editDeparture' = picking departure only, 'editReturn' = picking return only
   const [datePickMode, setDatePickMode] = useState<'range' | 'idle' | 'editDeparture' | 'editReturn'>('range');
 
-  const [data, setData] = useState<PlannerData>({
-    origin: '',
-    destination: '',
-    tripType: 'round_trip',
-    departureDate: new Date().toISOString().split('T')[0],
-    returnDate: '',
-    adults: 1,
-    children: 0,
-    includeFlight: true,
-    cabinClass: 'economy',
-    includeBaggage: true,
-    directOnly: false,
-    budgetMode: 'total',
-    totalBudget: 3000,
-    flightBudget: 0,
-    hotelBudget: 0,
-    transportBudget: 0,
-    dailyExpenseBudget: 0,
-    budgetFlightCabins: [],
-    budgetHotelStars: [],
-    includePlaceVisits: true,
-    includeHotel: true,
-    hotelStars: 4,
-    hotelRooms: 1,
-    hotelRoomsPerApartment: 1,
-    hotelBeds: 2,
-    hotelAmenities: ['wifi', 'breakfast'],
-    nearAirport: false,
-    nights: 1,
-    includeTransport: true,
-    transportTypes: ['public_bus'],
-    transportPriority: 'cheapest',
-    vibes: [],
-    destinationStates: [],
-    ...initialData,
+  const [data, setData] = useState<PlannerData>(() => {
+    const defaults: PlannerData = {
+      origin: '',
+      destination: '',
+      tripType: 'round_trip',
+      departureDate: new Date().toISOString().split('T')[0],
+      returnDate: '',
+      adults: 1,
+      children: 0,
+      includeFlight: true,
+      cabinClass: 'economy',
+      includeBaggage: true,
+      directOnly: false,
+      budgetMode: 'total',
+      budgetMin: 0,
+      budgetMax: 5000,
+      totalBudget: 5000,
+      flightBudget: 0,
+      hotelBudget: 0,
+      transportBudget: 0,
+      dailyExpenseBudget: 0,
+      budgetFlightCabins: [],
+      budgetHotelStars: [],
+      includePlaceVisits: true,
+      includeHotel: true,
+      hotelStars: 4,
+      hotelRooms: 1,
+      hotelRoomsPerApartment: 1,
+      hotelBeds: 2,
+      hotelAmenities: ['wifi', 'breakfast'],
+      nearAirport: false,
+      nights: 1,
+      includeTransport: true,
+      transportTypes: ['public_bus'],
+      transportPriority: 'cheapest',
+      vibes: [],
+      destinationStates: [],
+    };
+    const merged = { ...defaults, ...initialData };
+    const budgetMax = Number(initialData?.budgetMax ?? initialData?.totalBudget ?? defaults.budgetMax);
+    return {
+      ...merged,
+      budgetMin: Number(initialData?.budgetMin ?? defaults.budgetMin),
+      budgetMax,
+      totalBudget: budgetMax,
+    };
   });
 
-  const update = (partial: Partial<PlannerData>) => setData(prev => ({ ...prev, ...partial }));
+  const update = (partial: Partial<PlannerData>) => setData(prev => {
+    const next = { ...prev, ...partial };
+    if (partial.budgetMax !== undefined) {
+      next.totalBudget = partial.budgetMax;
+    } else if (partial.totalBudget !== undefined) {
+      next.budgetMax = partial.totalBudget;
+    }
+    return next;
+  });
   const [transportLoading, setTransportLoading] = useState(false);
   const [countryCities, setCountryCities] = useState<GeocodedCity[]>([]);
   const [countryStates, setCountryStates] = useState<string[]>([]);
@@ -362,6 +431,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
 
       update({
         budgetMode: 'per_category',
+        budgetMax: allocatedTotalBudget,
         totalBudget: allocatedTotalBudget,
         flightBudget,
         hotelBudget,
@@ -533,6 +603,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
     if (autoFilledRef.current === null || data.totalBudget === autoFilledRef.current) {
       setData(prev => ({
         ...prev,
+        budgetMax: suggestedBudget,
         totalBudget: suggestedBudget,
         flightBudget: Math.round(suggestedBudget * 0.45),
         hotelBudget: Math.round(suggestedBudget * 0.30),
@@ -933,7 +1004,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                   <div className="text-xs text-muted-foreground/60 mt-2">The AI will intelligently allocate across flights, hotels, and more</div>
                 </div>
                 <input type="range" min="500" max="50000" step="250" value={data.totalBudget}
-                  onChange={e => { update({ totalBudget: parseInt(e.target.value) }); autoFilledRef.current = null; }}
+                  onChange={e => { const totalBudget = parseInt(e.target.value); update({ budgetMax: totalBudget, totalBudget }); autoFilledRef.current = null; }}
                   className="w-full h-2 bg-muted rounded-lg appearance-none cursor-pointer accent-foreground" />
                 <div className="flex justify-between text-[10px] text-muted-foreground/40 font-bold uppercase tracking-wider">
                   <span>$500</span><span>$50,000</span>
@@ -1355,7 +1426,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
             budgetMode: 'per_category',
           });
         };
-        const HotelBudgetCounter = ({ label, value, onChange }: { label: string; value: number; onChange: (value: number) => void }) => (
+        const HotelBudgetCounter = ({ label, value, onChange, max }: { label: string; value: number; onChange: (value: number) => void; max: number }) => (
           <div className="rounded-2xl border border-border bg-muted px-4 py-3">
             <div className="mb-3 text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground/60">{label}</div>
             <div className="flex items-center justify-between gap-3">
@@ -1370,8 +1441,9 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
               <span className="min-w-8 text-center font-mono text-xl font-black text-foreground">{value}</span>
               <button
                 type="button"
-                onClick={() => onChange(value + 1)}
-                className="flex h-9 w-9 items-center justify-center rounded-xl border border-foreground bg-foreground text-background transition hover:opacity-80"
+                onClick={() => onChange(Math.min(max, value + 1))}
+                disabled={value >= max}
+                className="flex h-9 w-9 items-center justify-center rounded-xl border border-foreground bg-foreground text-background transition hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <Plus className="h-4 w-4" />
               </button>
@@ -1505,9 +1577,18 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className={`py-7 px-6 rounded-3xl bg-muted border border-border ${fixedBudgetMode ? 'sm:col-span-2' : ''}`}>
                   <div className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground mb-2">Main Budget</div>
-                  <div className="text-5xl font-bold text-foreground title-text">${data.totalBudget.toLocaleString()}</div>
+                  <div className="text-5xl font-bold text-foreground title-text">
+                    {fixedBudgetMode
+                      ? `$${data.budgetMin.toLocaleString()} – $${data.budgetMax.toLocaleString()}`
+                      : `$${data.totalBudget.toLocaleString()}`}
+                  </div>
+                  {fixedBudgetMode && (
+                    <div className="text-xs text-muted-foreground/60 mt-2">
+                      ~${Math.round(data.budgetMin / (data.adults || 1)).toLocaleString()} – ${Math.round(data.budgetMax / (data.adults || 1)).toLocaleString()} per person
+                    </div>
+                  )}
                   <div className="text-xs text-muted-foreground/60 mt-2">
-                    {fixedBudgetMode ? 'This fixed number is the full budget the planner will work inside.' : 'Total money available for this trip plan'}
+                    {fixedBudgetMode ? 'AI will search for options within this range. The upper limit is your hard ceiling.' : 'Total money available for this trip plan'}
                   </div>
                 </div>
                 {!fixedBudgetMode && (
@@ -1522,18 +1603,16 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                   </div>
                 )}
               </div>
-              <input
-                type="range"
-                min="0"
-                max="50000"
-                step="100"
-                value={data.totalBudget}
-                onChange={event => {
-                  const totalBudget = Number(event.target.value);
+              <DualRangeSlider
+                min={0}
+                max={50000}
+                step={100}
+                valueMin={data.budgetMin}
+                valueMax={data.budgetMax}
+                onChange={(min, max) => {
                   unlockBudgetAutoAllocate();
-                  update({ totalBudget });
+                  update({ budgetMin: min, budgetMax: max, totalBudget: max });
                 }}
-                className="w-full h-2 bg-muted rounded-lg appearance-none cursor-pointer accent-foreground"
               />
               <div className="flex justify-between text-[10px] text-muted-foreground/40 font-bold uppercase tracking-wider">
                 <span>$0</span><span>$50,000</span>
@@ -1611,9 +1690,10 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
             </div>
 
             {!fixedBudgetMode && (
-              <div className="space-y-4">
-                {budgetRows.map(item => (
-                  <div key={item.key} className={`rounded-3xl border p-5 transition ${item.enabled ? 'bg-muted border-border' : 'bg-muted/40 border-border/70 opacity-75'}`}>
+              <>
+                <div className="space-y-4">
+                  {budgetRows.map(item => (
+                    <div key={item.key} className={`rounded-3xl border p-5 transition ${item.enabled ? 'bg-muted border-border' : 'bg-muted/40 border-border/70 opacity-75'}`}>
                     <div className="flex items-start justify-between gap-4">
                       <div className="flex items-start gap-3">
                         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-background border border-border">
@@ -1691,29 +1771,31 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                         <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
                           <div>
                             <div className="text-[10px] font-black uppercase tracking-[0.16em] text-muted-foreground/60">
-                              Hotel apartment setup
+                              Hotel room setup
                             </div>
                             <div className="mt-1 text-xs text-muted-foreground">
-                              Example: 2 apartments can mean separate units like room 102 and 103.
+                              Select the number of rooms and beds needed for your stay.
                             </div>
                           </div>
                           <div className="text-right font-mono text-xs font-black text-foreground">
-                            {hotelApartmentCount} apartment{hotelApartmentCount !== 1 ? 's' : ''} needed
+                            {hotelApartmentCount} room{hotelApartmentCount !== 1 ? 's' : ''} needed
                             <div className="text-[10px] text-muted-foreground/60">
-                              {hotelApartmentCount * hotelRoomsPerApartment} total room{hotelApartmentCount * hotelRoomsPerApartment !== 1 ? 's' : ''} requested
+                              {hotelApartmentCount * hotelRoomsPerApartment} total bed{hotelApartmentCount * hotelRoomsPerApartment !== 1 ? 's' : ''} requested
                             </div>
                           </div>
                         </div>
                         <div className="grid gap-3 sm:grid-cols-2">
                           <HotelBudgetCounter
-                            label="Apartments"
+                            label="Rooms"
                             value={hotelApartmentCount}
                             onChange={value => updateHotelBudgetStructure({ hotelRooms: value })}
+                            max={10}
                           />
                           <HotelBudgetCounter
-                            label="Rooms inside each"
+                            label="Beds"
                             value={hotelRoomsPerApartment}
                             onChange={value => updateHotelBudgetStructure({ hotelRoomsPerApartment: value })}
+                            max={6}
                           />
                         </div>
                         <div className="mt-4 rounded-2xl border border-border bg-muted p-3">
@@ -1826,9 +1908,64 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                     <div className="mt-2 flex justify-between text-[10px] text-muted-foreground/40 font-bold uppercase tracking-wider">
                       <span>$0</span><span>${item.max.toLocaleString()}</span>
                     </div>
-                  </div>
-                ))}
-              </div>
+                    </div>
+                  ))}
+                </div>
+                {!fixedBudgetMode && typeof window !== 'undefined' && (
+                <div
+                  className="fixed right-6 w-80 z-40 rounded-3xl border border-border bg-muted/95 backdrop-blur-sm p-7 space-y-3 shadow-xl hidden xl:block"
+                  style={{ top: '65%', transform: 'translateY(-50%)' }}
+                >
+                  <div className="text-xs uppercase tracking-[0.2em] font-bold text-muted-foreground mb-3">Budget Overview</div>
+
+                  {(() => {
+                    const rows = [
+                      { label: 'Flights', value: data.flightBudget, enabled: budgetRows.find(r => r.key === 'flight')?.enabled ?? false },
+                      { label: 'Hotel', value: data.hotelBudget, enabled: budgetRows.find(r => r.key === 'hotel')?.enabled ?? false },
+                      { label: 'Transport', value: data.transportBudget, enabled: budgetRows.find(r => r.key === 'transport')?.enabled ?? false },
+                      { label: 'Places', value: data.dailyExpenseBudget, enabled: budgetRows.find(r => r.key === 'places')?.enabled ?? false },
+                    ];
+                    const usedBudget = rows.filter(r => r.enabled).reduce((sum, r) => sum + r.value, 0);
+                    const totalBudget = data.totalBudget;
+                    const remaining = totalBudget - usedBudget;
+                    const isOverBudget = remaining < 0;
+
+                    return (
+                      <>
+                        {rows.map(row => (
+                          <div key={row.label} className={`flex justify-between items-center text-base font-medium ${row.enabled ? 'text-foreground' : 'text-muted-foreground/40 line-through'}`}>
+                            <span>{row.label}</span>
+                            <span className="font-mono font-bold">${row.value.toLocaleString()}</span>
+                          </div>
+                        ))}
+
+                        <div className="border-t border-border pt-3 mt-1 space-y-1">
+                          <div className="flex justify-between text-base text-muted-foreground">
+                            <span>Total used</span>
+                            <span className="font-mono font-bold text-foreground">${usedBudget.toLocaleString()}</span>
+                          </div>
+                          <div className={`flex justify-between text-base font-bold ${isOverBudget ? 'text-red-500' : 'text-green-600'}`}>
+                            <span>{isOverBudget ? 'Over budget' : 'Remaining'}</span>
+                            <span className="font-mono">{isOverBudget ? '-' : '+'}${Math.abs(remaining).toLocaleString()}</span>
+                          </div>
+                        </div>
+
+                        {isOverBudget && (
+                          <div className="rounded-xl bg-red-500/10 border border-red-500/20 px-3 py-2 text-sm text-red-500 leading-relaxed">
+                            You are ${Math.abs(remaining).toLocaleString()} over your main budget. Reduce a category or increase your total budget.
+                          </div>
+                        )}
+                        {!isOverBudget && usedBudget > 0 && (
+                          <div className="rounded-xl bg-green-500/10 border border-green-500/20 px-3 py-2 text-sm text-green-700 dark:text-green-400 leading-relaxed">
+                            Within budget. {remaining === 0 ? 'Fully allocated.' : `$${remaining.toLocaleString()} still unallocated.`}
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
+                </div>
+                )}
+              </>
             )}
           </div>
         );
