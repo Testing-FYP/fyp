@@ -37,10 +37,21 @@ type TripCart = {
   returnDate?: string;
   nights?: number;
   travelers?: number;
+  adults?: number;
+  children?: number;
   vibes?: string[];
   items: CartItem[];
   total: number;
   createdAt: string;
+};
+
+type PassengerDetail = {
+  firstName: string;
+  lastName: string;
+  dateOfBirth: string;
+  gender: 'Male' | 'Female';
+  nationality: string;
+  passportNumber: string;
 };
 
 function formatMoney(value: any) {
@@ -81,7 +92,30 @@ export default function CartPage() {
     cvc: '',
   });
   const [aiSnapshot, setAiSnapshot] = useState<any>(null);
+  const [passengers, setPassengers] = useState<PassengerDetail[]>([]);
   const { token, isAuthenticated } = useAuth();
+
+  useEffect(() => {
+    if (cart) {
+      const adults = cart.adults || cart.travelers || 1;
+      const children = cart.children || 0;
+      const total = adults + children;
+      setPassengers(
+        Array.from({ length: total }, () => ({
+          firstName: '',
+          lastName: '',
+          dateOfBirth: '',
+          gender: 'Male' as const,
+          nationality: '',
+          passportNumber: '',
+        }))
+      );
+    }
+  }, [cart?.travelers, cart?.adults, cart?.children]);
+
+  const updatePassenger = (index: number, field: keyof PassengerDetail, value: string) => {
+    setPassengers(prev => prev.map((p, i) => i === index ? { ...p, [field]: value } : p));
+  };
 
   useEffect(() => {
     try {
@@ -120,6 +154,12 @@ export default function CartPage() {
   const validatePayment = () => {
     if (!form.name.trim()) return 'Enter the cardholder name.';
     if (!/^\S+@\S+\.\S+$/.test(form.email)) return 'Enter a valid email address.';
+    for (let i = 0; i < passengers.length; i++) {
+      const p = passengers[i];
+      if (!p.firstName.trim() || !p.lastName.trim()) return `Please enter full name for Passenger ${i + 1}.`;
+      if (!p.dateOfBirth.trim()) return `Please enter date of birth for Passenger ${i + 1}.`;
+      if (!p.nationality.trim()) return `Please enter nationality for Passenger ${i + 1}.`;
+    }
     if (form.card.replace(/\s/g, '').length < 13) return 'Card number must be at least 13 digits.';
     if (form.expiry.length !== 5) return 'Expiry must be in MM/YY format.';
     if (form.cvc.length !== 3) return 'CVC must be 3 digits.';
@@ -170,6 +210,7 @@ export default function CartPage() {
               cabin_class: null,
               booking_details: {
                 cartItem: flightItem,
+                passengers: passengers,
                 payer: { name: form.name, email: form.email },
                 bookedAt: new Date().toISOString(),
               },
@@ -198,6 +239,7 @@ export default function CartPage() {
               currency: 'USD',
               booking_details: {
                 cartItem: hotelItem,
+                passengers: passengers,
                 payer: { name: form.name, email: form.email },
                 bookedAt: new Date().toISOString(),
               },
@@ -279,76 +321,146 @@ export default function CartPage() {
           Back to planner
         </button>
 
-        <div className="grid gap-6 lg:grid-cols-3">
+        <div className="grid gap-6 lg:grid-cols-3 lg:items-start">
           <section className="rounded-3xl border border-border bg-card p-6 lg:col-span-2">
-            <div className="flex items-start gap-4">
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-foreground text-background">
-                <ShoppingCart className="h-5 w-5" />
+            <div className="flex items-center gap-3 mb-6">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-foreground text-background">
+                <Users className="h-5 w-5" />
               </div>
               <div>
-                <p className="small-caps">Trip cart</p>
-                <h1 className="mt-2 text-4xl title-text">{cart.tripTitle}</h1>
-                <div className="mt-4 flex flex-wrap gap-2">
-                  <span className="rounded-full border border-border bg-muted px-3 py-1 text-xs font-bold text-muted-foreground">
-                    {cart.tripType?.replace(/_/g, ' ') || 'trip'}
-                  </span>
-                  <span className="inline-flex items-center gap-1 rounded-full border border-border bg-muted px-3 py-1 text-xs font-bold text-muted-foreground">
-                    <CalendarDays className="h-3 w-3" /> {formatDate(cart.departureDate)}
-                  </span>
-                  <span className="inline-flex items-center gap-1 rounded-full border border-border bg-muted px-3 py-1 text-xs font-bold text-muted-foreground">
-                    <Users className="h-3 w-3" /> {cart.travelers || 1} traveler{cart.travelers === 1 ? '' : 's'}
-                  </span>
+                <p className="small-caps">Passenger Details</p>
+                <p className="mt-0.5 text-xs font-semibold text-muted-foreground">Please enter names as they appear on passport or travel documents</p>
+              </div>
+            </div>
+
+            {passengers.map((passenger, index) => {
+              const adults = cart?.adults || cart?.travelers || 1;
+              const label = index < adults ? 'Adult' : 'Child';
+
+              return (
+              <div key={index} className="mb-6 rounded-2xl border border-border bg-background/50 p-5">
+                <h3 className="mb-4 text-sm font-black">
+                  Passenger {index + 1} ({label})
+                </h3>
+
+                {/* Name */}
+                <div className="mb-4 grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="mb-1.5 block text-xs font-semibold text-muted-foreground">First name</label>
+                    <input
+                      value={passenger.firstName}
+                      onChange={e => updatePassenger(index, 'firstName', e.target.value)}
+                      placeholder="First name"
+                      className="w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-foreground"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-xs font-semibold text-muted-foreground">Last name</label>
+                    <input
+                      value={passenger.lastName}
+                      onChange={e => updatePassenger(index, 'lastName', e.target.value)}
+                      placeholder="Last name"
+                      className="w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-foreground"
+                    />
+                  </div>
                 </div>
-                {cart.vibes?.length ? (
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {cart.vibes.map(vibe => (
-                      <span key={vibe} className="inline-flex items-center gap-1 rounded-full bg-sky-500/10 px-3 py-1 text-xs font-bold capitalize text-sky-700 dark:text-sky-300">
-                        <Sparkles className="h-3 w-3" /> {vibe.replace(/_/g, ' ')}
-                      </span>
+
+                {/* Date of birth + Nationality */}
+                <div className="mb-4 grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="mb-1.5 block text-xs font-semibold text-muted-foreground">Date of birth</label>
+                    <input
+                      value={passenger.dateOfBirth}
+                      onChange={e => {
+                        const digits = e.target.value.replace(/\D/g, '').slice(0, 8);
+                        let formatted = digits;
+                        if (digits.length > 4) {
+                          formatted = `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+                        } else if (digits.length > 2) {
+                          formatted = `${digits.slice(0, 2)}/${digits.slice(2)}`;
+                        }
+                        updatePassenger(index, 'dateOfBirth', formatted);
+                      }}
+                      placeholder="DD/MM/YYYY"
+                      maxLength={10}
+                      className="w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-foreground"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-xs font-semibold text-muted-foreground">Nationality</label>
+                    <input
+                      value={passenger.nationality}
+                      onChange={e => updatePassenger(index, 'nationality', e.target.value)}
+                      placeholder="e.g. Lebanese"
+                      className="w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-foreground"
+                    />
+                  </div>
+                </div>
+
+                {/* Gender */}
+                <div className="mb-4">
+                  <p className="mb-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Gender</p>
+                  <div className="flex gap-3">
+                    {(['Male', 'Female'] as const).map(g => (
+                      <button
+                        key={g}
+                        type="button"
+                        onClick={() => updatePassenger(index, 'gender', g)}
+                        className={`rounded-xl border px-4 py-2 text-xs font-black transition ${
+                          passenger.gender === g
+                            ? 'border-foreground bg-foreground text-background'
+                            : 'border-border bg-background hover:border-foreground'
+                        }`}
+                      >
+                        {g}
+                      </button>
                     ))}
                   </div>
-                ) : null}
-              </div>
-            </div>
-
-            {cart.createdAt && aiSnapshot ? (
-              <div className="mt-4 flex items-center justify-between gap-4 rounded-2xl border border-border bg-muted/50 px-4 py-3">
-                <div className="flex items-center gap-2">
-                  <Sparkles className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  <p className="text-xs font-semibold text-muted-foreground">
-                    AI suggested selection based on your budget
-                  </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={restoreAiSelection}
-                  className="shrink-0 rounded-xl border border-border bg-background px-3 py-1.5 text-xs font-black transition hover:bg-foreground hover:text-background"
-                >
-                  Restore AI selection
-                </button>
-              </div>
-            ) : null}
 
-            <div className="mt-6 space-y-3">
-              {cart.items.map(item => {
-                const Icon = itemIcon(item.type);
-                return (
-                  <div key={item.id || item.type} className="flex items-center gap-4 rounded-2xl border border-border bg-background/70 p-4">
-                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-muted text-foreground">
-                      <Icon className="h-5 w-5" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-black">{item.title}</p>
-                      <p className="mt-1 truncate text-xs font-semibold text-muted-foreground">{item.detail}</p>
-                    </div>
-                    <p className="font-black">{formatMoney(item.price)}</p>
-                  </div>
-                );
-              })}
-            </div>
+                {/* Passport */}
+                <div>
+                  <label className="mb-1.5 block text-xs font-semibold text-muted-foreground">Passport number <span className="text-muted-foreground font-normal">(optional)</span></label>
+                  <input
+                    value={passenger.passportNumber}
+                    onChange={e => updatePassenger(index, 'passportNumber', e.target.value)}
+                    placeholder="e.g. A12345678"
+                    className="w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-foreground"
+                  />
+                </div>
+              </div>
+              );
+            })}
           </section>
 
           <section className="rounded-3xl border border-border bg-card p-6 lg:sticky lg:top-8 lg:self-start">
+            {/* Trip Summary */}
+            <div className="mb-6">
+              <p className="small-caps mb-3">Trip Summary</p>
+              <div className="space-y-2">
+                {cart.items.map((item: any) => {
+                  const Icon = itemIcon(item.type);
+                  return (
+                    <div key={item.id || item.type} className="flex items-center gap-3 rounded-2xl border border-border bg-background/70 p-3">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-muted text-foreground">
+                        <Icon className="h-4 w-4" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-xs font-black">{item.title}</p>
+                        <p className="truncate text-xs text-muted-foreground">{item.detail}</p>
+                      </div>
+                      <p className="text-xs font-black">{formatMoney(item.price)}</p>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="mt-3 flex items-center justify-between rounded-2xl bg-muted/50 px-4 py-3">
+                <p className="text-xs font-black">Total</p>
+                <p className="text-sm font-black">{formatMoney(total)}</p>
+              </div>
+            </div>
+            <hr className="mb-6 border-border" />
+
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="small-caps">Payment</p>
@@ -385,7 +497,7 @@ export default function CartPage() {
                   className="w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-foreground"
                 />
               </label>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-3 overflow-hidden">
                 <label className="block">
                   <span className="text-xs font-bold text-muted-foreground">MM/YY</span>
                   <input
@@ -398,7 +510,7 @@ export default function CartPage() {
                     placeholder="MM/YY"
                     inputMode="numeric"
                     maxLength={5}
-                    className="rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-foreground"
+                    className="w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-foreground"
                   />
                 </label>
                 <label className="block">
@@ -412,7 +524,7 @@ export default function CartPage() {
                     placeholder="CVC"
                     inputMode="numeric"
                     maxLength={3}
-                    className="rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-foreground"
+                    className="w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-foreground"
                   />
                 </label>
               </div>

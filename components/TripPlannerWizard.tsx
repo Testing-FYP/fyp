@@ -106,6 +106,16 @@ interface TripPlannerWizardProps {
   isLoading: boolean;
   initialStep?: number;
   initialData?: Partial<PlannerData>;
+  onBudgetOverviewChange?: (overview: {
+    flights: number;
+    hotel: number;
+    transport: number;
+    places: number;
+    total: number;
+    remaining: number;
+    isOverBudget: boolean;
+    isDetailedMode: boolean;
+  }) => void;
 }
 
 const AMENITIES = [
@@ -206,7 +216,7 @@ function DualRangeSlider({ min, max, step, valueMin, valueMax, onChange }: DualR
   );
 }
 
-export default function TripPlannerWizard({ onComplete, isLoading, initialStep = 0, initialData }: TripPlannerWizardProps) {
+export default function TripPlannerWizard({ onComplete, isLoading, initialStep = 0, initialData, onBudgetOverviewChange }: TripPlannerWizardProps) {
   const [step, setStep] = useState(Math.min(Math.max(initialStep, 0), STEPS.length - 1));
   const [direction, setDirection] = useState(1);
   // 'range' = initial picking (click from, then to), 'idle' = both set,
@@ -482,6 +492,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
   };
 
   const activeContentStep: number = STEP_CONTENT_IDS[step] ?? 0;
+  const fixedBudgetMode = data.budgetMode === 'total';
 
   const canProceed = () => {
     if (step === 0) return data.origin && data.destination;
@@ -490,6 +501,39 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
   };
 
   const budgetAutoAllocateKey = getBudgetAutoAllocateKey(data, includePlaceVisits);
+
+  useEffect(() => {
+    if (!onBudgetOverviewChange) return;
+    if (activeContentStep !== 9) {
+      onBudgetOverviewChange({
+        flights: 0,
+        hotel: 0,
+        transport: 0,
+        places: 0,
+        total: 0,
+        remaining: 0,
+        isOverBudget: false,
+        isDetailedMode: false,
+      });
+      return;
+    }
+    const flights = data.flightBudget;
+    const hotel = data.hotelBudget;
+    const transport = data.transportBudget;
+    const places = data.dailyExpenseBudget;
+    const total = flights + hotel + transport + places;
+    const remaining = data.totalBudget - total;
+    onBudgetOverviewChange({
+      flights,
+      hotel,
+      transport,
+      places,
+      total,
+      remaining,
+      isOverBudget: remaining < 0,
+      isDetailedMode: !fixedBudgetMode,
+    });
+  }, [data.flightBudget, data.hotelBudget, data.transportBudget, data.dailyExpenseBudget, data.totalBudget, fixedBudgetMode, activeContentStep]);
 
   useEffect(() => {
     if (!budgetAutoAllocated) return;
@@ -1911,60 +1955,6 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                     </div>
                   ))}
                 </div>
-                {!fixedBudgetMode && typeof window !== 'undefined' && (
-                <div
-                  className="fixed right-6 w-80 z-40 rounded-3xl border border-border bg-muted/95 backdrop-blur-sm p-7 space-y-3 shadow-xl hidden xl:block"
-                  style={{ top: '65%', transform: 'translateY(-50%)' }}
-                >
-                  <div className="text-xs uppercase tracking-[0.2em] font-bold text-muted-foreground mb-3">Budget Overview</div>
-
-                  {(() => {
-                    const rows = [
-                      { label: 'Flights', value: data.flightBudget, enabled: budgetRows.find(r => r.key === 'flight')?.enabled ?? false },
-                      { label: 'Hotel', value: data.hotelBudget, enabled: budgetRows.find(r => r.key === 'hotel')?.enabled ?? false },
-                      { label: 'Transport', value: data.transportBudget, enabled: budgetRows.find(r => r.key === 'transport')?.enabled ?? false },
-                      { label: 'Places', value: data.dailyExpenseBudget, enabled: budgetRows.find(r => r.key === 'places')?.enabled ?? false },
-                    ];
-                    const usedBudget = rows.filter(r => r.enabled).reduce((sum, r) => sum + r.value, 0);
-                    const totalBudget = data.totalBudget;
-                    const remaining = totalBudget - usedBudget;
-                    const isOverBudget = remaining < 0;
-
-                    return (
-                      <>
-                        {rows.map(row => (
-                          <div key={row.label} className={`flex justify-between items-center text-base font-medium ${row.enabled ? 'text-foreground' : 'text-muted-foreground/40 line-through'}`}>
-                            <span>{row.label}</span>
-                            <span className="font-mono font-bold">${row.value.toLocaleString()}</span>
-                          </div>
-                        ))}
-
-                        <div className="border-t border-border pt-3 mt-1 space-y-1">
-                          <div className="flex justify-between text-base text-muted-foreground">
-                            <span>Total used</span>
-                            <span className="font-mono font-bold text-foreground">${usedBudget.toLocaleString()}</span>
-                          </div>
-                          <div className={`flex justify-between text-base font-bold ${isOverBudget ? 'text-red-500' : 'text-green-600'}`}>
-                            <span>{isOverBudget ? 'Over budget' : 'Remaining'}</span>
-                            <span className="font-mono">{isOverBudget ? '-' : '+'}${Math.abs(remaining).toLocaleString()}</span>
-                          </div>
-                        </div>
-
-                        {isOverBudget && (
-                          <div className="rounded-xl bg-red-500/10 border border-red-500/20 px-3 py-2 text-sm text-red-500 leading-relaxed">
-                            You are ${Math.abs(remaining).toLocaleString()} over your main budget. Reduce a category or increase your total budget.
-                          </div>
-                        )}
-                        {!isOverBudget && usedBudget > 0 && (
-                          <div className="rounded-xl bg-green-500/10 border border-green-500/20 px-3 py-2 text-sm text-green-700 dark:text-green-400 leading-relaxed">
-                            Within budget. {remaining === 0 ? 'Fully allocated.' : `$${remaining.toLocaleString()} still unallocated.`}
-                          </div>
-                        )}
-                      </>
-                    );
-                  })()}
-                </div>
-                )}
               </>
             )}
           </div>

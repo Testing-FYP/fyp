@@ -25,6 +25,10 @@ export default function Home() {
   const [plannerData, setPlannerData] = useState<PlannerData | null>(null);
   const [editStep, setEditStep] = useState<number>(0);
   const [plannerMode, setPlannerMode] = useState<'classic' | 'surprise'>('classic');
+  const [budgetOverview, setBudgetOverview] = useState<{
+    flights: number; hotel: number; transport: number; places: number;
+    total: number; remaining: number; isOverBudget: boolean; isDetailedMode: boolean;
+  } | null>(null);
 
   useEffect(() => {
     try {
@@ -257,8 +261,50 @@ export default function Home() {
             </div>
 
             {plannerMode === 'classic' ? (
-              <div className="max-w-2xl mx-auto">
-                <TripPlannerWizard onComplete={handleComplete} isLoading={isLoading} initialStep={editStep} initialData={plannerData || undefined} />
+              <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_672px_minmax(0,1fr)] gap-8 items-start">
+                <div className="hidden xl:block" />
+                <div className="w-full xl:w-[672px] min-w-0">
+                  <TripPlannerWizard onComplete={handleComplete} isLoading={isLoading} initialStep={editStep} initialData={plannerData || undefined} onBudgetOverviewChange={setBudgetOverview} />
+                </div>
+                {budgetOverview?.isDetailedMode ? (
+                  <div className="hidden xl:block">
+                    <div className="w-72 sticky top-28 self-start rounded-3xl border border-border bg-muted/95 backdrop-blur-sm p-7 space-y-3 shadow-xl">
+                      <div className="text-xs uppercase tracking-[0.2em] font-bold text-muted-foreground mb-3">Budget Overview</div>
+                      {[
+                        { label: 'Flights', value: budgetOverview.flights },
+                        { label: 'Hotel', value: budgetOverview.hotel },
+                        { label: 'Transport', value: budgetOverview.transport },
+                        { label: 'Places', value: budgetOverview.places },
+                      ].map(row => (
+                        <div key={row.label} className="flex justify-between items-center text-base font-medium">
+                          <span>{row.label}</span>
+                          <span className="font-mono font-bold">${row.value.toLocaleString()}</span>
+                        </div>
+                      ))}
+                      <div className="border-t border-border pt-3 mt-1 space-y-1">
+                        <div className="flex justify-between text-base text-muted-foreground">
+                          <span>Total used</span>
+                          <span className="font-mono font-bold text-foreground">${budgetOverview.total.toLocaleString()}</span>
+                        </div>
+                        <div className={`flex justify-between text-base font-bold ${budgetOverview.isOverBudget ? 'text-red-500' : 'text-green-600'}`}>
+                          <span>{budgetOverview.isOverBudget ? 'Over budget' : 'Remaining'}</span>
+                          <span className="font-mono">{budgetOverview.isOverBudget ? '-' : '+'}${Math.abs(budgetOverview.remaining).toLocaleString()}</span>
+                        </div>
+                      </div>
+                      {budgetOverview.isOverBudget ? (
+                        <div className="rounded-xl bg-red-500/10 border border-red-500/20 px-3 py-2 text-sm text-red-500 leading-relaxed">
+                          You are ${Math.abs(budgetOverview.remaining).toLocaleString()} over your budget.
+                        </div>
+                      ) : budgetOverview.total > 0 ? (
+                        <div className="rounded-xl bg-green-500/10 border border-green-500/20 px-3 py-2 text-sm text-green-700 dark:text-green-400 leading-relaxed">
+                          Within budget. ${budgetOverview.remaining.toLocaleString()} still unallocated.
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="hidden xl:block" />
+                )}
               </div>
             ) : (
               <SurpriseMeDiscovery onDestinationSelect={handleSurpriseDestination} />
