@@ -77,16 +77,16 @@ export interface PlannerData {
   hotelAmenities: string[];
   nearAirport: boolean;
   nights: number;
-  // Step 6 — Transport
+  // Step 6 - Transport
   includeTransport: boolean;
   transportTypes: TransportType[];
   transportPriority: TransportPriority;
   transportOptions?: TransportOption[];
   transportDataSource?: string;
-  // Step 7 — Vibe
+  // Step 7 - Vibe
   vibes: string[];
   destinationStates: string[];
-  // Step 8 — Budget
+  // Step 8 - Budget
   budgetMode: BudgetMode;
   budgetMin: number;
   budgetMax: number;
@@ -464,7 +464,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
       setBudgetEstimateNote(
         [json.currencyNote, sources ? 'Live estimates applied as selected slider values.' : 'Live estimates applied.']
           .filter(Boolean)
-          .join(' • ')
+          .join(' - ')
       );
     } catch (error: any) {
       console.error('[Budget auto allocate] Failed', error?.message || error);
@@ -517,10 +517,10 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
       });
       return;
     }
-    const flights = data.flightBudget;
-    const hotel = data.hotelBudget;
-    const transport = data.transportBudget;
-    const places = data.dailyExpenseBudget;
+    const flights = data.includeFlight ? data.flightBudget : 0;
+    const hotel = data.includeHotel ? data.hotelBudget : 0;
+    const transport = data.includeTransport ? data.transportBudget : 0;
+    const places = includePlaceVisits ? data.dailyExpenseBudget : 0;
     const total = flights + hotel + transport + places;
     const remaining = data.totalBudget - total;
     onBudgetOverviewChange({
@@ -533,7 +533,11 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
       isOverBudget: remaining < 0,
       isDetailedMode: !fixedBudgetMode,
     });
-  }, [data.flightBudget, data.hotelBudget, data.transportBudget, data.dailyExpenseBudget, data.totalBudget, fixedBudgetMode, activeContentStep]);
+  }, [
+    data.flightBudget, data.hotelBudget, data.transportBudget, data.dailyExpenseBudget,
+    data.totalBudget, data.includeFlight, data.includeHotel, data.includeTransport,
+    includePlaceVisits, fixedBudgetMode, activeContentStep
+  ]);
 
   useEffect(() => {
     if (!budgetAutoAllocated) return;
@@ -686,7 +690,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
 
   const renderStep = () => {
     switch (activeContentStep) {
-      // Step 1 — Destination
+      // Step 1 - Destination
       case 0:
         return (
           <div className="space-y-8">
@@ -725,7 +729,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
           </div>
         );
 
-      // Step 2 — Dates
+      // Step 2 - Dates
       case 1: {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
@@ -828,14 +832,14 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                 <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">Selected dates</div>
                 <div className="mt-1 text-sm font-bold text-foreground">
                   {selectedDateCount > 0 ? `${selectedDateCount} day${selectedDateCount !== 1 ? 's' : ''}` : 'No dates selected'}
-                  {selectedNights > 0 ? ` • ${selectedNights} night${selectedNights !== 1 ? 's' : ''}` : ''}
+                  {selectedNights > 0 ? ` - ${selectedNights} night${selectedNights !== 1 ? 's' : ''}` : ''}
                 </div>
               </div>
 
               {/* Calendar */}
               <div className="flex justify-center">
                 {(effectiveMode === 'range' || effectiveMode === 'idle') ? (
-                  /* Range mode or idle — show range calendar */
+                  /* Range mode or idle - show range calendar */
                   <div className="relative overflow-visible">
                     {selectedNights > 0 && (
                       <div
@@ -866,7 +870,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                     />
                   </div>
                 ) : (
-                  /* Edit single date mode — show single-pick calendar */
+                  /* Edit single date mode - show single-pick calendar */
                   <Calendar
                     mode="single"
                     selected={
@@ -941,16 +945,16 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
         );
       }
 
-      // Step 3 — Travelers
+      // Step 3 - Travelers
       case 2:
         return (
           <div className="space-y-5">
             <Counter label="Adults" sublabel="18 years and older" value={data.adults} min={1} onChange={v => update({ adults: v })} />
-            <Counter label="Children" sublabel="0 — 17 years" value={data.children} min={0} onChange={v => update({ children: v })} />
+            <Counter label="Children" sublabel="0 - 17 years" value={data.children} min={0} onChange={v => update({ children: v })} />
           </div>
         );
 
-      // Step 4 — Flight Preferences
+      // Step 4 - Flight Preferences
       case 3:
         return (
           <div className="space-y-8">
@@ -1014,7 +1018,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
           </div>
         );
 
-      // Step 8 — Budget
+      // Step 8 - Budget
       case 7:
         return (
           <div className="space-y-8">
@@ -1138,7 +1142,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                 </div>
                 {/* Suggestion line */}
                 <div className="text-center text-[10px] text-muted-foreground/50 uppercase tracking-wider font-bold">
-                  Suggested: ${suggestedBudget.toLocaleString()} — estimated based on your cabin class, hotel rating, and destination costs
+                  Suggested: ${suggestedBudget.toLocaleString()} - estimated based on your cabin class, hotel rating, and destination costs
                 </div>
               </div>
             )}
@@ -1172,7 +1176,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
           </div>
         );
 
-      // Step 5 — Stay
+      // Step 5 - Stay
       case 4:
         return (
           <div className="space-y-8">
@@ -1270,7 +1274,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
           </div>
         );
 
-      // Step 6 — Transport
+      // Step 6 - Transport
       case 5:
         return (
           <div className="space-y-8">
@@ -1377,8 +1381,8 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
           </div>
         );
 
-      // Step 7 — Your Vibe
-      // Step 5 — Budget
+      // Step 7 - Your Vibe
+      // Step 5 - Budget
       case 9: {
         const travelerCount = Math.max(1, data.adults + data.children);
         const safeNights = Math.max(1, data.nights);
@@ -1623,12 +1627,12 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                   <div className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground mb-2">Main Budget</div>
                   <div className="text-5xl font-bold text-foreground title-text">
                     {fixedBudgetMode
-                      ? `$${data.budgetMin.toLocaleString()} – $${data.budgetMax.toLocaleString()}`
+                      ? `$${data.budgetMin.toLocaleString()} - $${data.budgetMax.toLocaleString()}`
                       : `$${data.totalBudget.toLocaleString()}`}
                   </div>
                   {fixedBudgetMode && (
                     <div className="text-xs text-muted-foreground/60 mt-2">
-                      ~${Math.round(data.budgetMin / (data.adults || 1)).toLocaleString()} – ${Math.round(data.budgetMax / (data.adults || 1)).toLocaleString()} per person
+                      ~${Math.round(data.budgetMin / (data.adults || 1)).toLocaleString()} - ${Math.round(data.budgetMax / (data.adults || 1)).toLocaleString()} per person
                     </div>
                   )}
                   <div className="text-xs text-muted-foreground/60 mt-2">
@@ -2056,12 +2060,12 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
               )}
             </div>
             {data.vibes.length === 0 && (
-              <p className="text-center text-[10px] text-muted-foreground/40 uppercase tracking-wider">No vibe selected — we'll show a general mix of top attractions</p>
+              <p className="text-center text-[10px] text-muted-foreground/40 uppercase tracking-wider">No vibe selected - we'll show a general mix of top attractions</p>
             )}
           </div>
         );
 
-      // Step 9 — Review
+      // Step 9 - Review
       case 8:
         return (
           <div className="space-y-6">
@@ -2072,10 +2076,22 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                 { label: 'Travelers', value: `${data.adults} Adult${data.adults > 1 ? 's' : ''}`, sub: data.children > 0 ? `${data.children} Child${data.children > 1 ? 'ren' : ''}` : 'No children' },
                 {
                   label: 'Budget',
-                  value: data.budgetMode === 'total' ? `$${data.totalBudget.toLocaleString()}` : `$${(data.flightBudget + data.hotelBudget + data.transportBudget + data.dailyExpenseBudget).toLocaleString()}`,
+                  value: data.budgetMode === 'total'
+                    ? `$${data.budgetMin > 0 ? `${data.budgetMin.toLocaleString()} - $${data.budgetMax.toLocaleString()}` : data.totalBudget.toLocaleString()}`
+                    : `$${[
+                        data.includeFlight ? data.flightBudget : 0,
+                        data.includeHotel ? data.hotelBudget : 0,
+                        data.includeTransport ? data.transportBudget : 0,
+                        includePlaceVisits ? data.dailyExpenseBudget : 0,
+                      ].reduce((a, b) => a + b, 0).toLocaleString()}`,
                   sub: data.budgetMode === 'total'
-                    ? 'Fixed main budget'
-                    : `Flight $${data.flightBudget.toLocaleString()} • Hotel $${data.hotelBudget.toLocaleString()} • Transport $${data.transportBudget.toLocaleString()} • Places $${data.dailyExpenseBudget.toLocaleString()}`
+                    ? 'Fixed budget range - AI will stay within this limit'
+                    : [
+                        data.includeFlight ? `Flight $${data.flightBudget.toLocaleString()}` : null,
+                        data.includeHotel ? `Hotel $${data.hotelBudget.toLocaleString()}` : null,
+                        data.includeTransport ? `Transport $${data.transportBudget.toLocaleString()}` : null,
+                        includePlaceVisits ? `Places $${data.dailyExpenseBudget.toLocaleString()}` : null,
+                      ].filter(Boolean).join(' - ') || 'No categories enabled'
                 },
                 { label: 'Vibe', value: data.vibes.length > 0 ? data.vibes.map(v => VIBE_OPTIONS.find(vo => vo.id === v)?.emoji || '').join(' ') : 'General mix', sub: data.vibes.length > 0 ? data.vibes.map(v => VIBE_OPTIONS.find(vo => vo.id === v)?.label || '').join(', ') : 'All attractions' },
                 { label: 'Regions', value: data.destinationStates.length > 0 ? `${data.destinationStates.length} selected` : 'Not limited', sub: data.destinationStates.length > 0 ? data.destinationStates.join(', ') : data.destinationCountry || data.destinationCountryCode || 'Destination country' },

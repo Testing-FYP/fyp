@@ -1649,6 +1649,9 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
   const [activeSection, setActiveSection] = useState('overview');
   const [flightFilter, setFlightFilter] = useState('best');
   const [hotelFilter, setHotelFilter] = useState('recommended');
+  const [flightMaxPrice, setFlightMaxPrice] = useState<number>(10000);
+  const [hotelMaxPrice, setHotelMaxPrice] = useState<number>(10000);
+  const [hotelStarFilter, setHotelStarFilter] = useState<number[]>([]);
   const [placeFilter, setPlaceFilter] = useState('all');
   const [expandedCards, setExpandedCards] = useState<Set<number>>(new Set());
 
@@ -1670,23 +1673,40 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
 
   const flights = useMemo(() => {
     const cabinFiltered = [...sourceFlights].filter(flight => getFlightCabin(flight) === appliedFlightCabin);
-    const matchedFlights = cabinFiltered.length ? cabinFiltered : [...sourceFlights];
-    const pricedFlights = matchedFlights.filter(flight => getFlightPrice(flight) !== null);
+    const cabinMatched = cabinFiltered.length ? cabinFiltered : [...sourceFlights];
+    const cabinFallbackActive = cabinFiltered.length === 0 && sourceFlights.length > 0;
+    const priceFiltered = cabinMatched.filter(flight => {
+      const price = getFlightPrice(flight);
+      return price === null || price <= flightMaxPrice;
+    });
+    const pricedFlights = priceFiltered.filter(flight => getFlightPrice(flight) !== null);
+    if (flightFilter === 'cheapest') return pricedFlights.sort((a, b) => (getFlightPrice(a) ?? Infinity) - (getFlightPrice(b) ?? Infinity));
+    if (flightFilter === 'fastest') return pricedFlights.sort((a, b) => getDurationMinutes(a) - getDurationMinutes(b));
+    if (flightFilter === 'nonstop') return pricedFlights.filter(flight => getFlightEndpoints(flight).segments.length <= 1);
     pricedFlights.sort((a, b) => {
       const aPrice = getFlightPrice(a) ?? Number.POSITIVE_INFINITY;
       const bPrice = getFlightPrice(b) ?? Number.POSITIVE_INFINITY;
       return aPrice - bPrice || getDurationMinutes(a) - getDurationMinutes(b);
     });
-    if (flightFilter === 'cheapest') return pricedFlights.sort((a, b) => (getFlightPrice(a) ?? Infinity) - (getFlightPrice(b) ?? Infinity));
-    if (flightFilter === 'fastest') return pricedFlights.sort((a, b) => getDurationMinutes(a) - getDurationMinutes(b));
-    if (flightFilter === 'nonstop') return pricedFlights.filter(flight => getFlightEndpoints(flight).segments.length <= 1);
     return pricedFlights;
-  }, [sourceFlights, appliedFlightCabin, flightFilter]);
+  }, [sourceFlights, appliedFlightCabin, flightFilter, flightMaxPrice]);
+
+  const flightCabinFallbackActive = useMemo(() => {
+    const cabinFiltered = [...sourceFlights].filter(flight => getFlightCabin(flight) === appliedFlightCabin);
+    return cabinFiltered.length === 0 && sourceFlights.length > 0;
+  }, [sourceFlights, appliedFlightCabin]);
 
   const hotels = useMemo(() => {
-    const starFiltered = [...sourceHotels].filter(hotel => budgetHotelStars.includes(getHotelStarCount(hotel)));
-    const matchedHotels = starFiltered.length ? starFiltered : [...sourceHotels];
-    const withFlags = matchedHotels.map(hotel => ({
+    const starFiltered = hotelStarFilter.length > 0
+      ? [...sourceHotels].filter(hotel => hotelStarFilter.includes(getHotelStarCount(hotel)))
+      : [...sourceHotels].filter(hotel => budgetHotelStars.includes(getHotelStarCount(hotel)));
+    const starMatched = starFiltered.length ? starFiltered : [...sourceHotels];
+    const starFallbackActive = starFiltered.length === 0 && sourceHotels.length > 0;
+    const priceFiltered = starMatched.filter(hotel => {
+      const price = asNumber(hotel?.price ?? hotel?.totalPrice);
+      return !price || price <= hotelMaxPrice;
+    });
+    const withFlags = priceFiltered.map(hotel => ({
       hotel,
       suspicious: isHotelSuspicious(hotel, results, destination),
       distance: getHotelDistanceKm(hotel, results),
@@ -1694,7 +1714,14 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
     if (hotelFilter === 'cheapest') return withFlags.sort((a, b) => (asNumber(a.hotel?.price ?? a.hotel?.totalPrice) ?? Infinity) - (asNumber(b.hotel?.price ?? b.hotel?.totalPrice) ?? Infinity));
     if (hotelFilter === 'location-check') return withFlags.filter(item => item.suspicious);
     return withFlags.sort((a, b) => Number(a.suspicious) - Number(b.suspicious));
-  }, [sourceHotels, budgetHotelStars, results, destination, hotelFilter]);
+  }, [sourceHotels, budgetHotelStars, results, destination, hotelFilter, hotelStarFilter, hotelMaxPrice]);
+
+  const hotelStarFallbackActive = useMemo(() => {
+    const starFiltered = hotelStarFilter.length > 0
+      ? [...sourceHotels].filter(hotel => hotelStarFilter.includes(getHotelStarCount(hotel)))
+      : [...sourceHotels].filter(hotel => budgetHotelStars.includes(getHotelStarCount(hotel)));
+    return starFiltered.length === 0 && sourceHotels.length > 0;
+  }, [sourceHotels, hotelStarFilter, budgetHotelStars]);
 
   const flightBudgetInsight = useMemo(
     () => buildBudgetInsight(flights, Number(plannerData?.flightBudget) || 0, getFlightPrice),
@@ -1858,6 +1885,46 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
                 { id: 'nonstop', label: 'Nonstop' },
               ]}
             />
+            {flightCabinFallbackActive && (
+              <div className="mt-2 rounded-xl bg-amber-500/10 border border-amber-500/20 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+                No {appliedFlightCabin} class flights found — showing all available cabins.
+              </div>
+            )}
+            <div className="mt-3 flex items-center gap-4 flex-wrap">
+              <div className="flex items-center gap-2 text-sm">
+                <span className="font-medium text-foreground">Max price:</span>
+                <span className="font-mono font-bold text-foreground">${flightMaxPrice.toLocaleString()}</span>
+              </div>
+              <input
+                type="range"
+                min={100}
+                max={10000}
+                step={100}
+                value={flightMaxPrice}
+                onChange={e => setFlightMaxPrice(Number(e.target.value))}
+                className="w-48 h-2 bg-muted rounded-lg appearance-none cursor-pointer accent-foreground"
+              />
+              <button
+                type="button"
+                onClick={() => setFlightMaxPrice(10000)}
+                className="text-xs text-muted-foreground hover:text-foreground underline"
+              >
+                Reset
+              </button>
+            </div>
+            {flights.length === 0 && (
+              <div className="mt-6 rounded-3xl border border-border bg-muted/50 p-8 text-center">
+                <p className="text-base font-bold text-foreground">No flights match your filters</p>
+                <p className="mt-1 text-sm text-muted-foreground">Try increasing the max price or resetting your filters.</p>
+                <button
+                  type="button"
+                  onClick={() => { setFlightMaxPrice(10000); setFlightFilter('best'); }}
+                  className="mt-4 rounded-full border border-border bg-background px-4 py-2 text-sm font-bold hover:bg-foreground hover:text-background transition"
+                >
+                  Reset all flight filters
+                </button>
+              </div>
+            )}
           </SectionHeader>
           <BudgetDecisionPanel
             title="Flights"
@@ -1865,9 +1932,7 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
             insight={flightBudgetInsight}
           />
           <BudgetCategoryNotice agent={budgetAgent} categoryKey="flights" />
-          {flightCards.length > 0 ? flightCards : (
-            <BudgetEmptyState icon={PlaneTakeoff} title="No matching flight options" body="No live flight option matched the selected cabin and budget filters." category={budgetAgent?.categories?.flights} />
-          )}
+          {flightCards.length > 0 ? flightCards : null}
         </motion.section>
       )}
 
@@ -1889,6 +1954,76 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
                 { id: 'location-check', label: 'Location Check', count: suspiciousHotelCount },
               ]}
             />
+            {hotelStarFallbackActive && (
+              <div className="mt-2 rounded-xl bg-amber-500/10 border border-amber-500/20 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+                No hotels found for the selected star rating — showing all available hotels.
+              </div>
+            )}
+            <div className="mt-3 flex flex-col gap-3">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-medium text-foreground">Stars:</span>
+                {[1, 2, 3, 4, 5].map(star => (
+                  <button
+                    key={star}
+                    type="button"
+                    onClick={() => setHotelStarFilter(prev =>
+                      prev.includes(star) ? prev.filter(s => s !== star) : [...prev, star]
+                    )}
+                    className={`px-3 py-1 rounded-full text-xs font-bold border transition ${
+                      hotelStarFilter.includes(star)
+                        ? 'bg-foreground text-background border-foreground'
+                        : 'bg-muted text-muted-foreground border-border hover:border-foreground'
+                    }`}
+                  >
+                    {'★'.repeat(star)}
+                  </button>
+                ))}
+                {hotelStarFilter.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setHotelStarFilter([])}
+                    className="text-xs text-muted-foreground hover:text-foreground underline"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+              <div className="flex items-center gap-4 flex-wrap">
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="font-medium text-foreground">Max price/night:</span>
+                  <span className="font-mono font-bold text-foreground">${hotelMaxPrice.toLocaleString()}</span>
+                </div>
+                <input
+                  type="range"
+                  min={50}
+                  max={10000}
+                  step={50}
+                  value={hotelMaxPrice}
+                  onChange={e => setHotelMaxPrice(Number(e.target.value))}
+                  className="w-48 h-2 bg-muted rounded-lg appearance-none cursor-pointer accent-foreground"
+                />
+                <button
+                  type="button"
+                  onClick={() => setHotelMaxPrice(10000)}
+                  className="text-xs text-muted-foreground hover:text-foreground underline"
+                >
+                  Reset
+                </button>
+              </div>
+            </div>
+            {hotels.length === 0 && (
+              <div className="mt-6 rounded-3xl border border-border bg-muted/50 p-8 text-center">
+                <p className="text-base font-bold text-foreground">No hotels match your filters</p>
+                <p className="mt-1 text-sm text-muted-foreground">Try selecting different star ratings or increasing the max price.</p>
+                <button
+                  type="button"
+                  onClick={() => { setHotelMaxPrice(10000); setHotelStarFilter([]); setHotelFilter('recommended'); }}
+                  className="mt-4 rounded-full border border-border bg-background px-4 py-2 text-sm font-bold hover:bg-foreground hover:text-background transition"
+                >
+                  Reset all hotel filters
+                </button>
+              </div>
+            )}
           </SectionHeader>
           <BudgetDecisionPanel
             title="Hotels"
@@ -1918,9 +2053,7 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
                 });
               }}
             />
-          )) : (
-            <BudgetEmptyState icon={Hotel} title="No matching hotel options" body="No live hotel option matched the selected star category and budget filters." category={budgetAgent?.categories?.hotels} />
-          )}
+          )) : null}
         </motion.section>
       )}
 

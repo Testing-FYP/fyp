@@ -267,8 +267,7 @@ export default function Home() {
                   <TripPlannerWizard onComplete={handleComplete} isLoading={isLoading} initialStep={editStep} initialData={plannerData || undefined} onBudgetOverviewChange={setBudgetOverview} />
                 </div>
                 {budgetOverview?.isDetailedMode ? (
-                  <div className="hidden xl:block">
-                    <div className="w-72 sticky top-28 self-start rounded-3xl border border-border bg-muted/95 backdrop-blur-sm p-7 space-y-3 shadow-xl">
+                  <div className="hidden xl:block sticky top-28 self-start w-72 rounded-3xl border border-border bg-muted/95 backdrop-blur-sm p-7 space-y-3 shadow-xl">
                       <div className="text-xs uppercase tracking-[0.2em] font-bold text-muted-foreground mb-3">Budget Overview</div>
                       {[
                         { label: 'Flights', value: budgetOverview.flights },
@@ -276,7 +275,7 @@ export default function Home() {
                         { label: 'Transport', value: budgetOverview.transport },
                         { label: 'Places', value: budgetOverview.places },
                       ].map(row => (
-                        <div key={row.label} className="flex justify-between items-center text-base font-medium">
+                        <div key={row.label} className={`flex justify-between items-center text-base font-medium ${row.value === 0 ? 'opacity-35 line-through' : ''}`}>
                           <span>{row.label}</span>
                           <span className="font-mono font-bold">${row.value.toLocaleString()}</span>
                         </div>
@@ -300,7 +299,6 @@ export default function Home() {
                           Within budget. ${budgetOverview.remaining.toLocaleString()} still unallocated.
                         </div>
                       ) : null}
-                    </div>
                   </div>
                 ) : (
                   <div className="hidden xl:block" />
