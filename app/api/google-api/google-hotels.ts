@@ -20,8 +20,7 @@ export async function searchSerpApiHotels(params: {
     q: params.query,
     check_in_date: params.checkInDate,
     check_out_date: params.checkOutDate,
-    adults: String(params.adults || 2),
-    children: String(params.children || 0),
+    adults: String((params.adults || 2) + (params.children || 0)),
     currency: 'USD',
     hl: 'en',
     gl: (params.countryCode || 'us').toLowerCase(),
@@ -51,7 +50,8 @@ export async function searchSerpApiHotels(params: {
 
   const response = await fetch(`https://serpapi.com/search.json?${searchParams.toString()}`);
   if (!response.ok) {
-    throw new Error(`SerpApi hotel search failed with HTTP ${response.status}`);
+    const errorBody = await response.text();
+    throw new Error(`SerpApi hotel search failed with HTTP ${response.status}: ${errorBody}`);
   }
 
   return response.json();
