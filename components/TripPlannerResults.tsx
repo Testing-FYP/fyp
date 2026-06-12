@@ -12,6 +12,7 @@ import {
   CalendarDays,
   CarFront,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   CircleDollarSign,
   Clock3,
@@ -19,6 +20,7 @@ import {
   Crown,
   ExternalLink,
   Hotel,
+  ImageIcon,
   MapPin,
   PlaneLanding,
   PlaneTakeoff,
@@ -73,6 +75,17 @@ function formatMoney(value: any, fallback = 'Unavailable') {
     minimumFractionDigits: Number.isInteger(amount) ? 0 : 2,
     maximumFractionDigits: Number.isInteger(amount) ? 0 : 2,
   });
+}
+
+function getBudgetComparisonSample(prices: number[]) {
+  const sorted = prices
+    .filter(price => Number.isFinite(price) && price > 0)
+    .sort((a, b) => a - b);
+  if (!sorted.length) return [];
+  if (sorted.length >= 4) {
+    return [sorted[0], sorted[1], sorted[Math.floor(sorted.length / 2)], sorted[sorted.length - 1]];
+  }
+  return sorted;
 }
 
 function formatDate(value: string) {
@@ -280,8 +293,11 @@ function isHotelSuspicious(hotel: any, results: any, destination: string) {
 
 function getHotelImageUrl(image: any) {
   if (!image) return '';
-  if (typeof image === 'string') return image;
-  return image?.thumbnail || image?.original_image || image?.url || '';
+  const url = typeof image === 'string'
+    ? image
+    : image?.thumbnail || image?.original_image || image?.original || image?.serpapi_thumbnail || image?.url || image?.link || '';
+  if (!url || typeof url !== 'string' || url.startsWith('x-raw-image://')) return '';
+  return url.replace(/^http:\/\//i, 'https://');
 }
 
 function Badge({ children, tone = 'neutral', strong = false }: { children: ReactNode; tone?: 'neutral' | 'amber' | 'green' | 'red' | 'blue'; strong?: boolean }) {
@@ -313,12 +329,28 @@ function getHotelStarCount(hotel: any) {
 
 function getHotelStayPrice(hotel: any, plannerData: any) {
   const total = asNumber(hotel?.totalPrice ?? hotel?.total_price ?? hotel?.total);
-  if (total !== null) return total;
   const nightly = asNumber(hotel?.price ?? hotel?.nightlyPrice ?? hotel?.rate_per_night);
-  if (nightly === null) return null;
   const nights = Math.max(1, Number(plannerData?.nights) || 1);
   const apartments = Math.max(1, Number(plannerData?.hotelRooms) || 1);
-  return nightly * nights * apartments;
+  const stayMultiplier = nights * apartments;
+  if (total !== null) {
+    if (nightly !== null && stayMultiplier > 1 && total <= nightly) {
+      return nightly * stayMultiplier;
+    }
+    return total;
+  }
+  if (nightly === null) return null;
+  return nightly * stayMultiplier;
+}
+
+function getHotelNightlyPrice(hotel: any, plannerData: any) {
+  const nightly = asNumber(hotel?.price ?? hotel?.nightlyPrice ?? hotel?.rate_per_night);
+  if (nightly !== null) return nightly;
+  const total = asNumber(hotel?.totalPrice ?? hotel?.total_price ?? hotel?.total);
+  if (total === null) return null;
+  const nights = Math.max(1, Number(plannerData?.nights) || 1);
+  const apartments = Math.max(1, Number(plannerData?.hotelRooms) || 1);
+  return total / (nights * apartments);
 }
 
 function normalizeBudgetFlightCabins(plannerData: any) {
@@ -327,14 +359,6 @@ function normalizeBudgetFlightCabins(plannerData: any) {
     : [];
   if (selected.length) return selected;
   return [plannerData?.cabinClass === 'business' ? 'business' : 'economy'];
-}
-
-function normalizeBudgetHotelStars(plannerData: any) {
-  const selected = Array.isArray(plannerData?.budgetHotelStars)
-    ? plannerData.budgetHotelStars.map((star: any) => Math.round(Number(star))).filter((star: number) => star >= 1 && star <= 5)
-    : [];
-  if (selected.length) return selected;
-  return [Math.max(1, Math.min(5, Math.round(Number(plannerData?.hotelStars) || 3)))];
 }
 
 function buildBudgetInsight(items: any[], budget: number, getPrice: (item: any) => number | null) {
@@ -467,15 +491,18 @@ export function WarningBanner({ title, children }: { title: string; children: Re
 }
 
 function BudgetFitPanel({ agent, backgroundImage = '', plannerData }: { agent: any; backgroundImage?: string; plannerData?: any }) {
-  if (!agent?.categories) return null;
-  const categories = Object.values(agent.categories).filter((category: any) => category?.status !== 'disabled') as any[];
+  const categories = agent?.categories
+    ? Object.values(agent.categories).filter((category: any) => category?.status !== 'disabled') as any[]
+    : [];
+  const [activeCategoryIndex, setActiveCategoryIndex] = useState(0);
+  if (!categories.length) return null;
   const hasBudgetProblem = categories.some((category: any) => ['over_budget', 'no_budget'].includes(category?.status));
   const allFit = categories.length > 0 && categories.every((category: any) => category?.status === 'fit');
   const panelTone = hasBudgetProblem ? 'red' : allFit ? 'green' : 'blue';
-  const panelTitle = hasBudgetProblem ? 'Budget needs attention' : 'Budget fits your trip';
+  const panelTitle = 'Budget summary comparison with real data';
   const panelCopy = hasBudgetProblem
-    ? 'Some real prices are above the budget you selected. Review the highlighted categories before choosing options.'
-    : agent.summary || 'Real prices are checked against your budget with a 10% tolerance.';
+    ? 'Your selected budget is compared with the real option selected from the matching flight cabin, hotel star rating, transport, and daily plan data.'
+    : 'Your selected budget is aligned with the matching real options found for this trip.';
   const StatusIcon = hasBudgetProblem ? AlertTriangle : BadgeCheck;
   const categoryIcons: Record<string, any> = {
     flights: PlaneTakeoff,
@@ -483,6 +510,120 @@ function BudgetFitPanel({ agent, backgroundImage = '', plannerData }: { agent: a
     transport: Bus,
     dailyExpenses: MapPin,
   };
+  const categoryContext = (category: any) => {
+    if (category.key === 'flights') {
+      const cabins = normalizeBudgetFlightCabins(plannerData).map(cabinLabel).join(' + ');
+      return cabins || category.usageDetail || 'Selected cabin';
+    }
+    if (category.key === 'hotels') {
+      const stars = Array.isArray(plannerData?.budgetHotelStars)
+        ? plannerData.budgetHotelStars.map((star: any) => Math.round(Number(star))).filter((star: number) => star >= 1 && star <= 5)
+        : [];
+      const selectedStars = stars.length ? stars : [Math.max(1, Math.min(5, Math.round(Number(plannerData?.hotelStars) || 3)))];
+      return `${selectedStars.sort((a: number, b: number) => a - b).join(', ')}-star selected`;
+    }
+    return category.usageDetail || 'Selected trip data';
+  };
+  const getFrontendTransportStats = () => {
+    const options = Array.isArray(plannerData?.transportOptions)
+      ? plannerData.transportOptions.filter((option: any) => option?.available !== false)
+      : [];
+    if (!options.length) return null;
+
+    const selections = plannerData?.transportBudgetSelections || {};
+    const selectedOptions = options.filter((option: any) => selections[getTransportTypeKey(option)]?.selected === true);
+    const sourceOptions = selectedOptions.length ? selectedOptions : [];
+    const nights = Math.max(1, Number(plannerData?.nights) || 1);
+    const prices = sourceOptions
+      .map((option: any) => {
+        const quantity = Math.max(1, Number(selections[getTransportTypeKey(option)]?.quantity) || 1);
+        return getTransportTripPrice(option, quantity, nights);
+      })
+      .filter((price: number | null): price is number => price !== null);
+    const total = prices.length ? prices.reduce((sum: number, price: number) => sum + price, 0) : null;
+
+    return {
+      total,
+      prices,
+      shownCount: sourceOptions.length,
+      originalCount: options.length,
+    };
+  };
+  const realDataValue = (category: any) => {
+    if (category?.key === 'transport') {
+      const transportStats = getFrontendTransportStats();
+      if (transportStats?.total !== null && transportStats?.total !== undefined) {
+        return transportStats.total;
+      }
+    }
+    const value = asNumber(category?.selectedPriceStats?.average ?? category?.selectedTotalPrice ?? category?.cheapestPrice);
+    if (category?.comparisonBasis === 'trip_total') {
+      if (!category?.selectedPriceStats && value !== null && ['flights', 'hotels', 'transport'].includes(category?.key) && Number(category?.shownCount) > 1) {
+        const cheapest = asNumber(category?.cheapestPrice);
+        if (cheapest !== null && value > cheapest * 1.5) return cheapest;
+      }
+      if (!category?.selectedPriceStats && value !== null && category?.key === 'dailyExpenses' && Number(category?.shownCount) > 1) {
+        return Math.round(value / Number(category.shownCount));
+      }
+      return value;
+    }
+    if (category?.key === 'hotels' && value !== null) {
+      const nights = Math.max(1, Number(plannerData?.nights) || 1);
+      const apartments = Math.max(1, Number(plannerData?.hotelRooms) || 1);
+      const stayMultiplier = nights * apartments;
+      const budget = asNumber(category?.budget);
+      const likelyNightlyAgainstTotalBudget = stayMultiplier > 1 && (!budget || value <= (budget / stayMultiplier) * 1.5);
+      return likelyNightlyAgainstTotalBudget ? value * stayMultiplier : value;
+    }
+    if ((category?.key === 'transport' || category?.key === 'dailyExpenses') && value !== null) {
+      const nights = Math.max(1, Number(plannerData?.nights) || 1);
+      const budget = asNumber(category?.budget);
+      const likelyDailyAgainstTotalBudget = nights > 1 && (!budget || value <= (budget / nights) * 1.5);
+      return likelyDailyAgainstTotalBudget ? value * nights : value;
+    }
+    return value;
+  };
+  const realDataLabel = (category: any) => {
+    if (category?.key === 'hotels') return 'Real total stay selected';
+    if (category?.key === 'transport') return 'Real trip transport selected';
+    if (category?.key === 'dailyExpenses') return 'Avg vibe spend selected';
+    return 'Real data selected';
+  };
+  const realDataRangeLabel = (category: any) => {
+    if (category?.key === 'transport') {
+      const transportStats = getFrontendTransportStats();
+      if (transportStats?.prices?.length) {
+        return `Total ${transportStats.prices.map((price: number) => formatMoney(price)).join(' + ')}`;
+      }
+    }
+    const samplePrices = Array.isArray(category?.selectedPriceStats?.samplePrices)
+      ? category.selectedPriceStats.samplePrices.map((price: any) => asNumber(price)).filter((price: number | null): price is number => price !== null)
+      : [];
+    if (samplePrices.length > 1) {
+      return `Sampled ${samplePrices.map((price: number) => formatMoney(price)).join(', ')}`;
+    }
+    const min = asNumber(category?.selectedPriceStats?.min);
+    const max = asNumber(category?.selectedPriceStats?.max);
+    const count = Number(category?.selectedPriceStats?.count || 0);
+    if (min === null || max === null || count <= 1) return '';
+    return `Range ${formatMoney(min)} - ${formatMoney(max)}`;
+  };
+  const realDataMatchLabel = (category: any) => {
+    if (category?.key === 'transport') {
+      const transportStats = getFrontendTransportStats();
+      if (transportStats) {
+        return `${transportStats.shownCount}/${transportStats.originalCount} selected from budget transport`;
+      }
+    }
+    if (category.shownCount || category.originalCount) {
+      return `${category.shownCount}/${category.originalCount} matched from real data`;
+    }
+    return '';
+  };
+  const safeCategoryIndex = Math.min(activeCategoryIndex, categories.length - 1);
+  const activeCategory = categories[safeCategoryIndex];
+  const goPreviousCategory = () => setActiveCategoryIndex(index => (index - 1 + categories.length) % categories.length);
+  const goNextCategory = () => setActiveCategoryIndex(index => (index + 1) % categories.length);
 
   return (
     <motion.section
@@ -522,68 +663,128 @@ function BudgetFitPanel({ agent, backgroundImage = '', plannerData }: { agent: a
               <StatusIcon className="h-7 w-7" />
             </div>
             <div>
-              <p className="small-caps">Budget Fit Agent</p>
+              <p className="small-caps">Real Data Check</p>
               <h2 className="mt-2 text-3xl title-text text-foreground">{panelTitle}</h2>
               <p className="mt-2 max-w-3xl text-sm leading-relaxed text-muted-foreground">
                 {panelCopy}
               </p>
             </div>
           </div>
-          <Badge tone={panelTone as any} strong>{agent.tolerancePercent || 10}% tolerance</Badge>
+          <Badge tone={panelTone as any} strong>{hasBudgetProblem ? 'Review needed' : 'Aligned'}</Badge>
         </div>
 
-        <div className="mt-5 grid gap-3 md:grid-cols-2">
-          {categories.map((category: any) => {
+        <div className="mt-6">
+          {(() => {
+            const category = activeCategory;
             const overBudget = category.status === 'over_budget';
             const noBudget = category.status === 'no_budget';
             const tone = overBudget ? 'red' : noBudget ? 'amber' : category.status === 'fit' ? 'green' : 'neutral';
             const Icon = categoryIcons[category.key] || CircleDollarSign;
-            const displayCategory = withBudgetScopeMetrics(category, plannerData);
+            const realValue = realDataValue(category);
+            const selectedBudgetValue = asNumber(category.budget) || 0;
+            const realChartValue = realValue || 0;
+            const chartMax = Math.max(selectedBudgetValue, realChartValue, 1);
+            const selectedHeight = selectedBudgetValue ? Math.max(8, Math.round((selectedBudgetValue / chartMax) * 100)) : 0;
+            const realHeight = realChartValue ? Math.max(8, Math.round((realChartValue / chartMax) * 100)) : 0;
+
             return (
-              <div key={category.key} className="relative overflow-hidden rounded-2xl border border-border bg-background/85 p-4 shadow-sm backdrop-blur">
-                <div className={`absolute inset-y-0 left-0 w-1 ${tone === 'red' ? 'bg-red-500' : tone === 'amber' ? 'bg-amber-500' : tone === 'green' ? 'bg-emerald-500' : 'bg-muted-foreground'}`} />
-                <div className="flex items-start justify-between gap-3">
+              <div className="rounded-2xl border border-border bg-background/75 p-4">
+                <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                   <div className="flex items-center gap-3">
                     <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-border bg-muted text-foreground">
                       <Icon className="h-5 w-5" />
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <p className="text-sm font-black text-foreground">{category.label}</p>
-                      <p className="mt-1 text-xs font-semibold text-muted-foreground">
-                        {category.shownCount}/{category.originalCount} option{category.originalCount === 1 ? '' : 's'} shown
-                      </p>
-                      {category.usageDetail ? (
-                        <p className="mt-1 text-[11px] font-semibold text-muted-foreground">{category.usageDetail}</p>
-                      ) : null}
+                      <p className="mt-1 text-xs font-semibold text-muted-foreground">{categoryContext(category)}</p>
                     </div>
                   </div>
-                  <Badge tone={tone as any} strong>{String(category.status || 'checked').replace(/_/g, ' ')}</Badge>
-                </div>
-                {Array.isArray(displayCategory.scopeMetrics) && displayCategory.scopeMetrics.length ? (
-                  <BudgetScopeRows category={displayCategory} />
-                ) : (
-                  <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                    <MiniMetric label={category.budgetLabel || 'Budget'} value={formatMoney(category.budget)} />
-                    <MiniMetric label={category.cheapestLabel || 'Cheapest'} value={formatMoney(category.cheapestPrice)} />
-                    <MiniMetric label={category.upperLabel || 'Upper'} value={formatMoney(category.upperBound)} />
-                    <MiniMetric
-                      label={category.selectedLabel || 'Selected'}
-                      value={formatMoney(category.selectedTotalPrice ?? category.unitCheapest ?? category.cheapestPrice)}
-                    />
+
+                  <div className="flex items-center justify-between gap-3 lg:justify-end">
+                    <button
+                      type="button"
+                      onClick={goPreviousCategory}
+                      className="flex h-10 w-10 items-center justify-center rounded-full border border-border bg-card text-muted-foreground transition hover:border-foreground/30 hover:text-foreground"
+                      aria-label="Previous budget category"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </button>
+                    <Badge tone={tone as any} strong>{String(category.status || 'checked').replace(/_/g, ' ')}</Badge>
+                    <button
+                      type="button"
+                      onClick={goNextCategory}
+                      className="flex h-10 w-10 items-center justify-center rounded-full border border-border bg-card text-muted-foreground transition hover:border-foreground/30 hover:text-foreground"
+                      aria-label="Next budget category"
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </button>
                   </div>
-                )}
-                {!Array.isArray(displayCategory.scopeMetrics) && category.unitLabel && (category.unitBudget || category.unitCheapest) ? (
-                  <p className="mt-3 rounded-xl border border-border bg-card/70 px-3 py-2 text-xs font-semibold text-muted-foreground">
-                    {category.unitBudget ? `${formatMoney(category.unitBudget)} budget` : 'Budget unavailable'}
-                    {category.unitCheapest ? ` · ${formatMoney(category.unitCheapest)} cheapest` : ''}
-                    {' '}
-                    {category.unitLabel}
-                  </p>
-                ) : null}
+                </div>
+
+                <div className="mb-4 flex items-center justify-center gap-2">
+                  {categories.map((item: any, index: number) => (
+                    <button
+                      key={item.key || item.label}
+                      type="button"
+                      onClick={() => setActiveCategoryIndex(index)}
+                      className={`h-2 rounded-full transition-all ${
+                        index === safeCategoryIndex ? 'w-8 bg-foreground' : 'w-2 bg-muted-foreground/35 hover:bg-muted-foreground/60'
+                      }`}
+                      aria-label={`Show ${item.label} budget category`}
+                    />
+                  ))}
+                </div>
+
+                <div className="rounded-2xl border border-border bg-card/80 p-4">
+                  <div className="relative h-48 overflow-hidden rounded-xl border border-border bg-background/70 px-5 pb-8 pt-5">
+                    <div className="absolute inset-x-0 top-5 border-t border-border/70" />
+                    <div className="absolute inset-x-0 top-[35%] border-t border-border/60" />
+                    <div className="absolute inset-x-0 top-[65%] border-t border-border/60" />
+                    <div className="absolute inset-x-0 bottom-8 border-t border-border/80" />
+
+                    <div className="relative z-10 grid h-full grid-cols-2 items-end gap-8">
+                      <div className="flex h-full flex-col items-center justify-end gap-2">
+                        <p className="text-center text-sm font-black text-foreground">{formatMoney(selectedBudgetValue)}</p>
+                        <div className="flex h-28 w-full items-end justify-center">
+                          <div
+                            className="w-10 rounded-t-lg bg-sky-500 shadow-[0_0_24px_rgba(14,165,233,0.22)] transition-all"
+                            style={{ height: `${selectedHeight}%` }}
+                          />
+                        </div>
+                        <p className="text-center text-[10px] font-black uppercase tracking-[0.12em] text-muted-foreground">Selected budget</p>
+                      </div>
+
+                      <div className="flex h-full flex-col items-center justify-end gap-2">
+                        <p className="text-center text-sm font-black text-foreground">{realValue ? formatMoney(realValue) : 'Unavailable'}</p>
+                        <div className="flex h-28 w-full items-end justify-center">
+                          <div
+                            className={`w-10 rounded-t-lg shadow-[0_0_24px_rgba(16,185,129,0.22)] transition-all ${
+                              overBudget ? 'bg-red-500' : noBudget ? 'bg-amber-500' : 'bg-emerald-500'
+                            }`}
+                            style={{ height: `${realHeight}%` }}
+                          />
+                        </div>
+                        <p className="text-center text-[10px] font-black uppercase tracking-[0.12em] text-muted-foreground">{realDataLabel(category)}</p>
+                      </div>
+                    </div>
+                  </div>
+                  {realDataMatchLabel(category) ? (
+                    <p className="mt-3 text-xs font-semibold text-muted-foreground">
+                      {realDataMatchLabel(category)}
+                      {realDataRangeLabel(category) ? ` | ${realDataRangeLabel(category)}` : ''}
+                    </p>
+                  ) : null}
+                </div>
               </div>
             );
-          })}
+          })()}
         </div>
+
+        {agent.summary ? (
+          <p className="mt-4 rounded-2xl border border-border bg-background/70 px-4 py-3 text-sm leading-relaxed text-muted-foreground">
+            {agent.summary}
+          </p>
+        ) : null}
       </div>
     </motion.section>
   );
@@ -594,7 +795,7 @@ function withBudgetScopeMetrics(category: any, plannerData?: any) {
   if (!['hotels', 'transport', 'dailyExpenses'].includes(category?.key)) return category;
 
   const nights = Math.max(1, asNumber(category?.nights ?? plannerData?.nights) || 1);
-  const rooms = Math.max(1, asNumber(plannerData?.hotelRooms) || 1);
+  const rooms = Math.max(1, Number(plannerData?.hotelRooms) || 1);
   const budget = asNumber(category?.budget);
   const cheapest = asNumber(category?.selectedTotalPrice ?? category?.cheapestPrice);
   const tolerance = asNumber(category?.upperBound) ?? (budget ? Math.round(budget * 1.1) : null);
@@ -888,54 +1089,132 @@ function ReadinessBar({ label, value, dark = false }: { label: string; value: nu
 
 export function BudgetBreakdown({ breakdown, plannerData }: { breakdown: any; plannerData: any }) {
   const items = [
-    { label: 'Flight budget', value: breakdown?.flights ?? plannerData?.flightBudget, color: 'bg-sky-500', icon: PlaneTakeoff, enabled: plannerData?.includeFlight !== false },
-    { label: 'Hotel budget', value: breakdown?.hotels ?? plannerData?.hotelBudget, color: 'bg-violet-500', icon: Hotel, enabled: plannerData?.includeHotel !== false },
-    { label: 'Transport budget', value: breakdown?.transport ?? plannerData?.transportBudget, color: 'bg-amber-500', icon: Bus, enabled: plannerData?.includeTransport !== false },
-    { label: 'Daily expenses', value: breakdown?.dailyExpenses ?? plannerData?.dailyExpenseBudget, color: 'bg-emerald-500', icon: MapPin, enabled: plannerData?.includePlaceVisits !== false },
+    {
+      label: 'Flight',
+      value: breakdown?.flights ?? plannerData?.flightBudget,
+      color: 'oklch(68.5% 0.169 237.323)',
+      swatch: 'bg-sky-500',
+      icon: PlaneTakeoff,
+      enabled: plannerData?.includeFlight !== false,
+    },
+    {
+      label: 'Hotel',
+      value: breakdown?.hotels ?? plannerData?.hotelBudget,
+      color: 'oklch(60.6% 0.25 292.717)',
+      swatch: 'bg-violet-500',
+      icon: Hotel,
+      enabled: plannerData?.includeHotel !== false,
+    },
+    {
+      label: 'Transport',
+      value: breakdown?.transport ?? plannerData?.transportBudget,
+      color: 'oklch(76.9% 0.188 70.08)',
+      swatch: 'bg-amber-500',
+      icon: Bus,
+      enabled: plannerData?.includeTransport !== false,
+    },
+    {
+      label: 'Daily',
+      value: breakdown?.dailyExpenses ?? plannerData?.dailyExpenseBudget,
+      color: 'oklch(69.6% 0.17 162.48)',
+      swatch: 'bg-emerald-500',
+      icon: MapPin,
+      enabled: plannerData?.includePlaceVisits !== false,
+    },
   ].filter(item => item.enabled);
   const allocated = items.reduce((sum, item) => sum + (asNumber(item.value) || 0), 0);
   const total = asNumber(breakdown?.totalBudget ?? plannerData?.totalBudget) || allocated || 0;
+  const circleBase = total || allocated || 1;
+  let cursor = 0;
+  const budgetSegments = items.map(item => {
+    const value = asNumber(item.value) || 0;
+    const start = (cursor / circleBase) * 100;
+    cursor += value;
+    const end = (cursor / circleBase) * 100;
+    return `${item.color} ${start}% ${Math.min(100, end)}%`;
+  });
+  if (total > allocated) {
+    budgetSegments.push(`oklch(92.2% 0 0) ${(allocated / circleBase) * 100}% 100%`);
+  }
+  const budgetGradient = total || allocated
+    ? `conic-gradient(${budgetSegments.join(', ')})`
+    : 'oklch(92.2% 0 0)';
 
   return (
-    <section className="grid gap-4 lg:grid-cols-[0.85fr_1.15fr]">
-      <div className="rounded-3xl border border-border bg-card p-5">
-        <p className="small-caps">Budget Breakdown</p>
-        <div className="mt-4 flex items-end justify-between gap-4">
-          <div>
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-border bg-muted text-foreground">
-              <CircleDollarSign className="h-6 w-6" />
-            </div>
-            <p className="mt-5 text-4xl title-text text-foreground">{formatMoney(total)}</p>
-            <p className="mt-1 text-sm text-muted-foreground">Budget Amount</p>
-          </div>
-          <div className="flex h-28 w-28 items-center justify-center rounded-full border-[14px] border-foreground bg-background text-sm font-black text-foreground">
-            {total ? Math.round((allocated / total) * 100) : 0}%
+    <section className="overflow-hidden rounded-3xl border border-border bg-card p-5 sm:p-6">
+      <div className="grid gap-8 lg:grid-cols-[300px_1fr] lg:items-center">
+        <div>
+          <p className="small-caps">Budget Breakdown</p>
+          <h2 className="mt-2 text-3xl title-text text-foreground">Total budget split</h2>
+          <p className="mt-2 max-w-sm text-sm leading-relaxed text-muted-foreground">
+            One circle shows the full trip budget, divided by flight, hotel, transport, and daily spending.
+          </p>
+          <div className="mt-5 flex flex-wrap gap-2">
+            {items.map(item => (
+              <span key={`key-${item.label}`} className="inline-flex items-center gap-2 rounded-full border border-border bg-background/70 px-3 py-1.5 text-xs font-bold text-muted-foreground">
+                <span className={`h-2 w-2 rounded-full ${item.swatch}`} />
+                {item.label}
+              </span>
+            ))}
           </div>
         </div>
-      </div>
-      <div className="grid gap-3 sm:grid-cols-2">
-        {items.map(item => {
-          const value = asNumber(item.value) || 0;
-          const percent = total ? Math.min(100, Math.round((value / total) * 100)) : 0;
-          const Icon = item.icon;
-          return (
-            <div key={item.label} className="rounded-3xl border border-border bg-card p-4">
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-border bg-muted text-foreground">
-                    <Icon className="h-5 w-5" />
-                  </div>
-                  <p className="text-sm font-black text-foreground">{item.label}</p>
+
+        <div className="grid gap-6 xl:grid-cols-[360px_1fr] xl:items-center">
+          <div className="flex justify-center xl:justify-start">
+            <div className="relative flex h-[300px] w-[300px] items-center justify-center rounded-full p-3 sm:h-[360px] sm:w-[360px]">
+              <div className="absolute inset-0 rounded-full shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08),0_26px_80px_-42px_rgba(0,0,0,0.7)]" style={{ background: budgetGradient }} />
+              <div className="absolute inset-[22px] rounded-full bg-card shadow-[inset_0_0_0_1px_var(--border)] sm:inset-[32px]" />
+
+              <div className="relative flex h-[210px] w-[210px] flex-col items-center justify-center rounded-full px-5 text-center sm:h-[260px] sm:w-[260px]">
+                <div className="flex h-8 w-8 items-center justify-center rounded-full border border-border bg-background/80 text-muted-foreground">
+                  <CircleDollarSign className="h-4 w-4" />
                 </div>
-                <p className="font-black text-foreground">{formatMoney(value)}</p>
+                <p className="mt-3 text-[10px] font-black uppercase tracking-[0.16em] text-muted-foreground">Total Budget</p>
+                <p className="mt-1 text-4xl title-text leading-none text-foreground sm:text-5xl">{formatMoney(total)}</p>
+                <p className="mt-1 text-xs font-bold text-muted-foreground">
+                  {total ? Math.round((allocated / total) * 100) : 0}% allocated
+                </p>
               </div>
-              <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted">
-                <div className={`h-full rounded-full ${item.color}`} style={{ width: `${percent}%` }} />
-              </div>
-              <p className="mt-2 text-xs font-medium text-muted-foreground">{percent}% of total budget</p>
             </div>
-          );
-        })}
+          </div>
+
+          <div className="grid gap-3">
+            {items.map(item => {
+              const value = asNumber(item.value) || 0;
+              const percent = total ? Math.round((value / total) * 100) : 0;
+              return (
+                <div key={item.label} className="rounded-2xl border border-border bg-background/70 p-4">
+                  <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-center">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <span className={`mt-1 h-3 w-3 shrink-0 rounded-full ${item.swatch}`} />
+                      <div className="min-w-0">
+                        <p className="text-sm font-black text-foreground">{item.label}</p>
+                        <p className="mt-1 text-xs font-semibold text-muted-foreground">{percent}% of total</p>
+                      </div>
+                    </div>
+                    <p className="text-sm font-black text-foreground sm:text-right">{formatMoney(value)}</p>
+                  </div>
+                  <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted">
+                    <div className={`h-full rounded-full ${item.swatch}`} style={{ width: `${Math.min(100, percent)}%` }} />
+                  </div>
+                </div>
+              );
+            })}
+            {total > allocated ? (
+              <div className="rounded-2xl border border-dashed border-border bg-background/50 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-black text-foreground">Unallocated</p>
+                    <p className="mt-1 text-xs font-semibold text-muted-foreground">
+                      {Math.round(((total - allocated) / total) * 100)}% remaining
+                    </p>
+                  </div>
+                  <p className="text-sm font-black text-foreground">{formatMoney(total - allocated)}</p>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
       </div>
     </section>
   );
@@ -1273,7 +1552,38 @@ function Amenity({ enabled, icon: Icon, label }: { enabled: boolean; icon: any; 
   );
 }
 
-export function HotelCard({ hotel, suspicious, distanceKm, onAddToTrip, website }: { hotel: any; suspicious: boolean; distanceKm: number | null; onAddToTrip?: () => void; website?: string }) {
+function HotelPhotoTile({ src, fallbackSrc, alt, featured = false }: { src: string; fallbackSrc?: string; alt: string; featured?: boolean }) {
+  const [currentSrc, setCurrentSrc] = useState(src || fallbackSrc || '');
+  const [failed, setFailed] = useState(!src && !fallbackSrc);
+
+  return (
+    <div className={`relative overflow-hidden rounded-2xl border border-border bg-background/60 ${featured ? 'col-span-2 row-span-2' : ''}`}>
+      {currentSrc && !failed ? (
+        <img
+          src={currentSrc}
+          alt={alt}
+          className="h-full w-full object-cover"
+          referrerPolicy="no-referrer"
+          loading={featured ? 'eager' : 'lazy'}
+          onError={() => {
+            if (fallbackSrc && currentSrc !== fallbackSrc) {
+              setCurrentSrc(fallbackSrc);
+              return;
+            }
+            setFailed(true);
+          }}
+        />
+      ) : (
+        <div className="flex h-full flex-col items-start justify-end gap-2 p-3 text-xs font-bold text-muted-foreground">
+          <ImageIcon className="h-5 w-5" />
+          Photo unavailable
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function HotelCard({ hotel, suspicious, distanceKm, onAddToTrip, website, fallbackImage }: { hotel: any; suspicious: boolean; distanceKm: number | null; onAddToTrip?: () => void; website?: string; fallbackImage?: string }) {
   const photos = Array.isArray(hotel?.images) ? hotel.images : [];
   const amenities = Array.isArray(hotel?.amenities) ? hotel.amenities.slice(0, 6) : [];
   const nearby = Array.isArray(hotel?.nearbyPlaces) ? hotel.nearbyPlaces.slice(0, 3) : [];
@@ -1289,21 +1599,13 @@ export function HotelCard({ hotel, suspicious, distanceKm, onAddToTrip, website 
             {[0, 1, 2, 3].map(i => {
               const imageUrl = getHotelImageUrl(photos[i]);
               return (
-              <div key={i} className={`relative overflow-hidden rounded-2xl border border-border bg-background/60 ${i === 0 ? 'col-span-2 row-span-2' : ''}`}>
-                {imageUrl ? (
-                  <img
-                    src={imageUrl}
-                    alt={`${hotel?.name || 'Hotel'} photo ${i + 1}`}
-                    className="h-full w-full object-cover"
-                    referrerPolicy="no-referrer"
-                    loading="lazy"
-                  />
-                ) : (
-                  <div className="flex h-full items-end p-3 text-xs font-bold text-muted-foreground">
-                    Photo placeholder
-                  </div>
-                )}
-              </div>
+                <HotelPhotoTile
+                  key={`${imageUrl || 'missing'}-${i}`}
+                  src={imageUrl}
+                  fallbackSrc={fallbackImage}
+                  alt={`${hotel?.name || 'Hotel'} photo ${i + 1}`}
+                  featured={i === 0}
+                />
               );
             })}
           </div>
@@ -1408,9 +1710,39 @@ function getTransportDetailItems(transport: any) {
   ].filter(Boolean).slice(0, 3) as { label: string; value: string }[];
 }
 
-export function TransportCard({ transport, selected = false }: { transport: any; selected?: boolean }) {
+function getTransportUnitLabel(type: string, quantity: number) {
+  if (type === 'rental_car') return quantity === 1 ? 'car' : 'cars';
+  if (type === 'taxi' || type === 'rideshare_uber') return quantity === 1 ? 'ride' : 'rides';
+  return quantity === 1 ? 'ticket' : 'tickets';
+}
+
+function getTransportTripPrice(transport: any, quantity = 1, nights = 1) {
+  const unitPrice = asNumber(transport?.estimatedPrice ?? transport?.price ?? transport?.totalPrice);
+  if (unitPrice === null) return null;
+  return unitPrice * Math.max(1, quantity) * Math.max(1, nights);
+}
+
+export function TransportCard({
+  transport,
+  selected = false,
+  quantity = 1,
+  nights = 1,
+  onAddToCart,
+}: {
+  transport: any;
+  selected?: boolean;
+  quantity?: number;
+  nights?: number;
+  onAddToCart?: () => void;
+}) {
   const icon = getTransportIcon(transport?.id || transport?.transportType || transport?.type);
   const detailItems = getTransportDetailItems(transport);
+  const type = getTransportTypeKey(transport);
+  const safeQuantity = Math.max(1, Number(quantity) || 1);
+  const safeNights = Math.max(1, Number(nights) || 1);
+  const unitLabel = getTransportUnitLabel(type, safeQuantity);
+  const tripPrice = getTransportTripPrice(transport, safeQuantity, safeNights);
+  const multiplierLabel = `${safeQuantity} ${unitLabel} × ${safeNights} day${safeNights === 1 ? '' : 's'}`;
 
   return (
     <article className="rounded-3xl border border-border bg-card p-5 shadow-sm">
@@ -1429,24 +1761,31 @@ export function TransportCard({ transport, selected = false }: { transport: any;
             </p>
           </div>
         </div>
-        <div className="md:text-right">
-          <p className="text-3xl title-text text-foreground">{transport?.priceLabel || formatMoney(transport?.estimatedPrice ?? transport?.price ?? 70)}</p>
-          <p className="text-xs font-black uppercase tracking-[0.14em] text-muted-foreground">estimated cost</p>
+        <div className="flex flex-col items-start gap-3 md:items-end md:text-right">
+          <div>
+            <p className="text-3xl title-text text-foreground">{formatMoney(tripPrice ?? transport?.estimatedPrice ?? transport?.price ?? 70)}</p>
+            <p className="text-xs font-black uppercase tracking-[0.14em] text-muted-foreground">estimated trip cost</p>
+            <p className="mt-1 text-xs font-semibold text-muted-foreground">{multiplierLabel}</p>
+          </div>
+          {onAddToCart ? (
+            <button
+              type="button"
+              onClick={onAddToCart}
+              className="inline-flex items-center gap-2 rounded-full border border-border bg-background px-4 py-2 text-xs font-black text-foreground transition hover:border-foreground/30 hover:bg-muted"
+            >
+              <ShoppingCart className="h-4 w-4" />
+              Add to cart
+            </button>
+          ) : null}
         </div>
       </div>
       <p className="mt-5 text-sm leading-relaxed text-muted-foreground">
         {transport?.notes || transport?.travelTimeNotes || 'Check local provider details before booking.'}
       </p>
       <div className="mt-5 grid gap-3 sm:grid-cols-3">
-        {detailItems.length ? detailItems.map(item => (
+        {[...detailItems.slice(0, 2), { label: 'Quantity', value: multiplierLabel }].map(item => (
           <Detail key={item.label} icon={Ticket} label={item.label} value={item.value} />
-        )) : (
-          <>
-            <Detail icon={Clock3} label="Timing" value={transport?.travelTimeNotes || transport?.duration || 'Varies'} />
-            <Detail icon={Ticket} label="Price" value={transport?.priceLabel || 'Varies'} />
-            <Detail icon={MapPin} label="Use case" value={transport?.bestUseCase || 'City travel'} />
-          </>
-        )}
+        ))}
       </div>
     </article>
   );
@@ -1509,6 +1848,10 @@ function getTransportLabel(option: any) {
     detail: (option?.transportType || option?.type || option?.bestUseCase || 'Transport').replace(/_/g, ' '),
     price: asNumber(option?.estimatedPrice ?? option?.price ?? option?.totalPrice),
   };
+}
+
+function getTransportTypeKey(option: any) {
+  return String(option?.id || option?.transportType || option?.type || '').trim();
 }
 
 function getPlaceLabel(place: any) {
@@ -1667,19 +2010,32 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
     ? results.budgetSourceOptions.hotels
     : results?.hotels || [];
   const budgetFlightCabins = normalizeBudgetFlightCabins(plannerData);
-  const budgetHotelStars = normalizeBudgetHotelStars(plannerData);
   const appliedFlightCabin = budgetFlightCabins.includes('business') ? 'business' : budgetFlightCabins[0] || 'economy';
-  const appliedHotelStar = budgetHotelStars.length ? Math.max(...budgetHotelStars) : 0;
 
-  const flights = useMemo(() => {
+  const cabinMatchedFlights = useMemo(() => {
     const cabinFiltered = [...sourceFlights].filter(flight => getFlightCabin(flight) === appliedFlightCabin);
-    const cabinMatched = cabinFiltered.length ? cabinFiltered : [...sourceFlights];
-    const cabinFallbackActive = cabinFiltered.length === 0 && sourceFlights.length > 0;
-    const priceFiltered = cabinMatched.filter(flight => {
+    return cabinFiltered.length ? cabinFiltered : [...sourceFlights];
+  }, [sourceFlights, appliedFlightCabin]);
+
+  const priceFilteredFlights = useMemo(() => {
+    return cabinMatchedFlights.filter(flight => {
       const price = getFlightPrice(flight);
       return price === null || price <= flightMaxPrice;
     });
-    const pricedFlights = priceFiltered.filter(flight => getFlightPrice(flight) !== null);
+  }, [cabinMatchedFlights, flightMaxPrice]);
+
+  const flightTabCounts = useMemo(() => {
+    const priced = priceFilteredFlights.filter(flight => getFlightPrice(flight) !== null);
+    return {
+      best: priced.length,
+      cheapest: priced.length,
+      fastest: priced.length,
+      nonstop: priced.filter(flight => getFlightEndpoints(flight).segments.length <= 1).length,
+    };
+  }, [priceFilteredFlights]);
+
+  const flights = useMemo(() => {
+    const pricedFlights = priceFilteredFlights.filter(flight => getFlightPrice(flight) !== null);
     if (flightFilter === 'cheapest') return pricedFlights.sort((a, b) => (getFlightPrice(a) ?? Infinity) - (getFlightPrice(b) ?? Infinity));
     if (flightFilter === 'fastest') return pricedFlights.sort((a, b) => getDurationMinutes(a) - getDurationMinutes(b));
     if (flightFilter === 'nonstop') return pricedFlights.filter(flight => getFlightEndpoints(flight).segments.length <= 1);
@@ -1689,39 +2045,60 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
       return aPrice - bPrice || getDurationMinutes(a) - getDurationMinutes(b);
     });
     return pricedFlights;
-  }, [sourceFlights, appliedFlightCabin, flightFilter, flightMaxPrice]);
+  }, [priceFilteredFlights, flightFilter]);
 
   const flightCabinFallbackActive = useMemo(() => {
     const cabinFiltered = [...sourceFlights].filter(flight => getFlightCabin(flight) === appliedFlightCabin);
     return cabinFiltered.length === 0 && sourceFlights.length > 0;
   }, [sourceFlights, appliedFlightCabin]);
 
-  const hotels = useMemo(() => {
-    const starFiltered = hotelStarFilter.length > 0
+  const starFilteredHotels = useMemo(() => {
+    return hotelStarFilter.length > 0
       ? [...sourceHotels].filter(hotel => hotelStarFilter.includes(getHotelStarCount(hotel)))
-      : [...sourceHotels].filter(hotel => budgetHotelStars.includes(getHotelStarCount(hotel)));
-    const starMatched = starFiltered.length ? starFiltered : [...sourceHotels];
-    const starFallbackActive = starFiltered.length === 0 && sourceHotels.length > 0;
-    const priceFiltered = starMatched.filter(hotel => {
-      const price = asNumber(hotel?.price ?? hotel?.totalPrice);
-      return !price || price <= hotelMaxPrice;
+      : [...sourceHotels];
+  }, [sourceHotels, hotelStarFilter]);
+
+  const priceFilteredHotels = useMemo(() => {
+    return starFilteredHotels.filter(hotel => {
+      const price = getHotelNightlyPrice(hotel, plannerData);
+      return price === null || price <= hotelMaxPrice;
     });
-    const withFlags = priceFiltered.map(hotel => ({
+  }, [starFilteredHotels, hotelMaxPrice, plannerData]);
+
+  const hotelRows = useMemo(() => {
+    return priceFilteredHotels.map(hotel => ({
       hotel,
       suspicious: isHotelSuspicious(hotel, results, destination),
       distance: getHotelDistanceKm(hotel, results),
     }));
-    if (hotelFilter === 'cheapest') return withFlags.sort((a, b) => (asNumber(a.hotel?.price ?? a.hotel?.totalPrice) ?? Infinity) - (asNumber(b.hotel?.price ?? b.hotel?.totalPrice) ?? Infinity));
+  }, [priceFilteredHotels, results, destination]);
+
+  const hotelTabCounts = useMemo(() => ({
+    recommended: hotelRows.length,
+    cheapest: hotelRows.length,
+    locationCheck: hotelRows.filter(item => item.suspicious).length,
+  }), [hotelRows]);
+
+  const hotelStarCounts = useMemo(() => {
+    const counts: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+    sourceHotels.forEach((hotel: any) => {
+      const star = getHotelStarCount(hotel);
+      const price = getHotelNightlyPrice(hotel, plannerData);
+      if (star >= 1 && star <= 5 && (price === null || price <= hotelMaxPrice)) {
+        counts[star] += 1;
+      }
+    });
+    return counts;
+  }, [sourceHotels, hotelMaxPrice, plannerData]);
+
+  const hotels = useMemo(() => {
+    const withFlags = [...hotelRows];
+    if (hotelFilter === 'cheapest') return withFlags.sort((a, b) => (getHotelNightlyPrice(a.hotel, plannerData) ?? Infinity) - (getHotelNightlyPrice(b.hotel, plannerData) ?? Infinity));
     if (hotelFilter === 'location-check') return withFlags.filter(item => item.suspicious);
     return withFlags.sort((a, b) => Number(a.suspicious) - Number(b.suspicious));
-  }, [sourceHotels, budgetHotelStars, results, destination, hotelFilter, hotelStarFilter, hotelMaxPrice]);
+  }, [hotelRows, hotelFilter, plannerData]);
 
-  const hotelStarFallbackActive = useMemo(() => {
-    const starFiltered = hotelStarFilter.length > 0
-      ? [...sourceHotels].filter(hotel => hotelStarFilter.includes(getHotelStarCount(hotel)))
-      : [...sourceHotels].filter(hotel => budgetHotelStars.includes(getHotelStarCount(hotel)));
-    return starFiltered.length === 0 && sourceHotels.length > 0;
-  }, [sourceHotels, hotelStarFilter, budgetHotelStars]);
+  const hotelStarNoMatches = hotelStarFilter.length > 0 && starFilteredHotels.length === 0 && sourceHotels.length > 0;
 
   const flightBudgetInsight = useMemo(
     () => buildBudgetInsight(flights, Number(plannerData?.flightBudget) || 0, getFlightPrice),
@@ -1739,12 +2116,34 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
     return all;
   }, [results?.placesToVisit, placeFilter]);
 
-  const transportOptions = useMemo(() => [...(results?.transport || [])].filter(option => option?.available !== false), [results?.transport]);
-  const selectedTransportTypes = new Set(results?.selectedTransportTypes || []);
-  const selectedTransport = transportOptions.filter(option => selectedTransportTypes.has(option?.id || option?.transportType || option?.type));
-  const otherTransport = transportOptions.filter(option => !selectedTransportTypes.has(option?.id || option?.transportType || option?.type));
+  const transportOptions = useMemo(() => {
+    const budgetOptions = Array.isArray(plannerData?.transportOptions) ? plannerData.transportOptions : [];
+    const resultOptions = Array.isArray(results?.transport) ? results.transport : [];
+    const sourceOptions = budgetOptions.length ? budgetOptions : resultOptions;
+    return sourceOptions.filter((option: any) => option?.available !== false);
+  }, [plannerData?.transportOptions, results?.transport]);
+  const selectedTransportTypes = useMemo(() => {
+    const selections = plannerData?.transportBudgetSelections || {};
+    const budgetSelectionEntries = Object.entries(selections);
+    const selectedFromBudget = budgetSelectionEntries
+      .filter(([, selection]: [string, any]) => selection?.selected === true)
+      .map(([type]) => type);
+    if (budgetSelectionEntries.length) return new Set(selectedFromBudget);
+    return new Set(results?.selectedTransportTypes || []);
+  }, [plannerData?.transportBudgetSelections, results?.selectedTransportTypes]);
+  const selectedTransport = transportOptions.filter((option: any) => selectedTransportTypes.has(getTransportTypeKey(option)));
+  const otherTransport = transportOptions.filter((option: any) => !selectedTransportTypes.has(getTransportTypeKey(option)));
   const suspiciousHotelCount = hotels.filter(item => item.suspicious).length;
+  const selectedHotelStarContext = hotelStarFilter.length
+    ? `${[...hotelStarFilter].sort((a, b) => a - b).join(', ')}-star filter active`
+    : 'All star ratings shown';
   const travelerCount = Math.max(1, (plannerData?.adults || 0) + (plannerData?.children || 0));
+  const transportNights = Math.max(1, Number(plannerData?.nights) || 1);
+  const getTransportQuantity = (option: any) => {
+    const key = getTransportTypeKey(option);
+    const quantity = plannerData?.transportBudgetSelections?.[key]?.quantity;
+    return Math.max(1, Number(quantity) || 1);
+  };
 
   if (!results) return null;
 
@@ -1772,7 +2171,7 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
   };
 
   const summary = results?.aiSummary;
-  const addToCart = (type: 'flight' | 'hotel', newItem: { title: string; detail: string; price: number | null }) => {
+  const addToCart = (type: 'flight' | 'hotel' | 'transport', newItem: { title: string; detail: string; price: number | null }) => {
     try {
       const raw = localStorage.getItem('travelEliteCart');
       let cart = raw ? JSON.parse(raw) : null;
@@ -1879,10 +2278,10 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
               active={flightFilter}
               onChange={setFlightFilter}
               tabs={[
-                { id: 'best', label: 'Best Value', count: flights.length },
-                { id: 'cheapest', label: 'Cheapest' },
-                { id: 'fastest', label: 'Fastest' },
-                { id: 'nonstop', label: 'Nonstop' },
+                { id: 'best', label: 'Best Value', count: flightTabCounts.best },
+                { id: 'cheapest', label: 'Cheapest', count: flightTabCounts.cheapest },
+                { id: 'fastest', label: 'Fastest', count: flightTabCounts.fastest },
+                { id: 'nonstop', label: 'Nonstop', count: flightTabCounts.nonstop },
               ]}
             />
             {flightCabinFallbackActive && (
@@ -1949,12 +2348,12 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
               active={hotelFilter}
               onChange={setHotelFilter}
               tabs={[
-                { id: 'recommended', label: 'Recommended', count: hotels.length },
-                { id: 'cheapest', label: 'Cheapest' },
-                { id: 'location-check', label: 'Location Check', count: suspiciousHotelCount },
+                { id: 'recommended', label: 'Recommended', count: hotelTabCounts.recommended },
+                { id: 'cheapest', label: 'Cheapest', count: hotelTabCounts.cheapest },
+                { id: 'location-check', label: 'Location Check', count: hotelTabCounts.locationCheck },
               ]}
             />
-            {hotelStarFallbackActive && (
+            {hotelStarNoMatches && (
               <div className="mt-2 rounded-xl bg-amber-500/10 border border-amber-500/20 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
                 No hotels found for the selected star rating — showing all available hotels.
               </div>
@@ -1974,6 +2373,7 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
                         ? 'bg-foreground text-background border-foreground'
                         : 'bg-muted text-muted-foreground border-border hover:border-foreground'
                     }`}
+                    title={`${hotelStarCounts[star]} hotel${hotelStarCounts[star] === 1 ? '' : 's'} at ${star} star${star === 1 ? '' : 's'}`}
                   >
                     {'★'.repeat(star)}
                   </button>
@@ -2027,7 +2427,7 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
           </SectionHeader>
           <BudgetDecisionPanel
             title="Hotels"
-            context={`${[...budgetHotelStars].sort((a, b) => a - b).join(', ') || 'Selected'}-star selected in budget`}
+            context={selectedHotelStarContext}
             insight={hotelBudgetInsight}
           />
           <BudgetCategoryNotice agent={budgetAgent} categoryKey="hotels" />
@@ -2043,6 +2443,7 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
               suspicious={suspicious}
               distanceKm={distance}
               website={hotel?.website || undefined}
+              fallbackImage={fitPanelBackground}
               onAddToTrip={() => {
                 const totalPrice = asNumber(hotel?.totalPrice);
                 const nightlyPrice = asNumber(hotel?.price);
@@ -2067,16 +2468,51 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
         >
           <SectionHeader icon={Bus} eyebrow="Transport" title="Your selected transport" />
           <BudgetCategoryNotice agent={budgetAgent} categoryKey="transport" />
-          {selectedTransport.length ? selectedTransport.map((transport: any, index: number) => (
-            <TransportCard key={`${transport?.id || transport?.transportType || transport?.displayName || 'transport'}-selected-${index}`} transport={transport} selected />
-          )) : (
-            <BudgetEmptyState icon={Bus} title="No Gemini-selected transport fits" body="Gemini did not select a transport option for this budget." category={budgetAgent?.categories?.transport} />
+          {selectedTransport.length ? selectedTransport.map((transport: any, index: number) => {
+            const quantity = getTransportQuantity(transport);
+            const label = getTransportLabel(transport);
+            const type = getTransportTypeKey(transport);
+            const unitLabel = getTransportUnitLabel(type, quantity);
+            const tripPrice = getTransportTripPrice(transport, quantity, transportNights);
+            return (
+              <TransportCard
+                key={`${transport?.id || transport?.transportType || transport?.displayName || 'transport'}-selected-${index}`}
+                transport={transport}
+                selected
+                quantity={quantity}
+                nights={transportNights}
+                onAddToCart={() => addToCart('transport', {
+                  title: label.title,
+                  detail: `${label.detail} · ${quantity} ${unitLabel} × ${transportNights} day${transportNights === 1 ? '' : 's'}`,
+                  price: tripPrice,
+                })}
+              />
+            );
+          }) : (
+            <BudgetEmptyState icon={Bus} title="No budget-selected transport" body="Select a transport option in the budget step to pin it here. Unselected options are listed below." category={budgetAgent?.categories?.transport} />
           )}
 
           <SectionHeader icon={Compass} eyebrow="Alternatives" title="Other available options" />
-          {otherTransport.length ? otherTransport.map((transport: any, index: number) => (
-            <TransportCard key={`${transport?.id || transport?.transportType || transport?.displayName || 'transport'}-other-${index}`} transport={transport} />
-          )) : (
+          {otherTransport.length ? otherTransport.map((transport: any, index: number) => {
+            const quantity = getTransportQuantity(transport);
+            const label = getTransportLabel(transport);
+            const type = getTransportTypeKey(transport);
+            const unitLabel = getTransportUnitLabel(type, quantity);
+            const tripPrice = getTransportTripPrice(transport, quantity, transportNights);
+            return (
+              <TransportCard
+                key={`${transport?.id || transport?.transportType || transport?.displayName || 'transport'}-other-${index}`}
+                transport={transport}
+                quantity={quantity}
+                nights={transportNights}
+                onAddToCart={() => addToCart('transport', {
+                  title: label.title,
+                  detail: `${label.detail} · ${quantity} ${unitLabel} × ${transportNights} day${transportNights === 1 ? '' : 's'}`,
+                  price: tripPrice,
+                })}
+              />
+            );
+          }) : (
             <EmptyState icon={Bus} title="No other options available" body="The selected transport choices cover the currently available destination options." />
           )}
         </motion.section>

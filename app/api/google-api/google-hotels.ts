@@ -33,12 +33,16 @@ export async function searchSerpApiHotels(params: {
 
   if (useVacationRentals) {
     searchParams.set('vacation_rentals', 'true');
+    if (Number(params.bedrooms || 0) > 0) {
+      searchParams.set('bedrooms', String(Math.max(1, Number(params.bedrooms))));
+    }
   }
-  if (Number(params.bedrooms || 0) > 0) {
-    searchParams.set('bedrooms', String(Math.max(1, Number(params.bedrooms))));
-  }
-  if (!useVacationRentals && params.hotelClass) {
-    searchParams.set('hotel_class', String(params.hotelClass));
+  const hotelClassValues = String(params.hotelClass || '')
+    .split(',')
+    .map(value => Number(value.trim()))
+    .filter(value => [2, 3, 4, 5].includes(value));
+  if (!useVacationRentals && hotelClassValues.length) {
+    searchParams.set('hotel_class', hotelClassValues.join(','));
   }
 
   const debugParams = new URLSearchParams(searchParams);

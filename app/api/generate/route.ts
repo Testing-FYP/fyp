@@ -8,6 +8,7 @@ import { searchGoogleImagesLight } from '../google-api/google-images-light';
 
 const LOCATIONIQ_KEY = process.env.LOCATIONIQ_KEY || '';
 const SERPAPI_KEY = process.env.SERPAPI_API_KEY || '';
+const HOTEL_STAR_OPTIONS = [1, 2, 3, 4, 5];
 
 function loadPromptTemplate(fileName: string) {
   return fs.readFileSync(path.join(process.cwd(), 'app', 'ai-prompts', fileName), 'utf8');
@@ -813,7 +814,10 @@ function logHotelProperty(property: any, index: number) {
   }
 }
 
-function mapSerpApiHotelToResult(property: any, fallbackIndex: number, destinationCity: string, nights: number) {
+function mapSerpApiHotelToResult(property: any, fallbackIndex: number, destinationCity: string, nights: number, apartments = 1, roomsPerApartment = 1) {
+  const stayNights = Math.max(1, Number(nights) || 1);
+  const apartmentCount = Math.max(1, Number(apartments) || 1);
+  const bedroomCount = Math.max(1, Number(roomsPerApartment) || 1);
   const offerPrices = Array.isArray(property?.prices)
     ? property.prices.flatMap((price: any) => [price?.extracted_price, price?.price, price?.rate_per_night, price?.total_rate])
     : [];
@@ -835,9 +839,10 @@ function mapSerpApiHotelToResult(property: any, fallbackIndex: number, destinati
     property?.price_total
   );
   const estimatedNightlyPrice = estimateHotelNightlyPrice(property, fallbackIndex);
-  const extractedPrice = nightlyFromProvider ?? (totalFromProvider && nights > 0 ? Math.round(totalFromProvider / nights) : null) ?? estimatedNightlyPrice;
-  const computedTotalRate = Math.round(extractedPrice * Math.max(1, nights || 1));
-  const totalRate = totalFromProvider && totalFromProvider >= extractedPrice ? totalFromProvider : computedTotalRate;
+  const extractedPrice = nightlyFromProvider ?? (totalFromProvider && stayNights > 0 ? Math.round(totalFromProvider / stayNights) : null) ?? estimatedNightlyPrice;
+  const computedTotalRate = Math.round(extractedPrice * stayNights * apartmentCount);
+  const providerTotal = totalFromProvider && totalFromProvider >= extractedPrice ? totalFromProvider : null;
+  const totalRate = providerTotal ? Math.round(providerTotal * apartmentCount) : computedTotalRate;
   const priceSource = nightlyFromProvider !== null || totalFromProvider !== null ? 'provider' : 'estimated';
   const starRating = property?.extracted_hotel_class || property?.hotel_class || 3;
   const hotelClass = formatStarLabel(property?.hotel_class || (typeof starRating === 'number' ? `${starRating}-star hotel` : ''));
@@ -851,6 +856,10 @@ function mapSerpApiHotelToResult(property: any, fallbackIndex: number, destinati
     name: property?.name || `Hotel ${fallbackIndex + 1}`,
     price: extractedPrice,
     totalPrice: totalRate,
+    nights: stayNights,
+    apartments: apartmentCount,
+    roomsPerApartment: bedroomCount,
+    bedsRequested: apartmentCount * bedroomCount,
     priceSource,
     priceLabel: priceSource === 'estimated' ? 'Estimated nightly price' : 'Live nightly price',
     rating: Number(starRating) || 3,
@@ -928,6 +937,18 @@ function isHotelInDestination(
   return keep;
 }
 
+function getSerpApiHotelKey(property: any) {
+  return [
+    property?.property_token,
+    property?.serpapi_property_details_link,
+    property?.name && property?.address ? `${property.name}|${property.address}` : '',
+    property?.name && property?.gps_coordinates
+      ? `${property.name}|${property.gps_coordinates.latitude}|${property.gps_coordinates.longitude}`
+      : '',
+    property?.name,
+  ].filter(Boolean)[0] || '';
+}
+
 type BudgetCategoryKey = 'flights' | 'hotels' | 'transport' | 'dailyExpenses';
 
 type BudgetCategoryDecision = {
@@ -957,6 +978,7 @@ type BudgetFilterInput = {
   flightBudget: number;
   hotelBudget: number;
   transportBudget: number;
+  transportBudgetSelections?: Record<string, { selected?: boolean; quantity?: number }>;
   dailyExpenseBudget: number;
   nights: number;
   hotelRooms?: number;
@@ -1028,22 +1050,61 @@ function getNormalizedFlightPrice(flight: any) {
   return parseFlightPriceValue(flight?.display_price ?? flight?.total_amount ?? flight?.price);
 }
 
+function getBudgetFlightCabin(flight: any) {
+  const firstSegment = flight?.slices?.[0]?.segments?.[0];
+  return String(firstSegment?.cabin_class || flight?.cabin_class || 'economy').toLowerCase();
+}
+
+function getBudgetHotelStarCount(hotel: any) {
+  const candidates = [hotel?.rating, hotel?.hotelClass, hotel?.raw?.hotel_class, hotel?.raw?.extracted_hotel_class];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'number' && Number.isFinite(candidate)) return Math.max(1, Math.min(5, Math.round(candidate)));
+    if (typeof candidate === 'string') {
+      const match = candidate.match(/(\d)/);
+      if (match) return Math.max(1, Math.min(5, Number(match[1])));
+    }
+  }
+  return 0;
+}
+
 function getHotelStayPrice(hotel: any, nights: number, rooms: number) {
   const total = firstHotelPrice(hotel?.totalPrice, hotel?.total_price, hotel?.total);
-  if (total !== null) return total;
   const nightly = firstHotelPrice(hotel?.price, hotel?.nightlyPrice, hotel?.rate_per_night);
+  const stayMultiplier = Math.max(1, nights) * Math.max(1, rooms);
+  if (total !== null) {
+    if (nightly !== null && stayMultiplier > 1 && total <= nightly) {
+      return nightly * stayMultiplier;
+    }
+    return total;
+  }
   if (nightly === null) return null;
-  return nightly * Math.max(1, nights) * Math.max(1, rooms);
+  return nightly * stayMultiplier;
 }
 
-function getTransportOptionPrice(option: any) {
-  return firstHotelPrice(option?.estimatedPrice, option?.price, option?.totalPrice, option?.amount);
+function getTransportMode(option: any) {
+  return String(option?.id || option?.transportType || option?.type || '').trim();
 }
 
-function getPlaceTotalPrice(place: any, travelers: number) {
+function getTransportSelection(input: BudgetFilterInput, option: any) {
+  const type = getTransportMode(option);
+  return type ? input.transportBudgetSelections?.[type] : undefined;
+}
+
+function getTransportQuantity(input: BudgetFilterInput, option: any) {
+  return Math.max(1, Number(getTransportSelection(input, option)?.quantity) || 1);
+}
+
+function getTransportOptionPrice(option: any, nights = 1, quantity = 1) {
+  const price = firstHotelPrice(option?.estimatedPrice, option?.price, option?.totalPrice, option?.amount);
+  if (price === null) return null;
+  const stayDays = Math.max(1, Number(nights) || 1);
+  return price * stayDays * Math.max(1, Number(quantity) || 1);
+}
+
+function getPlaceTotalPrice(place: any, travelers: number, nights = 1) {
   const price = firstHotelPrice(place?.estimatedCost, place?.price, place?.cost);
   if (price === null) return null;
-  return price * Math.max(1, travelers);
+  return price * Math.max(1, travelers) * Math.max(1, Number(nights) || 1);
 }
 
 function summarizeBudgetFlights(flights: any[]) {
@@ -1077,10 +1138,12 @@ function summarizeBudgetHotels(hotels: any[], nights: number, rooms: number) {
   }));
 }
 
-function summarizeBudgetTransport(transport: any[]) {
+function summarizeBudgetTransport(transport: any[], input: BudgetFilterInput) {
   return transport.slice(0, 12).map((option, index) => ({
     index,
-    price: getTransportOptionPrice(option),
+    totalTripPrice: getTransportOptionPrice(option, input.nights, getTransportQuantity(input, option)),
+    unitPrice: firstHotelPrice(option?.estimatedPrice, option?.price, option?.totalPrice, option?.amount),
+    quantity: getTransportQuantity(input, option),
     name: option?.displayName || option?.operator || option?.type || 'Transport option',
     type: option?.id || option?.transportType || option?.type || '',
     priceLabel: option?.priceLabel || '',
@@ -1089,10 +1152,11 @@ function summarizeBudgetTransport(transport: any[]) {
   }));
 }
 
-function summarizeBudgetPlaces(placesToVisit: any[], travelers: number) {
+function summarizeBudgetPlaces(placesToVisit: any[], travelers: number, nights: number) {
   return placesToVisit.slice(0, 16).map((place, index) => ({
     index,
-    totalEstimatedPrice: getPlaceTotalPrice(place, travelers),
+    totalEstimatedPrice: getPlaceTotalPrice(place, travelers, nights),
+    unitEstimatedPrice: firstHotelPrice(place?.estimatedCost, place?.price, place?.cost),
     name: place?.name || 'Place unavailable',
     description: place?.description || '',
     rating: place?.rating || null,
@@ -1154,8 +1218,8 @@ function buildBudgetAiPrompt(input: BudgetFilterInput) {
     REAL_OPTIONS_JSON: JSON.stringify({
       flights: summarizeBudgetFlights(input.flights),
       hotels: summarizeBudgetHotels(input.hotels, input.nights, Math.max(1, Number(input.hotelRooms) || 1)),
-      transport: summarizeBudgetTransport(input.transport),
-      dailyExpenses: summarizeBudgetPlaces(input.placesToVisit, input.travelers),
+      transport: summarizeBudgetTransport(input.transport, input),
+      dailyExpenses: summarizeBudgetPlaces(input.placesToVisit, input.travelers, input.nights),
     }, null, 2),
   });
 }
@@ -1235,8 +1299,8 @@ function getCategoryCheapestPrice(key: BudgetCategoryKey, input: BudgetFilterInp
       : key === 'hotels'
         ? input.hotels.map(hotel => getHotelStayPrice(hotel, input.nights, Math.max(1, Number(input.hotelRooms) || 1)))
         : key === 'transport'
-          ? input.transport.map(getTransportOptionPrice)
-          : input.placesToVisit.map(place => getPlaceTotalPrice(place, input.travelers));
+          ? input.transport.map(option => getTransportOptionPrice(option, input.nights, getTransportQuantity(input, option)))
+          : input.placesToVisit.map(place => getPlaceTotalPrice(place, input.travelers, input.nights));
   const valid = prices.filter((price): price is number => typeof price === 'number' && Number.isFinite(price) && price > 0);
   return valid.length ? Math.min(...valid) : null;
 }
@@ -1244,8 +1308,8 @@ function getCategoryCheapestPrice(key: BudgetCategoryKey, input: BudgetFilterInp
 function getCategoryPriceGetter(key: BudgetCategoryKey, input: BudgetFilterInput) {
   if (key === 'flights') return (item: any) => getNormalizedFlightPrice(item);
   if (key === 'hotels') return (item: any) => getHotelStayPrice(item, input.nights, Math.max(1, Number(input.hotelRooms) || 1));
-  if (key === 'transport') return (item: any) => getTransportOptionPrice(item);
-  return (item: any) => getPlaceTotalPrice(item, input.travelers);
+  if (key === 'transport') return (item: any) => getTransportOptionPrice(item, input.nights, getTransportQuantity(input, item));
+  return (item: any) => getPlaceTotalPrice(item, input.travelers, input.nights);
 }
 
 function deterministicPickByBudget<T>(
@@ -1396,6 +1460,42 @@ function sumPrices<T>(items: T[], getPrice: (item: T) => number | null) {
   return prices.length ? prices.reduce((sum, price) => sum + price, 0) : null;
 }
 
+function lowestPrice<T>(items: T[], getPrice: (item: T) => number | null) {
+  const prices = items
+    .map(getPrice)
+    .filter((price): price is number => typeof price === 'number' && Number.isFinite(price) && price > 0);
+  return prices.length ? Math.min(...prices) : null;
+}
+
+function priceRangeStats<T>(items: T[], getPrice: (item: T) => number | null) {
+  const prices = items
+    .map(getPrice)
+    .filter((price): price is number => typeof price === 'number' && Number.isFinite(price) && price > 0)
+    .sort((a, b) => a - b);
+  if (!prices.length) {
+    return {
+      min: null,
+      max: null,
+      average: null,
+      count: 0,
+    };
+  }
+  const min = prices[0];
+  const max = prices[prices.length - 1];
+  const sampleIndexes = prices.length >= 4
+    ? [0, 1, Math.floor(prices.length / 2), prices.length - 1]
+    : prices.map((_, index) => index);
+  const samplePrices = sampleIndexes.map(index => prices[index]);
+  const sampleAverage = samplePrices.reduce((sum, price) => sum + price, 0) / samplePrices.length;
+  return {
+    min,
+    max,
+    average: Math.round(sampleAverage),
+    count: prices.length,
+    samplePrices,
+  };
+}
+
 function buildBudgetCategoryReport(
   key: BudgetCategoryKey,
   input: BudgetFilterInput,
@@ -1403,21 +1503,31 @@ function buildBudgetCategoryReport(
   originalCount: number,
   shownCount: number,
   enabled = true,
-  selectedTotalPrice: number | null = null
+  selectedTotalPrice: number | null = null,
+  selectedPriceStats: { min: number | null; max: number | null; average: number | null; count: number; samplePrices?: number[] } | null = null
 ) {
   const budgets = buildBudgetAllocations(input);
   const budget = budgets[key];
   const cheapestPrice = getCategoryCheapestPrice(key, input);
   const unitInfo = buildBudgetUnitInfo(key, input, budget, cheapestPrice, selectedTotalPrice);
+  const lowerBound = Math.round(budget * 0.9);
+  const upperBound = Math.round(budget * 1.1);
+  const comparisonStatus = selectedTotalPrice && budget > 0
+    ? selectedTotalPrice <= upperBound ? 'fit' : 'over_budget'
+    : undefined;
   return {
     key,
     label: BUDGET_CATEGORY_LABELS[key],
-    status: enabled ? (decision?.status || 'no_data') : 'disabled',
+    comparisonBasis: 'trip_total',
+    stayDays: Math.max(1, Number(input.nights) || 1),
+    travelers: Math.max(1, Number(input.travelers) || 1),
+    status: enabled ? (comparisonStatus || decision?.status || 'no_data') : 'disabled',
     budget,
-    lowerBound: Math.round(budget * 0.9),
-    upperBound: Math.round(budget * 1.1),
+    lowerBound,
+    upperBound,
     cheapestPrice,
     selectedTotalPrice,
+    selectedPriceStats,
     ...unitInfo,
     originalCount,
     shownCount,
@@ -1432,8 +1542,30 @@ function buildUnavailableBudgetResult(input: BudgetFilterInput, errorMessage: st
   const emptyPick = { items: [], selectedIndexes: [], cheapestPrice: null, selectedTotalPrice: null, shownCount: 0, status: 'no_prices' as const };
   const flightPick = input.includeFlight ? deterministicPickByBudget(input.flights, budgets.flights, getCategoryPriceGetter('flights', input), 9) : emptyPick;
   const hotelPick = input.includeHotel ? deterministicPickByBudget(input.hotels, budgets.hotels, getCategoryPriceGetter('hotels', input), 10) : emptyPick;
-  const transportPick = input.includeTransport ? deterministicPickByBudget(input.transport, budgets.transport, getCategoryPriceGetter('transport', input), 6) : emptyPick;
+  const selectedTransportFromBudget = input.includeTransport && input.transportBudgetSelections
+    ? input.transport.filter((option: any) => getTransportSelection(input, option)?.selected === true)
+    : [];
+  const transportPick = input.includeTransport
+    ? selectedTransportFromBudget.length
+      ? {
+          items: selectedTransportFromBudget,
+          selectedIndexes: selectedTransportFromBudget.map((option: any) => input.transport.indexOf(option)).filter(index => index >= 0),
+          cheapestPrice: lowestPrice(selectedTransportFromBudget, getCategoryPriceGetter('transport', input)),
+          selectedTotalPrice: sumPrices(selectedTransportFromBudget, getCategoryPriceGetter('transport', input)),
+          shownCount: selectedTransportFromBudget.length,
+          status: 'fit' as const,
+        }
+      : deterministicPickByBudget(input.transport, budgets.transport, getCategoryPriceGetter('transport', input), 6)
+    : emptyPick;
   const dailyPick = input.includePlaceVisits ? deterministicPickByBudget(input.placesToVisit, budgets.dailyExpenses, getCategoryPriceGetter('dailyExpenses', input), 12, { cumulative: true }) : emptyPick;
+  const flightStats = input.includeFlight ? priceRangeStats(flightPick.items, getCategoryPriceGetter('flights', input)) : null;
+  const hotelStats = input.includeHotel ? priceRangeStats(hotelPick.items, getCategoryPriceGetter('hotels', input)) : null;
+  const transportStats = input.includeTransport ? priceRangeStats(transportPick.items, getCategoryPriceGetter('transport', input)) : null;
+  const dailyStats = input.includePlaceVisits ? priceRangeStats(dailyPick.items, getCategoryPriceGetter('dailyExpenses', input)) : null;
+  const flightTotal = flightStats?.average ?? flightPick.selectedTotalPrice;
+  const hotelTotal = hotelStats?.average ?? hotelPick.selectedTotalPrice;
+  const transportTotal = sumPrices(transportPick.items, getCategoryPriceGetter('transport', input)) ?? transportPick.selectedTotalPrice;
+  const dailyTotal = dailyStats?.average ?? dailyPick.selectedTotalPrice;
 
   const makeDecision = (key: BudgetCategoryKey, pick: BudgetPickResult) => {
     const cheapest = pick.cheapestPrice;
@@ -1451,10 +1583,10 @@ function buildUnavailableBudgetResult(input: BudgetFilterInput, errorMessage: st
   };
 
   const categories = {
-    flights: buildBudgetCategoryReport('flights', input, makeDecision('flights', flightPick), input.flights.length, flightPick.shownCount, input.includeFlight, flightPick.selectedTotalPrice),
-    hotels: buildBudgetCategoryReport('hotels', input, makeDecision('hotels', hotelPick), input.hotels.length, hotelPick.shownCount, input.includeHotel, hotelPick.selectedTotalPrice),
-    transport: buildBudgetCategoryReport('transport', input, makeDecision('transport', transportPick), input.transport.length, transportPick.shownCount, input.includeTransport, transportPick.selectedTotalPrice),
-    dailyExpenses: buildBudgetCategoryReport('dailyExpenses', input, makeDecision('dailyExpenses', dailyPick), input.placesToVisit.length, dailyPick.shownCount, input.includePlaceVisits, dailyPick.selectedTotalPrice),
+    flights: buildBudgetCategoryReport('flights', input, makeDecision('flights', flightPick), input.flights.length, flightPick.shownCount, input.includeFlight, flightTotal, flightStats),
+    hotels: buildBudgetCategoryReport('hotels', input, makeDecision('hotels', hotelPick), input.hotels.length, hotelPick.shownCount, input.includeHotel, hotelTotal, hotelStats),
+    transport: buildBudgetCategoryReport('transport', input, makeDecision('transport', transportPick), input.transport.length, transportPick.shownCount, input.includeTransport, transportTotal, transportStats),
+    dailyExpenses: buildBudgetCategoryReport('dailyExpenses', input, makeDecision('dailyExpenses', dailyPick), input.placesToVisit.length, dailyPick.shownCount, input.includePlaceVisits, dailyTotal, dailyStats),
   };
 
   return {
@@ -1542,19 +1674,32 @@ async function applyGeminiBudgetFilter(input: BudgetFilterInput) {
   const dailyAiFits = placesToVisit.length > 0 && dailyAiTotal !== null && dailyAiTotal <= dailyUpperBound;
   const finalFlights = input.includeFlight ? (flights.length ? flights : fallbackFlights.items) : [];
   const finalHotels = input.includeHotel ? (hotels.length ? hotels : fallbackHotels.items) : [];
-  const finalTransport = input.includeTransport ? (transport.length ? transport : fallbackTransport.items) : [];
+  const selectedTransportFromBudget = input.includeTransport && input.transportBudgetSelections
+    ? input.transport.filter((option: any) => getTransportSelection(input, option)?.selected === true)
+    : [];
+  const finalTransport = input.includeTransport
+    ? (selectedTransportFromBudget.length ? selectedTransportFromBudget : (transport.length ? transport : fallbackTransport.items))
+    : [];
   const finalPlacesToVisit = input.includePlaceVisits ? (dailyAiFits ? placesToVisit : fallbackDaily.items) : [];
+  const finalFlightStats = input.includeFlight ? priceRangeStats(finalFlights, getCategoryPriceGetter('flights', input)) : null;
+  const finalHotelStats = input.includeHotel ? priceRangeStats(finalHotels, getCategoryPriceGetter('hotels', input)) : null;
+  const finalTransportStats = input.includeTransport ? priceRangeStats(finalTransport, getCategoryPriceGetter('transport', input)) : null;
+  const finalDailyStats = input.includePlaceVisits ? priceRangeStats(finalPlacesToVisit, getCategoryPriceGetter('dailyExpenses', input)) : null;
+  const finalFlightTotal = finalFlightStats?.average ?? null;
+  const finalHotelTotal = finalHotelStats?.average ?? null;
+  const finalTransportTotal = sumPrices(finalTransport, getCategoryPriceGetter('transport', input));
+  const finalDailyTotal = finalDailyStats?.average ?? null;
   const flightReportDecision = flights.length ? flightDecision : { status: fallbackFlights.status, selectedIndexes: fallbackFlights.selectedIndexes, message: flightDecision?.message };
   const hotelReportDecision = hotels.length ? hotelDecision : { status: fallbackHotels.status, selectedIndexes: fallbackHotels.selectedIndexes, message: hotelDecision?.message };
   const transportReportDecision = transport.length ? transportDecision : { status: fallbackTransport.status, selectedIndexes: fallbackTransport.selectedIndexes, message: transportDecision?.message };
   const dailyReportDecision = dailyAiFits ? dailyDecision : { status: fallbackDaily.status, selectedIndexes: fallbackDaily.selectedIndexes, message: dailyDecision?.message };
-  const dailySelectedTotalPrice = dailyAiFits ? dailyAiTotal : fallbackDaily.selectedTotalPrice;
+  const dailySelectedTotalPrice = finalDailyTotal ?? (dailyAiFits ? dailyAiTotal : fallbackDaily.selectedTotalPrice);
 
   const categories = {
-    flights: buildBudgetCategoryReport('flights', input, flightReportDecision, input.flights.length, finalFlights.length, input.includeFlight, fallbackFlights.selectedTotalPrice),
-    hotels: buildBudgetCategoryReport('hotels', input, hotelReportDecision, input.hotels.length, finalHotels.length, input.includeHotel, fallbackHotels.selectedTotalPrice),
-    transport: buildBudgetCategoryReport('transport', input, transportReportDecision, input.transport.length, finalTransport.length, input.includeTransport, fallbackTransport.selectedTotalPrice),
-    dailyExpenses: buildBudgetCategoryReport('dailyExpenses', input, dailyReportDecision, input.placesToVisit.length, finalPlacesToVisit.length, input.includePlaceVisits, dailySelectedTotalPrice),
+    flights: buildBudgetCategoryReport('flights', input, flightReportDecision, input.flights.length, finalFlights.length, input.includeFlight, finalFlightTotal, finalFlightStats),
+    hotels: buildBudgetCategoryReport('hotels', input, hotelReportDecision, input.hotels.length, finalHotels.length, input.includeHotel, finalHotelTotal, finalHotelStats),
+    transport: buildBudgetCategoryReport('transport', input, transportReportDecision, input.transport.length, finalTransport.length, input.includeTransport, finalTransportTotal, finalTransportStats),
+    dailyExpenses: buildBudgetCategoryReport('dailyExpenses', input, dailyReportDecision, input.placesToVisit.length, finalPlacesToVisit.length, input.includePlaceVisits, dailySelectedTotalPrice, finalDailyStats),
   };
 
   return {
@@ -1580,7 +1725,6 @@ export async function POST(request: Request) {
       destinationCity: inputDestinationCity,
       destinationCountry: inputDestinationCountry,
       destinationCountryCode: inputDestinationCountryCode,
-      destinationStates,
       adults, children,
       includeFlight, includeHotel,
       hotelRooms, hotelRoomsPerApartment, budgetFlightCabins, budgetHotelStars,
@@ -1614,7 +1758,6 @@ export async function POST(request: Request) {
         city: inputDestinationCity,
         country: inputDestinationCountry,
         countryCode: inputDestinationCountryCode,
-        states: destinationStates,
       },
       travelers: { adults, children },
       stay: { nights },
@@ -1628,7 +1771,6 @@ export async function POST(request: Request) {
     console.log('✈️ Origin:', origin);
     console.log('🏁 Destination:', destination);
     console.log('🌍 Destination city/country from input:', inputDestinationCity, '|', inputDestinationCountry, '|', inputDestinationCountryCode);
-    console.log('🗺️ Selected destination states:', JSON.stringify(destinationStates));
     console.log('📅 Departure date:', departureDate);
     console.log('📅 Return date:', returnDate);
     console.log('👥 Travelers:', adults, 'adults,', children, 'children');
@@ -1861,19 +2003,25 @@ export async function POST(request: Request) {
         const appliedHotelStar = selectedHotelStars.length
           ? Math.max(...selectedHotelStars)
           : Math.max(1, Math.min(5, Math.round(Number(body.hotelStars) || 3)));
+        const apartmentCount = Math.max(1, Number(hotelRooms) || 1);
         const roomsPerApartment = Math.max(1, Number(hotelRoomsPerApartment) || 1);
+        const stayNights = Math.max(1, Number(nights) || 1);
         const roomText = roomsPerApartment > 1 ? `${roomsPerApartment} bedroom apartment` : 'apartment hotel';
+        const hotelStarSearchOrder = [
+          appliedHotelStar,
+          ...HOTEL_STAR_OPTIONS.filter(star => star !== appliedHotelStar),
+        ];
         const hotelQuery = [destinationCity, destinationCountry, `${appliedHotelStar} star`, roomText].filter(Boolean).join(' ');
         const searchAsVacationRental = roomsPerApartment > 1;
         const checkInDate = departureDate;
         const checkOutDate = (() => {
           const outDate = new Date(departureDate);
-          const hotelNights = typeof nights === 'number' && nights > 0 ? nights : 0;
+          const hotelNights = stayNights;
           outDate.setDate(outDate.getDate() + hotelNights);
           return outDate.toISOString().split('T')[0];
         })();
 
-        console.log(`\n🏨 SERPAPI HOTEL SEARCH — query="${hotelQuery}" | ${checkInDate} → ${checkOutDate} | travelers: ${adults} adult(s), ${children} child(ren)`);
+        console.log(`\n🏨 SERPAPI HOTEL SEARCH — query="${hotelQuery}" | ${checkInDate} → ${checkOutDate} | ${stayNights} night(s) | ${apartmentCount} apartment(s), ${roomsPerApartment} room(s) inside each | travelers: ${adults} adult(s), ${children} child(ren)`);
 
         const serpApiHotelResults = await searchGoogleHotels({
           query: hotelQuery,
@@ -1896,14 +2044,59 @@ export async function POST(request: Request) {
 
         const hotelProperties = Array.isArray(serpApiHotelResults?.properties) ? serpApiHotelResults.properties : [];
         const hotelAds = Array.isArray(serpApiHotelResults?.ads) ? serpApiHotelResults.ads : [];
-        const allHotelResults = [...hotelProperties, ...hotelAds].slice(0, 20);
+        let allHotelResults = [...hotelProperties, ...hotelAds].slice(0, 20);
 
         console.log(`🏨 SerpApi properties/ads returned: ${allHotelResults.length} result(s)`);
+
+        const supplementalStars = hotelStarSearchOrder.filter(star => star !== appliedHotelStar);
+        if (supplementalStars.length > 0) {
+          console.log(`ðŸ¨ Checking supplemental hotel star buckets: ${supplementalStars.join(', ')}`);
+          const supplementalSearches = await Promise.allSettled(
+            supplementalStars.map(async star => {
+              const query = [destinationCity, destinationCountry, `${star} star`, roomText].filter(Boolean).join(' ');
+              const results = await searchGoogleHotels({
+                query,
+                checkInDate,
+                checkOutDate,
+                adults,
+                children,
+                countryCode: countryCode || 'us',
+                bedrooms: roomsPerApartment,
+                hotelClass: star,
+                vacationRentals: false,
+              });
+              return { star, query, results };
+            })
+          );
+          const seenHotelKeys = new Set(allHotelResults.map(getSerpApiHotelKey).filter(Boolean));
+
+          supplementalSearches.forEach(result => {
+            if (result.status === 'rejected') {
+              console.error('ðŸ¨ Supplemental SerpApi hotel search failed:', result.reason?.message || result.reason);
+              return;
+            }
+
+            const hotelProperties = Array.isArray(result.value.results?.properties) ? result.value.results.properties : [];
+            const hotelAds = Array.isArray(result.value.results?.ads) ? result.value.results.ads : [];
+            const bucketResults = [...hotelProperties, ...hotelAds];
+            console.log(`ðŸ¨ Supplemental ${result.value.star}-star hotel bucket returned: ${bucketResults.length} result(s)`);
+
+            for (const property of bucketResults) {
+              const key = getSerpApiHotelKey(property);
+              if (key && seenHotelKeys.has(key)) continue;
+              if (key) seenHotelKeys.add(key);
+              allHotelResults.push(property);
+            }
+          });
+
+          allHotelResults = allHotelResults.slice(0, 50);
+          console.log(`ðŸ¨ SerpApi hotel merged results after 1-5 star check: ${allHotelResults.length} result(s)`);
+        }
 
         hotels = allHotelResults
           .filter((property: any) => property?.name)
           .filter((property: any) => isHotelInDestination(property, destinationCity, destinationCountry, destination, geoLat, geoLon))
-          .map((property: any, idx: number) => mapSerpApiHotelToResult(property, idx, destinationCity, Math.max(1, nights || 1)))
+          .map((property: any, idx: number) => mapSerpApiHotelToResult(property, idx, destinationCity, stayNights, apartmentCount, roomsPerApartment))
           .slice(0, 10);
 
         if (hotels.length > 0) {
@@ -2150,15 +2343,8 @@ export async function POST(request: Request) {
     try {
       // Build context from REAL LocationIQ data
       const hasVibes = vibes && Array.isArray(vibes) && vibes.length > 0;
-      const selectedRegions = Array.isArray(destinationStates)
-        ? destinationStates.map((state: any) => String(state).trim()).filter(Boolean)
-        : [];
-      const hasSelectedRegions = selectedRegions.length > 0;
       const mainCountryLabel = destinationCountry || countryCode || 'the destination country';
-      const selectedRegionLabel = selectedRegions.join(', ');
-      const targetAreaLabel = hasSelectedRegions
-        ? `${selectedRegionLabel}, ${mainCountryLabel}`
-        : `${destinationCity}, ${mainCountryLabel}`;
+      const targetAreaLabel = `${destinationCity}, ${mainCountryLabel}`;
       const vibeLabels = hasVibes ? vibes.map((v: string) => {
         const labelMap: Record<string, string> = {
           food_drink: 'Food & Drink (restaurants, food markets, cafés, wine bars, street food tours, local eateries)',
@@ -2187,14 +2373,6 @@ export async function POST(request: Request) {
         ? `\n\nREAL HOTELS found within 20km of ${destinationLabel} (lat: ${geoLat}, lon: ${geoLon}):\n${hotels.map((h, i) => `${i + 1}. "${h.name}" — ${h.rating}-star, $${h.price}/night, located at ${h.location}`).join('\n')}`
         : '';
 
-      const regionConstraint = hasSelectedRegions
-        ? `- User-selected regions/states to consider: ${selectedRegionLabel}
-- The selected regions are the preferred discovery area. Recommend vibe-matching places inside these selected regions when possible.
-- You may include ${destinationCity} only when it is in or directly useful for reaching the selected regions.`
-        : `- No specific regions/states were selected. Use ${destinationCity} and its practical surrounding area.`;
-      const regionExclusion = hasSelectedRegions
-        ? `- DO NOT prioritize places outside these selected regions unless they are essential airport/city transfer context: ${selectedRegionLabel}`
-        : `- DO NOT suggest any place that is not in ${destinationCity} or the area near ${destination}`;
       const vibeFilter = hasVibes
         ? `
 *** MOST IMPORTANT INSTRUCTION - VIBE FILTER ***
@@ -2224,11 +2402,8 @@ If you are unsure whether a place matches, do NOT include it.
         DESTINATION_CITY: destinationCity,
         GEO_LAT: geoLat,
         GEO_LON: geoLon,
-        REGION_CONSTRAINT: regionConstraint,
-        REGION_EXCLUSION: regionExclusion,
         VIBE_FILTER: vibeFilter,
         ORIGIN: origin,
-        SELECTED_REGIONS_TEXT: hasSelectedRegions ? selectedRegionLabel : 'none',
         TRIP_TYPE: tripType,
         DEPARTURE_DATE: departureDate,
         RETURN_DATE_TEXT: returnDate ? ` / Return: ${returnDate}` : '',
@@ -2243,7 +2418,7 @@ If you are unsure whether a place matches, do NOT include it.
         MAX_FLIGHT_PRICE: flights.length > 0 ? Math.max(...flights.map((f: any) => parseFloat(f.total_amount))).toLocaleString() : '0',
         HOTEL_CONTEXT: hotelContext,
         ATTRACTION_CONTEXT: attractionContext,
-        SUMMARY_TITLE_AREA: hasSelectedRegions ? selectedRegionLabel : destinationCity,
+        SUMMARY_TITLE_AREA: destinationCity,
         PLACES_VIBE_RULE: hasVibes ? ` CRITICAL: Each place MUST match one of these vibes: ${vibes.join(', ')}. Do NOT return aviation museums, transport museums, aircraft exhibitions, or motorcycle museums. ONLY return places matching the selected vibes.` : '',
       });
 
@@ -2252,7 +2427,6 @@ If you are unsure whether a place matches, do NOT include it.
       console.log('🤖 Variables injected into prompt:');
       console.log('   - Destination city:', destinationCity);
       console.log('   - Main country:', mainCountryLabel);
-      console.log('   - Selected regions:', JSON.stringify(selectedRegions));
       console.log('   - Target area:', targetAreaLabel);
       console.log('   - Coordinates:', geoLat, geoLon);
       console.log('   - Effective budget: $' + effectiveBudget);
@@ -2561,9 +2735,21 @@ If you are unsure whether a place matches, do NOT include it.
       transport,
       placesToVisit,
     };
+    const selectedHotelStarsForBudget = Array.isArray(budgetHotelStars)
+      ? budgetHotelStars.map((star: any) => Math.round(Number(star))).filter((star: number) => star >= 1 && star <= 5)
+      : [];
+    const appliedHotelStarsForBudget = selectedHotelStarsForBudget.length
+      ? selectedHotelStarsForBudget
+      : [Math.max(1, Math.min(5, Math.round(Number(body.hotelStars) || 3)))];
+    const budgetMatchedFlights = selectedFlightCabins.length
+      ? flights.filter((flight: any) => (selectedFlightCabins as string[]).includes(getBudgetFlightCabin(flight)))
+      : flights;
+    const budgetMatchedHotels = appliedHotelStarsForBudget.length
+      ? hotels.filter((hotel: any) => appliedHotelStarsForBudget.includes(getBudgetHotelStarCount(hotel)))
+      : hotels;
     const budgetFit = await applyGeminiBudgetFilter({
-      flights: enabledInputs.includeFlight ? flights : [],
-      hotels: enabledInputs.includeHotel ? hotels : [],
+      flights: enabledInputs.includeFlight ? budgetMatchedFlights : [],
+      hotels: enabledInputs.includeHotel ? budgetMatchedHotels : [],
       transport: enabledInputs.includeTransport ? transport : [],
       placesToVisit: enabledInputs.includePlaceVisits ? placesToVisit : [],
       includeFlight: enabledInputs.includeFlight,
@@ -2575,6 +2761,7 @@ If you are unsure whether a place matches, do NOT include it.
       flightBudget: Number(flightBudget) || 0,
       hotelBudget: Number(hotelBudget) || 0,
       transportBudget: Number(transportBudget) || 0,
+      transportBudgetSelections: body.transportBudgetSelections || {},
       dailyExpenseBudget: Number(dailyExpenseBudget) || 0,
       nights: tripNights,
       hotelRooms: Math.max(1, Number(hotelRooms) || 1),
@@ -2634,6 +2821,7 @@ If you are unsure whether a place matches, do NOT include it.
       flightBudget: Number(flightBudget) || 0,
       hotelBudget: Number(hotelBudget) || 0,
       transportBudget: Number(transportBudget) || 0,
+      transportBudgetSelections: body.transportBudgetSelections || {},
       dailyExpenseBudget: Number(dailyExpenseBudget) || 0,
       nights: tripNights,
       hotelRooms: Math.max(1, Number(hotelRooms) || 1),

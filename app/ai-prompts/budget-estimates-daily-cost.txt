@@ -1,17 +1,31 @@
 Return ONLY valid JSON with no markdown.
 
-Use current, grounded public information for tourist spending in {{DESTINATION}} for travel around {{DATES}}. Consider seasonality, attraction entry fees, food/drink/activity patterns implied by these vibes: {{VIBES}}, and selected regions: {{REGIONS}}.
+Use current, grounded public information for tourist spending in {{DESTINATION}} for travel around {{DATES}}. Consider seasonality, attraction entry fees, and food/drink/activity patterns implied by these vibes: {{VIBES}}.
 
 Estimate in USD:
-- placeVisitCost: average daily spend for one traveler on one place/activity matching the selected vibes. Include typical entrance/activity costs, not hotel, flight, or local transportation.
+- placeVisitCost: total average daily spend for one traveler across the returned daily categories. Include meals, drinks, attraction/activity entry, and optional shopping/activity allowance. Do not include hotel, flight, or local transportation.
+- dailyCategories: 5 to 10 category objects that explain the daily total. Include breakfast, lunch, dinner, coffee, shopping, and at least one destination-relevant daily activity such as zoo, museum, attraction ticket, beach club, tour, show, or local experience when realistic.
 - currencyNote: one short note about local currency/pricing confidence.
 - basis: one short sentence naming the real factors you used, such as museum/activity tickets, food/drink patterns, or current attraction prices.
 
 Return this exact JSON object shape, using real estimated numbers:
 {
   "placeVisitCost": <number>,
+  "dailyCategories": [
+    { "key": "breakfast", "label": "Breakfast", "estimatedCost": <number>, "detail": "short detail such as cafe breakfast or hotel-area breakfast" },
+    { "key": "lunch", "label": "Lunch", "estimatedCost": <number>, "detail": "short detail" },
+    { "key": "dinner", "label": "Dinner", "estimatedCost": <number>, "detail": "short detail" },
+    { "key": "coffee", "label": "Coffee", "estimatedCost": <number>, "detail": "short detail" },
+    { "key": "shopping", "label": "Shopping", "estimatedCost": <number>, "detail": "small daily allowance" }
+  ],
   "currencyNote": <string>,
   "basis": <string>
 }
 
-Do not copy placeholder values. Do not use generic worldwide averages. The numeric field must be calculated from the destination, dates, season, selected vibes, and current grounded search results.
+Rules:
+- Return at least 5 categories and at most 10 categories.
+- Always include breakfast, lunch, dinner, coffee, and shopping unless a category is culturally or practically unavailable, then replace it with a better destination-specific category and explain briefly in detail.
+- Add destination-relevant categories for daily activities, for example zoo, museum, landmark ticket, local tour, beach activity, theme park, gallery, show, or neighborhood experience.
+- Each estimatedCost must be a USD number for one traveler for one day.
+- placeVisitCost must equal the rounded sum of dailyCategories.estimatedCost.
+- Do not copy placeholder values. Do not use generic worldwide averages. Numeric fields must be calculated from the destination, dates, season, selected vibes, and current grounded search results.

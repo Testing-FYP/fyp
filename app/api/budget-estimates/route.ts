@@ -32,6 +32,7 @@ type TransportEstimateResult = {
   source: string;
   sampleCount: number;
   selectedModes: string[];
+  options: any[];
 };
 
 function readEnvValue(name: string) {
@@ -95,7 +96,7 @@ function median(values: number[]) {
   const sorted = values.filter(value => Number.isFinite(value) && value > 0).sort((a, b) => a - b);
   if (!sorted.length) return null;
   const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[middle] : Math.round((sorted[middle - 1] + sorted[middle]) / 2);
+  return sorted.length % 2 ? sorted[middle] : Number(((sorted[middle - 1] + sorted[middle]) / 2).toFixed(2));
 }
 
 function average(values: number[]) {
@@ -104,21 +105,75 @@ function average(values: number[]) {
   return Math.round(usable.reduce((sum, value) => sum + value, 0) / usable.length);
 }
 
+function normalizeDailyCategories(value: any) {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((item: any, index: number) => {
+      const estimatedCost = readPositiveNumber(item?.estimatedCost ?? item?.cost ?? item?.price ?? item?.amount);
+      if (estimatedCost === null) return null;
+      const rawLabel = String(item?.label || item?.name || item?.key || `Daily item ${index + 1}`).trim();
+      return {
+        key: String(item?.key || rawLabel.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || `daily_item_${index + 1}`),
+        label: rawLabel,
+        estimatedCost,
+        detail: String(item?.detail || item?.notes || item?.description || '').trim(),
+      };
+    })
+    .filter((item): item is { key: string; label: string; estimatedCost: number; detail: string } => !!item)
+    .slice(0, 10);
+}
+
+function fallbackDailyCategories(total: number) {
+  const values = [
+    { key: 'breakfast', label: 'Breakfast', ratio: 0.14, detail: 'Morning meal estimate' },
+    { key: 'lunch', label: 'Lunch', ratio: 0.19, detail: 'Casual lunch estimate' },
+    { key: 'dinner', label: 'Dinner', ratio: 0.25, detail: 'Evening meal estimate' },
+    { key: 'coffee', label: 'Coffee', ratio: 0.06, detail: 'Coffee or quick drink' },
+    { key: 'shopping', label: 'Shopping', ratio: 0.14, detail: 'Small daily allowance' },
+    { key: 'daily_activity', label: 'Daily Activity', ratio: 0.22, detail: 'Attraction or experience ticket' },
+  ];
+  let used = 0;
+  return values.map((item, index) => {
+    const estimatedCost = index === values.length - 1
+      ? Math.max(1, total - used)
+      : Math.max(1, Math.round(total * item.ratio));
+    used += estimatedCost;
+    return {
+      key: item.key,
+      label: item.label,
+      estimatedCost,
+      detail: item.detail,
+    };
+  });
+}
+
 function readStarRating(value: any): number | null {
   const parsed = readPositiveNumber(value);
   if (parsed === null) return null;
   return Math.min(5, Math.max(1, Math.round(parsed)));
 }
 
+function readTransportNumber(value: any): number | null {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return Number(value.toFixed(2));
+  if (typeof value === 'string' && value.trim()) {
+    const match = value.replace(/,/g, '').match(/\d+(?:\.\d+)?/);
+    if (!match) return null;
+    const parsed = Number(match[0]);
+    return Number.isFinite(parsed) && parsed > 0 ? Number(parsed.toFixed(2)) : null;
+  }
+  return null;
+}
+
 function getTransportDailyAllocation(option: any) {
-  const price = readPositiveNumber(option?.estimatedPrice);
+  const price = readTransportNumber(option?.estimatedPrice);
   if (price === null) return null;
 
   const mode = String(option?.id || option?.transportType || option?.type || '').trim();
   if (mode === 'rental_car') return price;
-  if (mode === 'taxi' || mode === 'rideshare_uber') return Math.round(price * 2);
+  if (mode === 'taxi' || mode === 'rideshare_uber') return price;
   if (mode === 'train') return price;
-  return Math.round(price * 2);
+  return price;
 }
 
 function addDays(dateValue: string, days: number) {
@@ -318,13 +373,16 @@ async function callGeminiForDailyCosts(apiKey: string, prompt: string) {
   if (placeVisitCost === 35 && String(parsed.currencyNote || '').toLowerCase().includes('short note')) {
     throw new Error('Gemini copied placeholder values instead of estimating current destination costs');
   }
+  const dailyCategories = normalizeDailyCategories(parsed.dailyCategories);
   console.log('[Budget estimates] Gemini grounded response parsed:', {
     placeVisitCost,
+    dailyCategories: dailyCategories.length,
     currencyNote: String(parsed.currencyNote || ''),
     basis: String(parsed.basis || ''),
   });
   return {
     placeVisitCost,
+    dailyCategories: dailyCategories.length ? dailyCategories : fallbackDailyCategories(placeVisitCost),
     currencyNote: String(parsed.currencyNote || ''),
   };
 }
@@ -379,8 +437,10 @@ async function getGeminiDailyCosts(prompt: string) {
         throw new Error('Groq returned missing placeVisitCost');
       }
       console.log('[Budget estimates] Success via groq');
+      const dailyCategories = normalizeDailyCategories(parsed.dailyCategories);
       return {
         placeVisitCost,
+        dailyCategories: dailyCategories.length ? dailyCategories : fallbackDailyCategories(placeVisitCost),
         currencyNote: String(parsed.currencyNote || ''),
         source: 'groq',
       };
@@ -391,6 +451,7 @@ async function getGeminiDailyCosts(prompt: string) {
 
   return {
     placeVisitCost: 25,
+    dailyCategories: fallbackDailyCategories(25),
     currencyNote: '',
     source: 'static_fallback',
   };
@@ -404,6 +465,7 @@ async function getPlannerTransportAverage(request: Request, body: any): Promise<
       source: 'transport_lookup_blocked',
       sampleCount: 0,
       selectedModes: [],
+      options: [],
     };
   }
 
@@ -454,6 +516,7 @@ async function getPlannerTransportAverage(request: Request, body: any): Promise<
     source: json?.dataSource ? `planner_transport_${json.dataSource}` : 'planner_transport',
     sampleCount: pricedOptions.length,
     selectedModes: selectedModes.length ? selectedModes : matchingOptions.map((option: any) => String(option.id || option.transportType || option.type)).filter(Boolean),
+    options,
   };
 
   console.log('[Budget estimates] Step 3a complete:', result);
@@ -464,13 +527,11 @@ function buildDailyCostPrompt(body: any) {
   const destination = [body.destinationCity || body.destination, body.destinationCountry].filter(Boolean).join(', ') || 'the destination';
   const dates = [body.departureDate, body.returnDate].filter(Boolean).join(' to ') || 'the selected travel dates';
   const vibes = Array.isArray(body.vibes) && body.vibes.length ? body.vibes.join(', ') : 'general sightseeing';
-  const regions = Array.isArray(body.destinationStates) && body.destinationStates.length ? body.destinationStates.join(', ') : 'no specific regions';
 
   return fillPromptTemplate(loadPromptTemplate('budget-estimates-daily-cost.txt'), {
     DESTINATION: destination,
     DATES: dates,
     VIBES: vibes,
-    REGIONS: regions,
   });
 }
 
@@ -487,7 +548,7 @@ export async function POST(request: Request) {
     const nights = Math.max(1, Number(body.nights || 1));
     const tripDays = Math.max(1, nights);
     const checkInDate = departureDate || addDays('', 14);
-    const checkOutDate = returnDate || addDays(checkInDate, 1);
+    const checkOutDate = addDays(checkInDate, nights);
     const includePlaceVisits = body.includePlaceVisits !== false;
     const hotelApartments = Math.max(1, Number(body.hotelRooms || 1));
     const hotelRoomsPerApartment = Math.max(1, Number(body.hotelRoomsPerApartment || 1));
@@ -563,7 +624,7 @@ export async function POST(request: Request) {
             adults: 1,
             children: 0,
             countryCode: String(body.destinationCountryCode || 'us'),
-            hotelClass: star >= 2 ? star : undefined,
+            hotelClass: star,
           })
         )
       ),
@@ -630,7 +691,7 @@ export async function POST(request: Request) {
     const hotelDebugByStars = buildHotelDebugByStars(hotelStarSamples.length ? hotelStarSamples : hotelSamples);
     const aiCosts = includePlaceVisits && dailyCosts.status === 'fulfilled' && dailyCosts.value
       ? dailyCosts.value
-      : { placeVisitCost: 25, currencyNote: '', source: 'static_fallback' };
+      : { placeVisitCost: 25, dailyCategories: fallbackDailyCategories(25), currencyNote: '', source: 'static_fallback' };
     const transportCosts = transportResult.status === 'fulfilled' && transportResult.value
       ? transportResult.value
       : {
@@ -638,12 +699,14 @@ export async function POST(request: Request) {
           source: 'static_fallback',
           sampleCount: 0,
           selectedModes: [],
+          options: [],
         };
 
     const flightPerPerson = flightAverages.economy;
     const hotelPerApartmentPerNight = average(hotelPrices) ?? 150;
     const transportPerPersonPerDay = transportCosts.transportPerPersonPerDay;
     const placeVisitCostPerDay = includePlaceVisits ? aiCosts.placeVisitCost : 0;
+    const dailyCategories = includePlaceVisits ? aiCosts.dailyCategories : [];
 
     console.log('[Budget estimates] Step 1 complete:', {
       samples: flightPrices.length,
@@ -680,12 +743,15 @@ export async function POST(request: Request) {
       hotelPerPersonPerNight: hotelPerApartmentPerNight,
       hotelPerApartmentPerNight,
       hotelAveragesByStars: hotelStarAverages.averages,
+      hotelDebugByStars,
       hotelApartments,
       hotelRoomsPerApartment,
       transportPerPerson: transportPerPersonPerDay,
       transportPerPersonPerDay,
+      transportOptions: transportCosts.options,
       placeVisitCost: placeVisitCostPerDay,
       placeVisitCostPerDay,
+      dailyCategories,
       currencyNote: aiCosts.currencyNote,
       sources: {
         flight: flightPrices.length ? 'serpapi_google_flights' : 'fallback',

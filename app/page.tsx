@@ -7,6 +7,7 @@ import TripPlannerWizard, { PlannerData } from '@/components/TripPlannerWizard';
 import TripPlannerResults from '@/components/TripPlannerResults';
 import SurpriseMeDiscovery from '@/components/SurpriseMeDiscovery';
 import Image from 'next/image';
+import planeLoadingImage from './image.png';
 
 const GENERATOR_TRANSPORT_TYPES = [
   'metro_subway',
@@ -16,6 +17,58 @@ const GENERATOR_TRANSPORT_TYPES = [
   'rideshare_uber',
   'rental_car',
 ];
+
+function TripGenerationLoading() {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 18 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -12 }}
+      transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
+      className="mx-auto w-full max-w-4xl overflow-hidden rounded-3xl border border-border bg-muted shadow-2xl shadow-foreground/10"
+      role="status"
+      aria-live="polite"
+    >
+      <div className="relative aspect-[16/9] min-h-[320px] overflow-hidden bg-foreground/5">
+        <motion.div
+          className="absolute inset-0 scale-110"
+          animate={{ x: ['-2%', '2%', '-2%'], y: ['1%', '-1%', '1%'], scale: [1.08, 1.13, 1.08] }}
+          transition={{ duration: 7, repeat: Infinity, ease: 'easeInOut' }}
+        >
+          <Image
+            src={planeLoadingImage}
+            alt="Plane flying above the clouds"
+            fill
+            priority
+            className="object-cover"
+            sizes="(max-width: 768px) 100vw, 896px"
+          />
+        </motion.div>
+        <div className="absolute inset-0 bg-gradient-to-t from-background via-background/20 to-transparent" />
+        <div className="absolute inset-x-0 bottom-0 px-6 pb-8 text-center">
+          <motion.div
+            animate={{ y: [0, -8, 0] }}
+            transition={{ duration: 2.2, repeat: Infinity, ease: [0.16, 1, 0.3, 1] }}
+            className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-full border border-background/20 bg-background/90 text-foreground shadow-xl"
+          >
+            <Sparkles className="h-5 w-5" />
+          </motion.div>
+          <h2 className="title-text text-4xl text-foreground md:text-5xl">Preparing Your Trip</h2>
+          <p className="mx-auto mt-3 max-w-md text-sm leading-relaxed text-muted-foreground">
+            Matching flights, stays, transport, and activities into one overview.
+          </p>
+          <div className="mx-auto mt-6 h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-foreground/10">
+            <motion.div
+              className="h-full w-1/2 rounded-full bg-foreground"
+              animate={{ x: ['-110%', '220%'] }}
+              transition={{ duration: 1.35, repeat: Infinity, ease: [0.76, 0, 0.24, 1] }}
+            />
+          </div>
+        </div>
+      </div>
+    </motion.div>
+  );
+}
 
 export default function Home() {
   const [results, setResults] = useState<any>(null);
@@ -83,8 +136,8 @@ export default function Home() {
     nights: data.nights,
     includeTransport: data.includeTransport,
     transportTypes: data.includeTransport ? GENERATOR_TRANSPORT_TYPES : [],
+    transportBudgetSelections: data.includeTransport ? data.transportBudgetSelections : undefined,
     vibes: data.vibes,
-    destinationStates: data.destinationStates,
     destinationCity: data.destinationCity,
     destinationCountry: data.destinationCountry,
     destinationCountryCode: data.destinationCountryCode,
@@ -233,34 +286,38 @@ export default function Home() {
       <section className="max-w-6xl mx-auto px-6 py-16">
         {!results ? (
           <div>
-            <div className="mx-auto mb-12 flex w-full max-w-xl rounded-2xl border border-border bg-muted p-1">
-              <button
-                type="button"
-                onClick={() => setPlannerMode('classic')}
-                className={`flex flex-1 items-center justify-center gap-2 rounded-xl px-4 py-3 text-xs font-black uppercase tracking-[0.14em] transition ${
-                  plannerMode === 'classic'
-                    ? 'bg-foreground text-background shadow-sm'
-                    : 'text-muted-foreground hover:bg-background hover:text-foreground'
-                }`}
-              >
-                <Compass className="h-4 w-4" />
-                Build My Trip
-              </button>
-              <button
-                type="button"
-                onClick={() => setPlannerMode('surprise')}
-                className={`flex flex-1 items-center justify-center gap-2 rounded-xl px-4 py-3 text-xs font-black uppercase tracking-[0.14em] transition ${
-                  plannerMode === 'surprise'
-                    ? 'bg-foreground text-background shadow-sm'
-                    : 'text-muted-foreground hover:bg-background hover:text-foreground'
-                }`}
-              >
-                <Sparkles className="h-4 w-4" />
-                Surprise Me
-              </button>
-            </div>
+            {!isLoading && (
+              <div className="mx-auto mb-12 flex w-full max-w-xl rounded-2xl border border-border bg-muted p-1">
+                <button
+                  type="button"
+                  onClick={() => setPlannerMode('classic')}
+                  className={`flex flex-1 items-center justify-center gap-2 rounded-xl px-4 py-3 text-xs font-black uppercase tracking-[0.14em] transition ${
+                    plannerMode === 'classic'
+                      ? 'bg-foreground text-background shadow-sm'
+                      : 'text-muted-foreground hover:bg-background hover:text-foreground'
+                  }`}
+                >
+                  <Compass className="h-4 w-4" />
+                  Build My Trip
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPlannerMode('surprise')}
+                  className={`flex flex-1 items-center justify-center gap-2 rounded-xl px-4 py-3 text-xs font-black uppercase tracking-[0.14em] transition ${
+                    plannerMode === 'surprise'
+                      ? 'bg-foreground text-background shadow-sm'
+                      : 'text-muted-foreground hover:bg-background hover:text-foreground'
+                  }`}
+                >
+                  <Sparkles className="h-4 w-4" />
+                  Surprise Me
+                </button>
+              </div>
+            )}
 
-            {plannerMode === 'classic' ? (
+            {isLoading ? (
+              <TripGenerationLoading />
+            ) : plannerMode === 'classic' ? (
               <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_672px_minmax(0,1fr)] gap-8 items-start">
                 <div className="hidden xl:block" />
                 <div className="w-full xl:w-[672px] min-w-0">

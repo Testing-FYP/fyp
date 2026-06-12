@@ -150,10 +150,12 @@ function validateAiPriceFields(raw: any) {
 }
 
 function readNumber(value: any): number | null {
-  if (typeof value === 'number' && Number.isFinite(value)) return Math.round(value);
+  if (typeof value === 'number' && Number.isFinite(value)) return Number(value.toFixed(2));
   if (typeof value !== 'string') return null;
   const match = value.replace(/,/g, '').match(/\d+(?:\.\d+)?/);
-  return match ? Math.round(Number(match[0])) : null;
+  if (!match) return null;
+  const parsed = Number(match[0]);
+  return Number.isFinite(parsed) ? Number(parsed.toFixed(2)) : null;
 }
 
 function priceLabelFor(option: any) {

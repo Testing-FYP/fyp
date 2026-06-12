@@ -5,14 +5,12 @@ You are planning a trip to {{TARGET_AREA_LABEL}}.
 CRITICAL LOCATION CONSTRAINT:
 - Main country: {{MAIN_COUNTRY_LABEL}}
 - Arrival airport/city: {{AIRPORT_NAME}} ({{DESTINATION}}) in {{DESTINATION_CITY}}, GPS coordinates: latitude {{GEO_LAT}}, longitude {{GEO_LON}}
-{{REGION_CONSTRAINT}}
 - Suggest places that are either:
-  (a) In the selected region/state list within {{MAIN_COUNTRY_LABEL}}, OR
-  (b) Right near the arrival airport when it helps the trip plan, OR
-  (c) In {{DESTINATION_CITY}} city center when no selected region is a better match
+  (a) In {{DESTINATION_CITY}} city center or its practical visitor area, OR
+  (b) Right near the arrival airport when it helps the trip plan
 - For each place, mention in the description which area it is in and approximately how far from {{DESTINATION}}
 - DO NOT suggest any place outside {{MAIN_COUNTRY_LABEL}}
-{{REGION_EXCLUSION}}
+- DO NOT suggest any place that is not in {{DESTINATION_CITY}} or the area near {{DESTINATION}}
 - DO NOT hallucinate or invent fictional places
 
 CRITICAL QUALITY RULES FOR "placesToVisit":
@@ -26,7 +24,6 @@ CRITICAL QUALITY RULES FOR "placesToVisit":
 Trip Details:
 - Route: {{ORIGIN}} -> {{DESTINATION}} (IATA: {{DESTINATION}}, City: {{DESTINATION_CITY}})
 - Main country: {{MAIN_COUNTRY_LABEL}}
-- Selected regions/states: {{SELECTED_REGIONS_TEXT}}
 - Trip type: {{TRIP_TYPE}}
 - Departure: {{DEPARTURE_DATE}}{{RETURN_DATE_TEXT}}
 - Travelers: {{ADULTS}} adults, {{CHILDREN}} children

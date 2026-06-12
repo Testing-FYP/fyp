@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   MapPin, Calendar as CalendarIcon, Users, Plane, DollarSign, Hotel, Bus, Star,
@@ -19,12 +19,17 @@ type BudgetMode = 'total' | 'per_category';
 type TransportType = 'metro_subway' | 'train' | 'public_bus' | 'taxi' | 'rideshare_uber' | 'rental_car';
 type TransportPriority = 'cheapest' | 'fastest' | 'comfortable';
 
-type GeocodedCity = {
-  id: string;
-  name: string;
-  state?: string;
-  latitude?: string;
-  longitude?: string;
+type DailyCategory = {
+  key: string;
+  label: string;
+  estimatedCost: number;
+  detail?: string;
+  selected?: boolean;
+};
+
+type TransportBudgetSelection = {
+  selected: boolean;
+  quantity: number;
 };
 
 export interface TransportOption {
@@ -85,7 +90,6 @@ export interface PlannerData {
   transportDataSource?: string;
   // Step 7 - Vibe
   vibes: string[];
-  destinationStates: string[];
   // Step 8 - Budget
   budgetMode: BudgetMode;
   budgetMin: number;
@@ -97,7 +101,10 @@ export interface PlannerData {
   dailyExpenseBudget: number;
   budgetFlightCabins: BudgetFlightCabinClass[];
   budgetHotelStars: number[];
+  budgetHotelAveragesByStars?: Record<string, number>;
   includePlaceVisits: boolean;
+  dailyCategories?: DailyCategory[];
+  transportBudgetSelections?: Partial<Record<TransportType, TransportBudgetSelection>>;
 
 }
 
@@ -216,6 +223,122 @@ function DualRangeSlider({ min, max, step, valueMin, valueMax, onChange }: DualR
   );
 }
 
+function formatTransportUsdPrice(option?: TransportOption) {
+  if (!option) return { price: 'Manual', detail: '' };
+
+  const source = [
+    option.priceLabel,
+    option.singleTicketPrice,
+    option.dayPassPrice,
+    option.priceRange,
+    (option as any).estimatedFareRange,
+    (option as any).pricePerDay,
+  ].filter(Boolean).join(' ');
+  const usdMatch = source.match(/~?\$(\d+(?:[.,]\d+)?)(?:\s*-\s*(\d+(?:[.,]\d+)?))?/i);
+  const formatAmount = (value: string) => {
+    const parsed = Number(value.replace(/,/g, ''));
+    if (!Number.isFinite(parsed)) return value;
+    return parsed.toFixed(2);
+  };
+  const price = usdMatch
+    ? usdMatch[2]
+      ? `$${formatAmount(usdMatch[1])}-${formatAmount(usdMatch[2])}`
+      : `$${formatAmount(usdMatch[1])}`
+    : typeof option.estimatedPrice === 'number'
+      ? `$${option.estimatedPrice.toFixed(2)}`
+      : 'Manual';
+
+  const lowerLabel = String(option.priceLabel || '').toLowerCase();
+  const detail = option.id === 'rental_car'
+    ? 'per day'
+    : lowerLabel.includes('day')
+      ? 'day pass'
+      : lowerLabel.includes('city ride') || option.id === 'taxi' || option.id === 'rideshare_uber'
+        ? 'typical city ride'
+        : 'single ride';
+
+  return { price, detail };
+}
+
+function getTransportMode(option?: TransportOption): TransportType | null {
+  const mode = option?.id || option?.transportType || option?.type;
+  return mode || null;
+}
+
+function isVehicleTransport(type: TransportType) {
+  return type === 'taxi' || type === 'rideshare_uber' || type === 'rental_car';
+}
+
+function getTransportDailyUnitPrice(option?: TransportOption) {
+  if (!option || option.available === false || typeof option.estimatedPrice !== 'number') return 0;
+  const type = getTransportMode(option);
+  if (type === 'rental_car') return option.estimatedPrice;
+  if (type === 'taxi' || type === 'rideshare_uber') return option.estimatedPrice;
+  if (type === 'train') return option.estimatedPrice;
+  return option.estimatedPrice;
+}
+
+function getDefaultTransportQuantity(type: TransportType, travelerCount: number) {
+  return isVehicleTransport(type) ? Math.max(1, Math.ceil(travelerCount / 4)) : Math.max(1, travelerCount);
+}
+
+function buildDefaultTransportSelections(options: TransportOption[], travelerCount: number) {
+  const selections: Partial<Record<TransportType, TransportBudgetSelection>> = {};
+  const pricedOptions = options
+    .filter(option => option.available !== false)
+    .map(option => {
+      const type = getTransportMode(option);
+      if (!type) return null;
+      const quantity = getDefaultTransportQuantity(type, travelerCount);
+      const dailyTotal = getTransportDailyUnitPrice(option) * quantity;
+      selections[type] = { selected: false, quantity };
+      return dailyTotal > 0 ? { type, dailyTotal } : null;
+    })
+    .filter((option): option is { type: TransportType; dailyTotal: number } => !!option);
+
+  const cheapest = pricedOptions.sort((a, b) => a.dailyTotal - b.dailyTotal)[0];
+  if (cheapest && selections[cheapest.type]) {
+    selections[cheapest.type] = { ...selections[cheapest.type]!, selected: true };
+  }
+  return selections;
+}
+
+function calculateTransportBudgetFromSelections(
+  options: TransportOption[] | undefined,
+  selections: Partial<Record<TransportType, TransportBudgetSelection>> | undefined,
+  nights: number
+) {
+  if (!options?.length || !selections) return 0;
+  return options.reduce((sum, option) => {
+    const type = getTransportMode(option);
+    if (!type || !selections[type]?.selected) return sum;
+    return sum + getTransportDailyUnitPrice(option) * Math.max(1, Number(selections[type]?.quantity || 1)) * nights;
+  }, 0);
+}
+
+function getDailyCategoryIcon(category: DailyCategory) {
+  const text = `${category.key} ${category.label}`.toLowerCase();
+  if (text.includes('coffee') || text.includes('drink')) return Coffee;
+  if (text.includes('shopping') || text.includes('shop')) return DollarSign;
+  if (text.includes('breakfast') || text.includes('lunch') || text.includes('dinner') || text.includes('snack') || text.includes('meal')) return UtensilsCrossed;
+  if (text.includes('zoo') || text.includes('ticket') || text.includes('museum') || text.includes('tour') || text.includes('attraction') || text.includes('activity')) return Compass;
+  return Star;
+}
+
+function normalizeDailyCategorySelection(categories: any[]): DailyCategory[] {
+  return categories.map((category, index) => ({
+    key: String(category?.key || category?.label || `daily_item_${index + 1}`),
+    label: String(category?.label || category?.key || `Daily item ${index + 1}`),
+    estimatedCost: Math.max(0, Math.round(Number(category?.estimatedCost || 0))),
+    detail: category?.detail ? String(category.detail) : undefined,
+    selected: category?.selected !== false,
+  }));
+}
+
+function formatDailyCategoryLabel(label: string) {
+  return label.replace(/\s*\/\s*/g, ' / ');
+}
+
 export default function TripPlannerWizard({ onComplete, isLoading, initialStep = 0, initialData, onBudgetOverviewChange }: TripPlannerWizardProps) {
   const [step, setStep] = useState(Math.min(Math.max(initialStep, 0), STEPS.length - 1));
   const [direction, setDirection] = useState(1);
@@ -246,7 +369,9 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
       dailyExpenseBudget: 0,
       budgetFlightCabins: [],
       budgetHotelStars: [],
+      budgetHotelAveragesByStars: {},
       includePlaceVisits: true,
+      dailyCategories: [],
       includeHotel: true,
       hotelStars: 4,
       hotelRooms: 1,
@@ -258,8 +383,8 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
       includeTransport: true,
       transportTypes: ['public_bus'],
       transportPriority: 'cheapest',
+      transportBudgetSelections: {},
       vibes: [],
-      destinationStates: [],
     };
     const merged = { ...defaults, ...initialData };
     const budgetMax = Number(initialData?.budgetMax ?? initialData?.totalBudget ?? defaults.budgetMax);
@@ -281,11 +406,6 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
     return next;
   });
   const [transportLoading, setTransportLoading] = useState(false);
-  const [countryCities, setCountryCities] = useState<GeocodedCity[]>([]);
-  const [countryStates, setCountryStates] = useState<string[]>([]);
-  const [citiesLoading, setCitiesLoading] = useState(false);
-  const [citiesError, setCitiesError] = useState('');
-  const cityFetchKeyRef = useRef('');
   const [budgetEstimateLoading, setBudgetEstimateLoading] = useState(false);
   const [budgetEstimateError, setBudgetEstimateError] = useState('');
   const [budgetEstimateNote, setBudgetEstimateNote] = useState('');
@@ -295,7 +415,6 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
   const [budgetFlightAverages, setBudgetFlightAverages] = useState<Record<BudgetFlightCabinClass, number> | null>(null);
   const [selectedBudgetHotelStars, setSelectedBudgetHotelStars] = useState<number[]>([]);
   const [budgetHotelAveragesByStars, setBudgetHotelAveragesByStars] = useState<Record<string, number> | null>(null);
-  const [budgetHotelDebugByStars, setBudgetHotelDebugByStars] = useState<Record<string, any[]> | null>(null);
   const [includePlaceVisits, setIncludePlaceVisits] = useState(true);
 
   const getBudgetAutoAllocateKey = (current: PlannerData, placesEnabled: boolean) => [
@@ -317,48 +436,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
     current.includeTransport,
     placesEnabled,
     (current.vibes || []).join(','),
-    (current.destinationStates || []).join(','),
   ].join('|');
-
-  const fetchCountryCities = useCallback(async (country: string) => {
-    const lookupKey = country.trim().toLowerCase();
-    if (!lookupKey || cityFetchKeyRef.current === lookupKey) return;
-
-    cityFetchKeyRef.current = lookupKey;
-    setCitiesLoading(true);
-    setCitiesError('');
-    setCountryCities([]);
-    setCountryStates([]);
-    try {
-      const response = await fetch(`/api/geocoded/cities?country=${encodeURIComponent(country)}&limit=80`);
-      const json = await response.json();
-      if (!response.ok || json?.error) throw new Error(json?.error || 'Could not load cities.');
-      setCountryCities(Array.isArray(json?.cities) ? json.cities : []);
-      setCountryStates(Array.isArray(json?.states) ? json.states : []);
-    } catch (error: any) {
-      cityFetchKeyRef.current = '';
-      setCountryCities([]);
-      setCountryStates([]);
-      setCitiesError(error?.message || 'Could not load cities.');
-    } finally {
-      setCitiesLoading(false);
-    }
-  }, []);
-
-  const countryCitiesLookup = data.destinationCountryCode || data.destinationCountry || '';
-  const countryStateOptions = useMemo(() => {
-    const sourceStates = countryStates.length ? countryStates : countryCities.map(city => city.state || '');
-    const seen = new Set<string>();
-    return sourceStates
-      .map(state => state.trim())
-      .filter(state => {
-        const key = state.toLowerCase();
-        if (!state || seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      })
-      .sort((a, b) => a.localeCompare(b));
-  }, [countryCities, countryStates]);
 
   const fetchBudgetEstimates = async () => {
     const budgetAutoKey = getBudgetAutoAllocateKey(data, includePlaceVisits);
@@ -398,7 +476,6 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
         transportTypes: ALL_TRANSPORT_TYPES,
         transportPriority: data.transportPriority,
         vibes: data.vibes,
-        destinationStates: data.destinationStates,
         includePlaceVisits,
         allowTransportLookup: step === 3,
         stepContext: step === 3 ? 'budget' : 'other',
@@ -420,14 +497,25 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
       };
       const defaultFlightCabin: BudgetFlightCabinClass = data.cabinClass === 'business' ? 'business' : 'economy';
       const defaultHotelStar = Math.max(1, Math.min(5, Math.round(Number(data.hotelStars) || 3)));
-      const hotelAveragesByStars = json.hotelAveragesByStars || {};
+      const hotelAveragesByStars = Object.fromEntries(
+        Object.entries(json.hotelAveragesByStars || {})
+          .map(([star, value]) => [star, Math.round(Number(value) || 0)])
+          .filter(([, value]) => Number(value) > 0)
+      ) as Record<string, number>;
+      const nextTransportOptions = Array.isArray(json.transportOptions) ? json.transportOptions : data.transportOptions || [];
+      const nextTransportBudgetSelections = buildDefaultTransportSelections(nextTransportOptions, travelerCount);
       const flightPerPerson = data.includeFlight ? Math.round(Number(flightAverages[defaultFlightCabin]) || 0) : 0;
       const transportPerPersonPerDay = Math.round(Number(json.transportPerPersonPerDay ?? json.transportPerPerson) || 0);
-      const placeVisitCostPerDay = Math.round(Number(json.placeVisitCostPerDay ?? json.placeVisitCost) || 0);
+      const nextDailyCategories = Array.isArray(json.dailyCategories) ? normalizeDailyCategorySelection(json.dailyCategories) : data.dailyCategories || [];
+      const selectedDailyCategoryTotal = nextDailyCategories
+        .filter(category => category.selected !== false)
+        .reduce((sum, category) => sum + Number(category.estimatedCost || 0), 0);
+      const placeVisitCostPerDay = Math.round(selectedDailyCategoryTotal || Number(json.placeVisitCostPerDay ?? json.placeVisitCost) || 0);
       const flightBudget = data.includeFlight ? flightPerPerson * travelerCount : 0;
       const hotelNightlyAverage = data.includeHotel ? Math.round(Number(hotelAveragesByStars[String(defaultHotelStar)]) || 0) : 0;
       const hotelBudget = data.includeHotel ? hotelNightlyAverage * Math.max(1, data.hotelRooms) * safeNights : 0;
-      const transportBudget = data.includeTransport ? transportPerPersonPerDay * travelerCount * safeNights : 0;
+      const selectedTransportBudget = calculateTransportBudgetFromSelections(nextTransportOptions, nextTransportBudgetSelections, safeNights);
+      const transportBudget = data.includeTransport ? (selectedTransportBudget || transportPerPersonPerDay * travelerCount * safeNights) : 0;
       const dailyExpenseBudget = includePlaceVisits ? placeVisitCostPerDay * travelerCount * safeNights : 0;
       const allocatedTotalBudget = flightBudget + hotelBudget + transportBudget + dailyExpenseBudget;
       console.log('[Budget auto allocate] Applying selected live values', {
@@ -446,14 +534,18 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
         flightBudget,
         hotelBudget,
         transportBudget,
+        transportOptions: nextTransportOptions,
+        transportDataSource: json.sources?.transport || data.transportDataSource,
+        transportBudgetSelections: nextTransportBudgetSelections,
         dailyExpenseBudget,
+        dailyCategories: nextDailyCategories,
         budgetFlightCabins: data.includeFlight ? [defaultFlightCabin] : [],
         budgetHotelStars: data.includeHotel ? [defaultHotelStar] : [],
+        budgetHotelAveragesByStars: hotelAveragesByStars,
       });
       setBudgetFlightAverages(flightAverages);
       setSelectedBudgetFlightCabins(data.includeFlight ? [defaultFlightCabin] : []);
-      setBudgetHotelAveragesByStars(hotelAveragesByStars || null);
-      setBudgetHotelDebugByStars(json.hotelDebugByStars || null);
+      setBudgetHotelAveragesByStars(Object.keys(hotelAveragesByStars).length ? hotelAveragesByStars : null);
       setSelectedBudgetHotelStars(data.includeHotel ? [defaultHotelStar] : []);
       setBudgetAutoAllocated(true);
       budgetAutoAllocatedKeyRef.current = budgetAutoKey;
@@ -546,18 +638,11 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
       setBudgetFlightAverages(null);
       setSelectedBudgetFlightCabins([]);
       setBudgetHotelAveragesByStars(null);
-      setBudgetHotelDebugByStars(null);
       setSelectedBudgetHotelStars([]);
       setBudgetEstimateNote('');
       setBudgetEstimateError('');
     }
   }, [budgetAutoAllocated, budgetAutoAllocateKey]);
-
-  useEffect(() => {
-    if (activeContentStep === 6 && countryCitiesLookup) {
-      void fetchCountryCities(countryCitiesLookup);
-    }
-  }, [activeContentStep, countryCitiesLookup, fetchCountryCities]);
 
   const progress = ((step + 1) / STEPS.length) * 100;
 
@@ -686,7 +771,6 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
 
   const getTransportOption = (type: TransportType) => data.transportOptions?.find(option => option.id === type || option.transportType === type);
   const destinationLabel = data.destinationCity || data.destination || 'this destination';
-  const countryCitiesLabel = data.destinationCountry || data.destinationCountryCode || 'this country';
 
   const renderStep = () => {
     switch (activeContentStep) {
@@ -713,15 +797,15 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
               <label className="small-caps ml-1">To</label>
               <AirportAutocomplete
                 value={data.destination}
-                onSelect={(v) => update({ destination: v, destinationCity: undefined, destinationCountry: undefined, destinationCountryCode: undefined, destinationStates: [], transportOptions: undefined, transportDataSource: undefined })}
+                onSelect={(v) => update({ destination: v, destinationCity: undefined, destinationCountry: undefined, destinationCountryCode: undefined, transportOptions: undefined, transportDataSource: undefined, transportBudgetSelections: {} })}
                 onSelectSuggestion={(suggestion) => update({
                   destination: suggestion.iata_code,
                   destinationCity: suggestion.city_name,
                   destinationCountry: suggestion.country_name,
                   destinationCountryCode: suggestion.country_code || suggestion.iata_country_code,
-                  destinationStates: [],
                   transportOptions: undefined,
                   transportDataSource: undefined,
+                  transportBudgetSelections: {},
                 })}
                 placeholder="Arrival City"
               />
@@ -1154,7 +1238,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                   <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
                   <p className="text-xs text-amber-600 dark:text-amber-400 leading-relaxed">
                     ⚠️ Your budget may be too low for {cabinLabel} flights and {data.hotelStars}-star hotels.
-                    We'll show the best available options within your budget.
+                    We&apos;ll show the best available options within your budget.
                   </p>
                 </div>
                 <div className="flex items-start gap-3 py-3 px-5 rounded-2xl bg-muted border border-border">
@@ -1223,7 +1307,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                       {data.nights} night{data.nights !== 1 ? 's' : ''} × {data.hotelRooms} apartment{data.hotelRooms !== 1 ? 's' : ''} with {data.hotelRoomsPerApartment || 1} room{(data.hotelRoomsPerApartment || 1) !== 1 ? 's' : ''} inside each × ${(HOTEL_NIGHTLY[data.hotelStars] || 160).toLocaleString()}/night = ${((HOTEL_NIGHTLY[data.hotelStars] || 160) * data.nights * Math.max(1, data.hotelRooms)).toLocaleString()}
                     </div>
                     <div className="text-[10px] text-muted-foreground/50">
-                      Adjust if you won't need a hotel for the full duration.
+                      Adjust if you won&apos;t need a hotel for the full duration.
                     </div>
                   </div>
                 </div>
@@ -1398,6 +1482,10 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
         const perPersonTransportDayBudget = data.includeTransport ? Math.round(perPersonTransportBudget / safeNights) : 0;
         const placeVisitDayBudget = placesEnabled ? Math.round(perPersonPlaceBudget / safeNights) : 0;
         const travelerText = `${travelerCount} traveler${travelerCount !== 1 ? 's' : ''}`;
+        const savedBudgetHotelAveragesByStars = data.budgetHotelAveragesByStars && Object.keys(data.budgetHotelAveragesByStars).length
+          ? data.budgetHotelAveragesByStars
+          : null;
+        const appliedBudgetHotelAveragesByStars = budgetHotelAveragesByStars || savedBudgetHotelAveragesByStars;
         const unlockBudgetAutoAllocate = () => {
           if (!budgetAutoAllocated) return;
           setBudgetAutoAllocated(false);
@@ -1445,7 +1533,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
           const highestSelectedStar = nextSelection.length ? Math.max(...nextSelection) : null;
           setSelectedBudgetHotelStars(nextSelection);
 
-          if (!budgetHotelAveragesByStars || !data.includeHotel) {
+          if (!appliedBudgetHotelAveragesByStars || !data.includeHotel) {
             setBudgetEstimateNote(
               highestSelectedStar
                 ? `Manual hotel budget marked up to ${highestSelectedStar}-star apartments.`
@@ -1454,7 +1542,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
             return;
           }
 
-          const nightlyAverage = highestSelectedStar ? Number(budgetHotelAveragesByStars[String(highestSelectedStar)] || 0) : 0;
+          const nightlyAverage = highestSelectedStar ? Number(appliedBudgetHotelAveragesByStars[String(highestSelectedStar)] || 0) : 0;
           update({
             budgetMode: 'per_category',
             hotelBudget: nightlyAverage > 0 ? nightlyAverage * hotelApartmentCount * safeNights : 0,
@@ -1542,7 +1630,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
           {
             key: 'transport',
             label: 'Transportation for travelers',
-            detail: data.includeTransport ? (data.transportBudget > 0 ? `$${perPersonTransportDayBudget.toLocaleString()} per traveler/day × ${safeNights} day${safeNights !== 1 ? 's' : ''} × ${travelerText}` : pendingAutoText) : 'Transportation turned off',
+            detail: data.includeTransport ? (data.transportBudget > 0 ? `$${Math.round(data.transportBudget / safeNights).toLocaleString()} per day × ${safeNights} day${safeNights !== 1 ? 's' : ''}` : pendingAutoText) : 'Transportation turned off',
             icon: Bus,
             value: data.transportBudget,
             max: 30000,
@@ -1587,6 +1675,58 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
           (placesEnabled ? data.dailyExpenseBudget : 0);
         const budgetDelta = data.totalBudget - consumedBudget;
         const budgetFits = budgetDelta >= 0;
+        const transportBudgetPreviewTypes: TransportType[] = ['public_bus', 'taxi', 'rideshare_uber', 'metro_subway', 'rental_car'];
+        const selectedTransportDailyTotal = data.transportOptions?.length
+          ? calculateTransportBudgetFromSelections(data.transportOptions, data.transportBudgetSelections, 1)
+          : 0;
+        const updateTransportSelections = (nextSelections: Partial<Record<TransportType, TransportBudgetSelection>>) => {
+          const nextBudget = calculateTransportBudgetFromSelections(data.transportOptions, nextSelections, safeNights);
+          update({
+            transportBudgetSelections: nextSelections,
+            transportBudget: nextBudget,
+            budgetMode: 'per_category',
+          });
+        };
+        const toggleTransportBudgetType = (type: TransportType) => {
+          const current = data.transportBudgetSelections?.[type];
+          const nextSelections = {
+            ...(data.transportBudgetSelections || {}),
+            [type]: {
+              selected: current?.selected !== true,
+              quantity: Math.max(1, Number(current?.quantity || getDefaultTransportQuantity(type, travelerCount))),
+            },
+          };
+          updateTransportSelections(nextSelections);
+        };
+        const changeTransportQuantity = (type: TransportType, delta: number) => {
+          const current = data.transportBudgetSelections?.[type];
+          const nextQuantity = Math.max(1, Number(current?.quantity || getDefaultTransportQuantity(type, travelerCount)) + delta);
+          const nextSelections = {
+            ...(data.transportBudgetSelections || {}),
+            [type]: {
+              selected: true,
+              quantity: nextQuantity,
+            },
+          };
+          updateTransportSelections(nextSelections);
+        };
+        const dailyCategoryPreview = (data.dailyCategories || []).slice(0, 10);
+        const selectedDailyCategorySum = dailyCategoryPreview
+          .filter(category => category.selected !== false)
+          .reduce((sum, category) => sum + Number(category.estimatedCost || 0), 0);
+        const toggleDailyCategory = (categoryKey: string) => {
+          const nextCategories = (data.dailyCategories || []).map(category =>
+            category.key === categoryKey ? { ...category, selected: category.selected === false } : category
+          );
+          const nextDailyTotal = nextCategories
+            .filter(category => category.selected !== false)
+            .reduce((sum, category) => sum + Number(category.estimatedCost || 0), 0);
+          update({
+            dailyCategories: nextCategories,
+            dailyExpenseBudget: nextDailyTotal * travelerCount * safeNights,
+            budgetMode: 'per_category',
+          });
+        };
         const switchBudgetMode = (budgetMode: BudgetMode) => {
           unlockBudgetAutoAllocate();
           if (budgetMode === 'total') {
@@ -1595,7 +1735,6 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
             setBudgetFlightAverages(null);
             setSelectedBudgetFlightCabins([]);
             setBudgetHotelAveragesByStars(null);
-            setBudgetHotelDebugByStars(null);
             setSelectedBudgetHotelStars([]);
             update({ budgetMode });
             return;
@@ -1626,17 +1765,13 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                 <div className={`py-7 px-6 rounded-3xl bg-muted border border-border ${fixedBudgetMode ? 'sm:col-span-2' : ''}`}>
                   <div className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground mb-2">Main Budget</div>
                   <div className="text-5xl font-bold text-foreground title-text">
-                    {fixedBudgetMode
-                      ? `$${data.budgetMin.toLocaleString()} - $${data.budgetMax.toLocaleString()}`
-                      : `$${data.totalBudget.toLocaleString()}`}
+                    ${data.budgetMin.toLocaleString()} - ${data.budgetMax.toLocaleString()}
                   </div>
-                  {fixedBudgetMode && (
-                    <div className="text-xs text-muted-foreground/60 mt-2">
-                      ~${Math.round(data.budgetMin / (data.adults || 1)).toLocaleString()} - ${Math.round(data.budgetMax / (data.adults || 1)).toLocaleString()} per person
-                    </div>
-                  )}
                   <div className="text-xs text-muted-foreground/60 mt-2">
-                    {fixedBudgetMode ? 'AI will search for options within this range. The upper limit is your hard ceiling.' : 'Total money available for this trip plan'}
+                    ~${Math.round(data.budgetMin / (data.adults || 1)).toLocaleString()} - ${Math.round(data.budgetMax / (data.adults || 1)).toLocaleString()} per person
+                  </div>
+                  <div className="text-xs text-muted-foreground/60 mt-2">
+                    {fixedBudgetMode ? 'AI will search for options within this range. The upper limit is your hard ceiling.' : 'Total money available for this trip plan. Detailed budgets use the upper limit as your ceiling.'}
                   </div>
                 </div>
                 {!fixedBudgetMode && (
@@ -1768,7 +1903,9 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                     </div>
                     <div className="mt-5 flex items-end justify-between gap-4">
                       <div>
-                        <div className="text-[10px] uppercase tracking-[0.16em] font-bold text-muted-foreground/50">Selected value</div>
+                        <div className="text-[10px] uppercase tracking-[0.16em] font-bold text-muted-foreground/50">
+                          {item.key === 'places' ? 'Needed money each day' : 'Selected value'}
+                        </div>
                         <div className="mt-1 text-xl font-bold text-foreground font-mono">
                           ${item.value.toLocaleString()}
                         </div>
@@ -1779,6 +1916,162 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                         )}
                       </div>
                     </div>
+                    {item.key === 'transport' && item.enabled && (
+                      <div className="mt-4 rounded-2xl border border-border bg-background p-3">
+                        <div className="mb-2 flex items-center justify-between gap-3">
+                          <span className="text-[10px] font-black uppercase tracking-[0.16em] text-muted-foreground/60">
+                            Transport options from auto allocate
+                          </span>
+                          {data.transportOptions?.length ? (
+                            <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground/50">
+                              ${selectedTransportDailyTotal.toLocaleString()} per day
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                          {transportBudgetPreviewTypes.map(type => {
+                            const optionMeta = TRANSPORT_OPTIONS.find(option => option.value === type);
+                            const liveOption = getTransportOption(type);
+                            const available = liveOption?.available !== false;
+                            const Icon = optionMeta?.icon || Bus;
+                            const transportPrice = formatTransportUsdPrice(liveOption);
+                            const selection = data.transportBudgetSelections?.[type];
+                            const selected = selection?.selected === true;
+                            const quantity = Math.max(1, Number(selection?.quantity || getDefaultTransportQuantity(type, travelerCount)));
+                            const unitLabel = isVehicleTransport(type) ? (quantity === 1 ? 'car' : 'cars') : (quantity === 1 ? 'ticket' : 'tickets');
+                            return (
+                              <div
+                                key={`budget-${type}`}
+                                className={`rounded-xl border px-3 py-3 text-left transition ${
+                                  selected
+                                    ? 'border-emerald-500 bg-background text-foreground shadow-sm'
+                                    : available
+                                      ? 'border-border bg-background text-foreground'
+                                      : 'border-border/70 bg-muted/50 text-muted-foreground/60'
+                                }`}
+                              >
+                                <button
+                                  type="button"
+                                  disabled={!available}
+                                  onClick={() => toggleTransportBudgetType(type)}
+                                  className="w-full text-left disabled:cursor-not-allowed"
+                                  aria-pressed={selected}
+                                >
+                                  <div className="flex min-w-0 items-start gap-2">
+                                    <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                                    <div className="min-w-0 text-[11px] font-black uppercase leading-snug tracking-[0.14em] text-foreground">
+                                      {type === 'rideshare_uber' ? 'Uber' : type === 'rental_car' ? 'Rent Car' : optionMeta?.label || liveOption?.displayName || type}
+                                    </div>
+                                    {selected && <Check className="ml-auto h-3.5 w-3.5 shrink-0 text-emerald-600" />}
+                                  </div>
+                                  <div className="mt-3">
+                                    <div className="font-mono text-sm font-black text-foreground">
+                                      {available ? transportPrice.price : 'Unavailable'}
+                                    </div>
+                                    {available && transportPrice.detail && (
+                                      <div className="mt-1 text-[10px] font-bold uppercase tracking-[0.1em] text-muted-foreground/70">
+                                        {transportPrice.detail}
+                                      </div>
+                                    )}
+                                  </div>
+                                </button>
+                                {selected && (
+                                  <div className="mt-3 flex items-center justify-between gap-2 rounded-xl border border-border bg-muted px-2 py-2">
+                                    <span className="min-w-0 text-[10px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+                                      {quantity} {unitLabel}
+                                    </span>
+                                    <div className="flex items-center gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => changeTransportQuantity(type, -1)}
+                                        className="flex h-7 w-7 items-center justify-center rounded-lg border border-border bg-background text-foreground disabled:opacity-40"
+                                        disabled={quantity <= 1}
+                                        aria-label={`Decrease ${optionMeta?.label || type} quantity`}
+                                      >
+                                        <Minus className="h-3.5 w-3.5" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => changeTransportQuantity(type, 1)}
+                                        className="flex h-7 w-7 items-center justify-center rounded-lg border border-border bg-background text-foreground"
+                                        aria-label={`Increase ${optionMeta?.label || type} quantity`}
+                                      >
+                                        <Plus className="h-3.5 w-3.5" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
+                                {selected && liveOption && (
+                                  <div className="mt-2 rounded-lg bg-emerald-500/10 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.1em] text-emerald-700 dark:text-emerald-300">
+                                    ${(getTransportDailyUnitPrice(liveOption) * quantity).toFixed(2)} per day total
+                                  </div>
+                                )}
+                                {liveOption?.notes && (
+                                  <div className="mt-2 text-[10px] leading-relaxed text-muted-foreground break-words">
+                                    {liveOption.notes}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                    {item.key === 'places' && item.enabled && (
+                      <div className="mt-4 rounded-2xl border border-border bg-background p-3">
+                        <div className="mb-2 flex items-center justify-between gap-3">
+                          <span className="text-[10px] font-black uppercase tracking-[0.16em] text-muted-foreground/60">
+                            Daily places and activity estimate
+                          </span>
+                          {dailyCategoryPreview.length ? (
+                            <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground/50">
+                              ${selectedDailyCategorySum.toLocaleString()} per traveler/day
+                            </span>
+                          ) : null}
+                        </div>
+                        {dailyCategoryPreview.length ? (
+                          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                            {dailyCategoryPreview.map(category => {
+                              const CategoryIcon = getDailyCategoryIcon(category);
+                              const selected = category.selected !== false;
+                              return (
+                                <button
+                                  key={category.key}
+                                  type="button"
+                                  onClick={() => toggleDailyCategory(category.key)}
+                                  className={`min-w-0 rounded-xl border px-3 py-3 text-left transition ${
+                                    selected
+                                      ? 'border-emerald-500 bg-background text-foreground shadow-sm'
+                                      : 'border-border bg-muted/50 text-muted-foreground opacity-70'
+                                  }`}
+                                  aria-pressed={selected}
+                                >
+                                  <div className="flex min-w-0 items-start gap-2">
+                                    <CategoryIcon className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${selected ? 'text-muted-foreground' : 'text-muted-foreground/60'}`} />
+                                    <div className="min-w-0 text-[11px] font-black uppercase leading-snug tracking-[0.1em] text-foreground break-normal">
+                                      {formatDailyCategoryLabel(category.label)}
+                                    </div>
+                                    {selected && <Check className="ml-auto h-3.5 w-3.5 shrink-0 text-emerald-600" />}
+                                  </div>
+                                  <div className="mt-2 font-mono text-sm font-black text-foreground">
+                                    ${Number(category.estimatedCost || 0).toLocaleString()}
+                                  </div>
+                                  {category.detail && (
+                                    <div className="mt-1 text-[10px] leading-relaxed text-muted-foreground break-words">
+                                      {category.detail}
+                                    </div>
+                                  )}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <div className="rounded-xl border border-dashed border-border bg-muted px-3 py-3 text-xs text-muted-foreground">
+                            Press auto allocate to show breakfast, lunch, dinner, coffee, shopping, and activity estimates.
+                          </div>
+                        )}
+                      </div>
+                    )}
                     {item.key === 'flight' && item.enabled && (
                       <div className="mt-4 rounded-2xl border border-border bg-background p-3">
                         <div className="mb-2 flex items-center justify-between gap-3">
@@ -1851,7 +2144,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                             <span className="text-[10px] font-black uppercase tracking-[0.16em] text-muted-foreground/60">
                               Hotel star average to apply
                             </span>
-                            {budgetHotelAveragesByStars && (
+                            {appliedBudgetHotelAveragesByStars && (
                               <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground/50">
                                 Per apartment/night
                               </span>
@@ -1860,8 +2153,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                           <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
                             {BUDGET_HOTEL_STAR_OPTIONS.map(star => {
                               const selected = selectedBudgetHotelStars.includes(star);
-                              const averagePrice = budgetHotelAveragesByStars?.[String(star)];
-                              const sampleCount = budgetHotelDebugByStars?.[String(star)]?.length || 0;
+                              const averagePrice = appliedBudgetHotelAveragesByStars?.[String(star)];
                               return (
                                 <button
                                   key={star}
@@ -1875,11 +2167,6 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                                   <div className={`mt-1 font-mono text-sm font-black ${selected ? 'text-background' : 'text-foreground'}`}>
                                     {averagePrice ? `$${averagePrice.toLocaleString()}` : 'Manual'}
                                   </div>
-                                  {budgetHotelDebugByStars && (
-                                    <div className={`mt-1 text-[9px] font-bold uppercase tracking-[0.1em] ${selected ? 'text-background/70' : 'text-muted-foreground/50'}`}>
-                                      {sampleCount} sample{sampleCount !== 1 ? 's' : ''}
-                                    </div>
-                                  )}
                                 </button>
                               );
                             })}
@@ -1887,57 +2174,6 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                           {selectedBudgetHotelStars.length > 0 && (
                             <div className="mt-3 rounded-xl border border-border bg-background px-3 py-2 text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
                               Applying {Math.max(...selectedBudgetHotelStars)}-star because it is the highest selected category.
-                            </div>
-                          )}
-                          {budgetHotelDebugByStars && (
-                            <div className="mt-4 space-y-3">
-                              <div className="flex items-center justify-between gap-3">
-                                <span className="text-[10px] font-black uppercase tracking-[0.16em] text-muted-foreground/60">
-                                  SerpApi hotel samples used
-                                </span>
-                                <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground/50">
-                                  Sorted by nightly price
-                                </span>
-                              </div>
-                              <div className="grid gap-3">
-                                {BUDGET_HOTEL_STAR_OPTIONS.map(star => {
-                                  const samples = budgetHotelDebugByStars[String(star)] || [];
-                                  const averagePrice = budgetHotelAveragesByStars?.[String(star)];
-                                  return (
-                                    <div key={`hotel-debug-${star}`} className="rounded-2xl border border-border bg-background p-3">
-                                      <div className="mb-2 flex items-center justify-between gap-3">
-                                        <div className="text-[11px] font-black uppercase tracking-[0.14em] text-foreground">
-                                          {star} Star
-                                        </div>
-                                        <div className="font-mono text-xs font-black text-foreground">
-                                          Avg {averagePrice ? `$${averagePrice.toLocaleString()}` : 'Manual'} / night
-                                        </div>
-                                      </div>
-                                      {samples.length > 0 ? (
-                                        <div className="max-h-44 space-y-2 overflow-y-auto pr-1">
-                                          {samples.map((sample: any, index: number) => (
-                                            <div key={`${star}-${sample.name}-${index}`} className="grid gap-2 rounded-xl border border-border/70 bg-muted px-3 py-2 text-xs sm:grid-cols-[1fr_auto]">
-                                              <div className="min-w-0">
-                                                <div className="truncate font-bold text-foreground">{sample.name}</div>
-                                                <div className="mt-0.5 text-[10px] text-muted-foreground">
-                                                  Parsed {sample.parsedStars || 'unknown'} star{sample.hotelClass ? ` / ${sample.hotelClass}` : ''}
-                                                </div>
-                                              </div>
-                                              <div className="font-mono text-sm font-black text-foreground">
-                                                ${Number(sample.nightlyPrice || 0).toLocaleString()}
-                                              </div>
-                                            </div>
-                                          ))}
-                                        </div>
-                                      ) : (
-                                        <div className="rounded-xl border border-dashed border-border bg-muted px-3 py-3 text-xs text-muted-foreground">
-                                          No direct SerpApi samples for this bucket. The shown average is fallback-scaled from available hotel data.
-                                        </div>
-                                      )}
-                                    </div>
-                                  );
-                                })}
-                              </div>
                             </div>
                           )}
                         </div>
@@ -1971,9 +2207,9 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
             <div className="text-center py-6 px-6 rounded-3xl bg-muted border border-border">
               <div className="flex items-center justify-center gap-3 mb-3">
                 <Compass className="w-6 h-6 text-foreground" />
-                <span className="text-lg font-bold text-foreground">What's Your Vibe?</span>
+                <span className="text-lg font-bold text-foreground">What&apos;s Your Vibe?</span>
               </div>
-              <p className="text-xs text-muted-foreground/60">Select the experiences you're looking for. Choose as many as you like.</p>
+              <p className="text-xs text-muted-foreground/60">Select the experiences you&apos;re looking for. Choose as many as you like.</p>
             </div>
             <div className="grid grid-cols-2 gap-3">
               {VIBE_OPTIONS.map(v => {
@@ -1993,74 +2229,8 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                 );
               })}
             </div>
-            <div className="space-y-4 rounded-3xl border border-border bg-muted p-5">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <div className="text-sm font-bold text-foreground">States in {countryCitiesLabel}</div>
-                  <p className="mt-1 text-xs leading-relaxed text-muted-foreground/70">
-                    Select one or more regions you would consider visiting.
-                  </p>
-                </div>
-                {citiesLoading && <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />}
-              </div>
-
-              {!countryCitiesLookup && (
-                <div className="rounded-2xl border border-dashed border-border bg-background px-4 py-3 text-xs text-muted-foreground">
-                  Select your destination from the Step 1 airport suggestions so we can load cities automatically.
-                </div>
-              )}
-
-              {citiesLoading && (
-                <div className="flex items-center gap-3 rounded-2xl border border-border bg-background px-4 py-4 text-xs font-bold uppercase tracking-[0.14em] text-muted-foreground">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Loading states from {countryCitiesLabel}
-                </div>
-              )}
-
-              {citiesError && (
-                <div className="rounded-2xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-xs text-red-500">
-                  {citiesError}
-                </div>
-              )}
-
-              {!citiesLoading && countryCitiesLookup && !citiesError && countryStateOptions.length === 0 && cityFetchKeyRef.current && (
-                <div className="rounded-2xl border border-dashed border-border bg-background px-4 py-3 text-xs text-muted-foreground">
-                  No state options came back for {countryCitiesLabel}.
-                </div>
-              )}
-
-              {!citiesLoading && countryStateOptions.length > 0 && (
-                <div className="grid grid-cols-2 gap-2">
-                  {countryStateOptions.map(stateName => {
-                    const selected = data.destinationStates.includes(stateName);
-                    return (
-                      <button
-                        key={stateName}
-                        type="button"
-                        onClick={() => update({
-                          destinationStates: selected
-                            ? data.destinationStates.filter(state => state !== stateName)
-                            : [...data.destinationStates, stateName]
-                        })}
-                        className={`min-h-[76px] rounded-2xl border px-4 py-3 text-left transition-all ${
-                          selected
-                            ? 'border-emerald-500 bg-emerald-500 text-white shadow-lg shadow-emerald-500/20'
-                            : 'border-border bg-background text-muted-foreground hover:border-foreground/30 hover:text-foreground'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <MapPin className="h-3.5 w-3.5" />
-                          <span className="text-[11px] font-black uppercase tracking-[0.12em]">{stateName}</span>
-                          {selected && <Check className="ml-auto h-3.5 w-3.5" />}
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
             {data.vibes.length === 0 && (
-              <p className="text-center text-[10px] text-muted-foreground/40 uppercase tracking-wider">No vibe selected - we'll show a general mix of top attractions</p>
+              <p className="text-center text-[10px] text-muted-foreground/40 uppercase tracking-wider">No vibe selected - we&apos;ll show a general mix of top attractions</p>
             )}
           </div>
         );
@@ -2094,7 +2264,6 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                       ].filter(Boolean).join(' - ') || 'No categories enabled'
                 },
                 { label: 'Vibe', value: data.vibes.length > 0 ? data.vibes.map(v => VIBE_OPTIONS.find(vo => vo.id === v)?.emoji || '').join(' ') : 'General mix', sub: data.vibes.length > 0 ? data.vibes.map(v => VIBE_OPTIONS.find(vo => vo.id === v)?.label || '').join(', ') : 'All attractions' },
-                { label: 'Regions', value: data.destinationStates.length > 0 ? `${data.destinationStates.length} selected` : 'Not limited', sub: data.destinationStates.length > 0 ? data.destinationStates.join(', ') : data.destinationCountry || data.destinationCountryCode || 'Destination country' },
               ].map((item, i) => (
                 <div key={i} className="py-4 px-5 rounded-2xl bg-muted border border-border">
                   <div className="text-[9px] uppercase tracking-[0.2em] font-bold text-muted-foreground/40 mb-1">{item.label}</div>
