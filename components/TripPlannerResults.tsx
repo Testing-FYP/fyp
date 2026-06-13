@@ -1,6 +1,6 @@
 'use client';
 
-import { ReactNode, useMemo, useState } from 'react';
+import { ReactNode, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion } from 'motion/react';
 import {
@@ -92,7 +92,7 @@ function formatDate(value: string) {
   if (!value) return 'Date not set';
   const date = new Date(`${value}T00:00:00`);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
 }
 
 function formatShortDate(value: string) {
@@ -109,7 +109,7 @@ function formatTime(value: string) {
   if (!value) return 'Time TBA';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value.slice(11, 16) || value;
-  return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+  return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' });
 }
 
 function formatDuration(value: any) {
@@ -556,14 +556,14 @@ function BudgetFitPanel({ agent, backgroundImage = '', plannerData }: { agent: a
         return transportStats.total;
       }
     }
+    if (category?.key === 'dailyExpenses') {
+      return asNumber(category?.selectedTotalPrice ?? category?.cheapestPrice);
+    }
     const value = asNumber(category?.selectedPriceStats?.average ?? category?.selectedTotalPrice ?? category?.cheapestPrice);
     if (category?.comparisonBasis === 'trip_total') {
       if (!category?.selectedPriceStats && value !== null && ['flights', 'hotels', 'transport'].includes(category?.key) && Number(category?.shownCount) > 1) {
         const cheapest = asNumber(category?.cheapestPrice);
         if (cheapest !== null && value > cheapest * 1.5) return cheapest;
-      }
-      if (!category?.selectedPriceStats && value !== null && category?.key === 'dailyExpenses' && Number(category?.shownCount) > 1) {
-        return Math.round(value / Number(category.shownCount));
       }
       return value;
     }
@@ -586,7 +586,7 @@ function BudgetFitPanel({ agent, backgroundImage = '', plannerData }: { agent: a
   const realDataLabel = (category: any) => {
     if (category?.key === 'hotels') return 'Real total stay selected';
     if (category?.key === 'transport') return 'Real trip transport selected';
-    if (category?.key === 'dailyExpenses') return 'Avg vibe spend selected';
+    if (category?.key === 'dailyExpenses') return 'Selected daily places total';
     return 'Real data selected';
   };
   const realDataRangeLabel = (category: any) => {
@@ -1792,21 +1792,78 @@ export function TransportCard({
 }
 
 export function PlaceCard({ place }: { place: any }) {
+  const isBudgetCategory = place?.selectedFromBudget === true || place?.source === 'budget_daily_category';
   return (
     <article className="rounded-3xl border border-border bg-card p-5 shadow-sm">
       <div className="flex items-start justify-between gap-4">
         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
           <MapPin className="h-5 w-5" />
         </div>
-        <Badge tone="green" strong>{formatMoney(place?.estimatedCost ?? 0, 'Cost varies')}</Badge>
+        <div className="flex flex-col items-end gap-2">
+          {isBudgetCategory ? <Badge tone="blue" strong>Budget category</Badge> : <Badge tone="amber" strong>Vibes</Badge>}
+          <Badge tone="green" strong>{formatMoney(place?.estimatedCost ?? 0, 'Cost varies')}</Badge>
+        </div>
       </div>
       <h3 className="mt-4 text-lg font-black text-foreground">{place?.name || 'Place unavailable'}</h3>
+      {place?.categoryLabel ? (
+        <p className="mt-1 text-xs font-black uppercase tracking-[0.14em] text-muted-foreground">{place.categoryLabel}</p>
+      ) : null}
       <p className="mt-2 min-h-16 text-sm leading-relaxed text-muted-foreground">{place?.description || 'Description unavailable from the current data source.'}</p>
-      <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-border pt-4">
-        <Badge tone="amber" strong><Star className="h-4 w-4" />{place?.rating ? `${place.rating}` : 'Rating N/A'}</Badge>
-        <Badge strong>{place?.reviewsCount ? `${place.reviewsCount.toLocaleString()} reviews` : 'Reviews N/A'}</Badge>
-      </div>
     </article>
+  );
+}
+
+function BudgetCategoryPlaceSlider({ label, places }: { label: string; places: any[] }) {
+  const [activeIndex, setActiveIndex] = useState(0);
+  const pageSize = 3;
+  const total = places.length;
+  const safeIndex = total ? Math.min(activeIndex, Math.max(0, total - pageSize)) : 0;
+  const visiblePlaces = places.slice(safeIndex, safeIndex + pageSize);
+  const canSlide = total > pageSize;
+
+  useEffect(() => {
+    if (activeIndex > Math.max(0, total - pageSize)) setActiveIndex(0);
+  }, [activeIndex, total, pageSize]);
+
+  if (!visiblePlaces.length) return null;
+
+  return (
+    <section className="space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-xs font-black uppercase tracking-[0.18em] text-muted-foreground">Budget category</p>
+          <h4 className="mt-1 text-2xl title-text text-foreground">{label}</h4>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setActiveIndex(index => Math.max(0, index - pageSize))}
+            disabled={!canSlide}
+            className="flex h-10 w-10 items-center justify-center rounded-full border border-border bg-card text-foreground transition hover:border-foreground/30 disabled:cursor-not-allowed disabled:opacity-35"
+            aria-label={`Previous ${label} option`}
+          >
+            <ChevronLeft className="h-5 w-5" />
+          </button>
+          <span className="min-w-10 text-center text-xs font-black text-muted-foreground">
+            {safeIndex + 1}-{Math.min(total, safeIndex + pageSize)}/{total}
+          </span>
+          <button
+            type="button"
+            onClick={() => setActiveIndex(index => Math.min(Math.max(0, total - pageSize), index + pageSize))}
+            disabled={!canSlide}
+            className="flex h-10 w-10 items-center justify-center rounded-full border border-border bg-card text-foreground transition hover:border-foreground/30 disabled:cursor-not-allowed disabled:opacity-35"
+            aria-label={`Next ${label} option`}
+          >
+            <ChevronRight className="h-5 w-5" />
+          </button>
+        </div>
+      </div>
+      <div className="grid gap-4 lg:grid-cols-3">
+        {visiblePlaces.map((place: any, index: number) => (
+          <PlaceCard key={`${place?.name || label}-${safeIndex + index}`} place={place} />
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -1990,12 +2047,6 @@ function AISummary({ summary, destination, selections, plannerData }: { summary:
 
 export default function TripPlannerResults({ results, onUpsell, isUpselling, plannerData }: TripPlannerResultsProps) {
   const [activeSection, setActiveSection] = useState('overview');
-  const [flightFilter, setFlightFilter] = useState('best');
-  const [hotelFilter, setHotelFilter] = useState('recommended');
-  const [flightMaxPrice, setFlightMaxPrice] = useState<number>(10000);
-  const [hotelMaxPrice, setHotelMaxPrice] = useState<number>(10000);
-  const [hotelStarFilter, setHotelStarFilter] = useState<number[]>([]);
-  const [placeFilter, setPlaceFilter] = useState('all');
   const [expandedCards, setExpandedCards] = useState<Set<number>>(new Set());
 
   const destination = getDestinationDisplay(results, plannerData);
@@ -2012,93 +2063,28 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
   const budgetFlightCabins = normalizeBudgetFlightCabins(plannerData);
   const appliedFlightCabin = budgetFlightCabins.includes('business') ? 'business' : budgetFlightCabins[0] || 'economy';
 
-  const cabinMatchedFlights = useMemo(() => {
-    const cabinFiltered = [...sourceFlights].filter(flight => getFlightCabin(flight) === appliedFlightCabin);
-    return cabinFiltered.length ? cabinFiltered : [...sourceFlights];
-  }, [sourceFlights, appliedFlightCabin]);
-
-  const priceFilteredFlights = useMemo(() => {
-    return cabinMatchedFlights.filter(flight => {
-      const price = getFlightPrice(flight);
-      return price === null || price <= flightMaxPrice;
-    });
-  }, [cabinMatchedFlights, flightMaxPrice]);
-
-  const flightTabCounts = useMemo(() => {
-    const priced = priceFilteredFlights.filter(flight => getFlightPrice(flight) !== null);
-    return {
-      best: priced.length,
-      cheapest: priced.length,
-      fastest: priced.length,
-      nonstop: priced.filter(flight => getFlightEndpoints(flight).segments.length <= 1).length,
-    };
-  }, [priceFilteredFlights]);
-
   const flights = useMemo(() => {
-    const pricedFlights = priceFilteredFlights.filter(flight => getFlightPrice(flight) !== null);
-    if (flightFilter === 'cheapest') return pricedFlights.sort((a, b) => (getFlightPrice(a) ?? Infinity) - (getFlightPrice(b) ?? Infinity));
-    if (flightFilter === 'fastest') return pricedFlights.sort((a, b) => getDurationMinutes(a) - getDurationMinutes(b));
-    if (flightFilter === 'nonstop') return pricedFlights.filter(flight => getFlightEndpoints(flight).segments.length <= 1);
-    pricedFlights.sort((a, b) => {
+    const availableFlights = [...sourceFlights].filter(flight => getFlightPrice(flight) !== null);
+    availableFlights.sort((a, b) => {
       const aPrice = getFlightPrice(a) ?? Number.POSITIVE_INFINITY;
       const bPrice = getFlightPrice(b) ?? Number.POSITIVE_INFINITY;
       return aPrice - bPrice || getDurationMinutes(a) - getDurationMinutes(b);
     });
-    return pricedFlights;
-  }, [priceFilteredFlights, flightFilter]);
-
-  const flightCabinFallbackActive = useMemo(() => {
-    const cabinFiltered = [...sourceFlights].filter(flight => getFlightCabin(flight) === appliedFlightCabin);
-    return cabinFiltered.length === 0 && sourceFlights.length > 0;
-  }, [sourceFlights, appliedFlightCabin]);
-
-  const starFilteredHotels = useMemo(() => {
-    return hotelStarFilter.length > 0
-      ? [...sourceHotels].filter(hotel => hotelStarFilter.includes(getHotelStarCount(hotel)))
-      : [...sourceHotels];
-  }, [sourceHotels, hotelStarFilter]);
-
-  const priceFilteredHotels = useMemo(() => {
-    return starFilteredHotels.filter(hotel => {
-      const price = getHotelNightlyPrice(hotel, plannerData);
-      return price === null || price <= hotelMaxPrice;
-    });
-  }, [starFilteredHotels, hotelMaxPrice, plannerData]);
+    return availableFlights;
+  }, [sourceFlights]);
 
   const hotelRows = useMemo(() => {
-    return priceFilteredHotels.map(hotel => ({
+    return [...sourceHotels].map(hotel => ({
       hotel,
       suspicious: isHotelSuspicious(hotel, results, destination),
       distance: getHotelDistanceKm(hotel, results),
     }));
-  }, [priceFilteredHotels, results, destination]);
-
-  const hotelTabCounts = useMemo(() => ({
-    recommended: hotelRows.length,
-    cheapest: hotelRows.length,
-    locationCheck: hotelRows.filter(item => item.suspicious).length,
-  }), [hotelRows]);
-
-  const hotelStarCounts = useMemo(() => {
-    const counts: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
-    sourceHotels.forEach((hotel: any) => {
-      const star = getHotelStarCount(hotel);
-      const price = getHotelNightlyPrice(hotel, plannerData);
-      if (star >= 1 && star <= 5 && (price === null || price <= hotelMaxPrice)) {
-        counts[star] += 1;
-      }
-    });
-    return counts;
-  }, [sourceHotels, hotelMaxPrice, plannerData]);
+  }, [sourceHotels, results, destination]);
 
   const hotels = useMemo(() => {
     const withFlags = [...hotelRows];
-    if (hotelFilter === 'cheapest') return withFlags.sort((a, b) => (getHotelNightlyPrice(a.hotel, plannerData) ?? Infinity) - (getHotelNightlyPrice(b.hotel, plannerData) ?? Infinity));
-    if (hotelFilter === 'location-check') return withFlags.filter(item => item.suspicious);
     return withFlags.sort((a, b) => Number(a.suspicious) - Number(b.suspicious));
-  }, [hotelRows, hotelFilter, plannerData]);
-
-  const hotelStarNoMatches = hotelStarFilter.length > 0 && starFilteredHotels.length === 0 && sourceHotels.length > 0;
+  }, [hotelRows]);
 
   const flightBudgetInsight = useMemo(
     () => buildBudgetInsight(flights, Number(plannerData?.flightBudget) || 0, getFlightPrice),
@@ -2109,12 +2095,39 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
     [hotels, plannerData]
   );
 
+  const selectedPlaces = useMemo(() => [...(results?.placesToVisit || [])], [results?.placesToVisit]);
   const places = useMemo(() => {
-    const all = [...(results?.placesToVisit || [])];
-    if (placeFilter === 'popular') return all.filter(place => (place?.reviewsCount || 0) >= 1000);
-    if (placeFilter === 'paid') return all.filter(place => (asNumber(place?.estimatedCost) || 0) > 0);
-    return all;
-  }, [results?.placesToVisit, placeFilter]);
+    const sourcePlaces = Array.isArray(results?.budgetSourceOptions?.placesToVisit)
+      ? results.budgetSourceOptions.placesToVisit
+      : [];
+    return sourcePlaces.length ? sourcePlaces : selectedPlaces;
+  }, [results?.budgetSourceOptions?.placesToVisit, selectedPlaces]);
+  const budgetCategoryPlaces = useMemo(
+    () => places.filter((place: any) => place?.selectedFromBudget === true || place?.source === 'budget_daily_category'),
+    [places]
+  );
+  const budgetCategoryGroups = useMemo(() => {
+    const groups: { key: string; label: string; places: any[] }[] = [];
+    const lookup = new Map<string, { key: string; label: string; places: any[] }>();
+
+    for (const place of budgetCategoryPlaces) {
+      const label = String(place?.categoryLabel || place?.label || place?.categoryKey || place?.name || `Category ${groups.length + 1}`).trim();
+      const key = String(place?.categoryKey || label).trim().toLowerCase() || `category-${groups.length + 1}`;
+      let group = lookup.get(key);
+      if (!group) {
+        group = { key, label, places: [] };
+        lookup.set(key, group);
+        groups.push(group);
+      }
+      group.places.push(place);
+    }
+
+    return groups;
+  }, [budgetCategoryPlaces]);
+  const vibePlaces = useMemo(
+    () => places.filter((place: any) => place?.selectedFromBudget !== true && place?.source !== 'budget_daily_category'),
+    [places]
+  );
 
   const transportOptions = useMemo(() => {
     const budgetOptions = Array.isArray(plannerData?.transportOptions) ? plannerData.transportOptions : [];
@@ -2134,9 +2147,12 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
   const selectedTransport = transportOptions.filter((option: any) => selectedTransportTypes.has(getTransportTypeKey(option)));
   const otherTransport = transportOptions.filter((option: any) => !selectedTransportTypes.has(getTransportTypeKey(option)));
   const suspiciousHotelCount = hotels.filter(item => item.suspicious).length;
-  const selectedHotelStarContext = hotelStarFilter.length
-    ? `${[...hotelStarFilter].sort((a, b) => a - b).join(', ')}-star filter active`
-    : 'All star ratings shown';
+  const selectedHotelStars = Array.isArray(plannerData?.budgetHotelStars)
+    ? plannerData.budgetHotelStars.map((star: any) => Math.round(Number(star))).filter((star: number) => star >= 1 && star <= 5)
+    : [];
+  const selectedHotelStarContext = selectedHotelStars.length
+    ? `${[...selectedHotelStars].sort((a, b) => a - b).join(', ')}-star selected in budget`
+    : 'All returned stays shown';
   const travelerCount = Math.max(1, (plannerData?.adults || 0) + (plannerData?.children || 0));
   const transportNights = Math.max(1, Number(plannerData?.nights) || 1);
   const getTransportQuantity = (option: any) => {
@@ -2259,7 +2275,7 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
               flights,
               hotels: hotels.map(item => item.hotel),
               transport: selectedTransport.length ? selectedTransport : transportOptions,
-              places,
+              places: selectedPlaces,
             }}
           />
         </motion.section>
@@ -2273,17 +2289,8 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
           transition={{ duration: 0.25 }}
           className="space-y-5"
         >
-          <SectionHeader icon={PlaneTakeoff} eyebrow="Flight Results" title="Best value flights">
-            <FilterTabs
-              active={flightFilter}
-              onChange={setFlightFilter}
-              tabs={[
-                { id: 'best', label: 'Best Value', count: flightTabCounts.best },
-                { id: 'cheapest', label: 'Cheapest', count: flightTabCounts.cheapest },
-                { id: 'fastest', label: 'Fastest', count: flightTabCounts.fastest },
-                { id: 'nonstop', label: 'Nonstop', count: flightTabCounts.nonstop },
-              ]}
-            />
+          <SectionHeader icon={PlaneTakeoff} eyebrow="Flight Results" title="Available flights">
+            {/*
             {flightCabinFallbackActive && (
               <div className="mt-2 rounded-xl bg-amber-500/10 border border-amber-500/20 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
                 No {appliedFlightCabin} class flights found — showing all available cabins.
@@ -2297,7 +2304,7 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
               <input
                 type="range"
                 min={100}
-                max={10000}
+                max={flightPriceCeiling}
                 step={100}
                 value={flightMaxPrice}
                 onChange={e => setFlightMaxPrice(Number(e.target.value))}
@@ -2305,7 +2312,7 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
               />
               <button
                 type="button"
-                onClick={() => setFlightMaxPrice(10000)}
+                onClick={() => setFlightMaxPrice(flightPriceCeiling)}
                 className="text-xs text-muted-foreground hover:text-foreground underline"
               >
                 Reset
@@ -2317,13 +2324,14 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
                 <p className="mt-1 text-sm text-muted-foreground">Try increasing the max price or resetting your filters.</p>
                 <button
                   type="button"
-                  onClick={() => { setFlightMaxPrice(10000); setFlightFilter('best'); }}
+                  onClick={() => { setFlightMaxPrice(flightPriceCeiling); setFlightFilter('best'); }}
                   className="mt-4 rounded-full border border-border bg-background px-4 py-2 text-sm font-bold hover:bg-foreground hover:text-background transition"
                 >
                   Reset all flight filters
                 </button>
               </div>
             )}
+            */}
           </SectionHeader>
           <BudgetDecisionPanel
             title="Flights"
@@ -2344,6 +2352,7 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
           className="space-y-5"
         >
           <SectionHeader icon={Hotel} eyebrow="Hotel Results" title="Matched stays">
+            {/*
             <FilterTabs
               active={hotelFilter}
               onChange={setHotelFilter}
@@ -2396,7 +2405,7 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
                 <input
                   type="range"
                   min={50}
-                  max={10000}
+                  max={hotelPriceCeiling}
                   step={50}
                   value={hotelMaxPrice}
                   onChange={e => setHotelMaxPrice(Number(e.target.value))}
@@ -2404,7 +2413,7 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
                 />
                 <button
                   type="button"
-                  onClick={() => setHotelMaxPrice(10000)}
+                  onClick={() => setHotelMaxPrice(hotelPriceCeiling)}
                   className="text-xs text-muted-foreground hover:text-foreground underline"
                 >
                   Reset
@@ -2417,13 +2426,14 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
                 <p className="mt-1 text-sm text-muted-foreground">Try selecting different star ratings or increasing the max price.</p>
                 <button
                   type="button"
-                  onClick={() => { setHotelMaxPrice(10000); setHotelStarFilter([]); setHotelFilter('recommended'); }}
+                  onClick={() => { setHotelMaxPrice(hotelPriceCeiling); setHotelStarFilter([]); setHotelFilter('recommended'); }}
                   className="mt-4 rounded-full border border-border bg-background px-4 py-2 text-sm font-bold hover:bg-foreground hover:text-background transition"
                 >
                   Reset all hotel filters
                 </button>
               </div>
             )}
+            */}
           </SectionHeader>
           <BudgetDecisionPanel
             title="Hotels"
@@ -2526,25 +2536,42 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
           transition={{ duration: 0.25 }}
           className="space-y-5"
         >
-          <SectionHeader icon={MapPin} eyebrow="Places to Visit" title={`Attractions around ${plannerData?.destination || 'your destination'}`}>
-            <FilterTabs
-              active={placeFilter}
-              onChange={setPlaceFilter}
-              tabs={[
-                { id: 'all', label: 'All', count: results?.placesToVisit?.length || 0 },
-                { id: 'popular', label: 'Popular' },
-                { id: 'paid', label: 'Paid' },
-              ]}
-            />
-          </SectionHeader>
+          <SectionHeader icon={MapPin} eyebrow="Places to Visit" title={`Daily spending and vibes around ${plannerData?.destination || 'your destination'}`} />
           <BudgetCategoryNotice agent={budgetAgent} categoryKey="dailyExpenses" />
-          {places.length ? (
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {places.map((place, index) => <PlaceCard key={`${place?.name || 'place'}-${index}`} place={place} />)}
-            </div>
-          ) : (
+
+          {budgetCategoryPlaces.length ? (
+            <section className="space-y-3">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.18em] text-muted-foreground">Budget categories</p>
+                <h3 className="mt-1 text-2xl title-text text-foreground">What you selected to spend each day</h3>
+              </div>
+              <div className="space-y-7">
+                {budgetCategoryGroups.map(group => (
+                  <BudgetCategoryPlaceSlider
+                    key={group.key}
+                    label={group.label}
+                    places={group.places}
+                  />
+                ))}
+              </div>
+            </section>
+          ) : null}
+
+          {vibePlaces.length ? (
+            <section className="space-y-3">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.18em] text-muted-foreground">Vibes</p>
+                <h3 className="mt-1 text-2xl title-text text-foreground">Places to visit for your travel style</h3>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                {vibePlaces.map((place: any, index: number) => <PlaceCard key={`${place?.name || 'vibe-place'}-${index}`} place={place} />)}
+              </div>
+            </section>
+          ) : null}
+
+          {!places.length ? (
             <BudgetEmptyState icon={MapPin} title="No Gemini-selected places fit" body="Gemini did not select a place or activity option for this budget." category={budgetAgent?.categories?.dailyExpenses} />
-          )}
+          ) : null}
         </motion.section>
       )}
     </motion.div>

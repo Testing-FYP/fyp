@@ -31,9 +31,17 @@ type TripType = 'one_way' | 'round_trip' | 'multi_city';
 export default function FlightSearch({ onSearch, isLoading }: FlightSearchProps) {
   const [tripType, setTripType] = useState<TripType>('one_way');
   const [slices, setSlices] = useState<Slice[]>([
-    { origin: '', destination: '', departure_date: new Date().toISOString().split('T')[0] }
+    { origin: '', destination: '', departure_date: '' }
   ]);
   const [returnDate, setReturnDate] = useState('');
+
+  useEffect(() => {
+    setSlices(currentSlices => currentSlices.map((slice, index) =>
+      index === 0 && !slice.departure_date
+        ? { ...slice, departure_date: new Date().toISOString().split('T')[0] }
+        : slice
+    ));
+  }, []);
 
   const addSlice = () => {
     const lastSlice = slices[slices.length - 1];

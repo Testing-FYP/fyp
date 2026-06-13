@@ -78,6 +78,7 @@ export default function Home() {
   const [plannerData, setPlannerData] = useState<PlannerData | null>(null);
   const [editStep, setEditStep] = useState<number>(0);
   const [plannerMode, setPlannerMode] = useState<'classic' | 'surprise'>('classic');
+  const [hasMounted, setHasMounted] = useState(false);
   const [budgetOverview, setBudgetOverview] = useState<{
     flights: number; hotel: number; transport: number; places: number;
     total: number; remaining: number; isOverBudget: boolean; isDetailedMode: boolean;
@@ -90,6 +91,7 @@ export default function Home() {
       if (savedResults) setResults(JSON.parse(savedResults));
       if (savedPlannerData) setPlannerData(JSON.parse(savedPlannerData));
     } catch { /* ignore */ }
+    setHasMounted(true);
   }, []);
 
   const resultsRef = useRef<HTMLDivElement>(null);
@@ -127,6 +129,7 @@ export default function Home() {
     transportBudget: data.transportBudget,
     dailyExpenseBudget: data.dailyExpenseBudget,
     includePlaceVisits: data.includePlaceVisits,
+    dailyCategories: data.includePlaceVisits ? data.dailyCategories : [],
     budgetFlightCabins: data.includeFlight ? data.budgetFlightCabins : [],
     budgetHotelStars: data.includeHotel ? data.budgetHotelStars : [],
     includeHotel: data.includeHotel,
@@ -284,7 +287,9 @@ export default function Home() {
 
       {/* Wizard or Results */}
       <section className="max-w-6xl mx-auto px-6 py-16">
-        {!results ? (
+        {!hasMounted ? (
+          <div className="mx-auto h-[640px] w-full max-w-3xl rounded-3xl border border-border bg-muted/40" aria-hidden="true" />
+        ) : !results ? (
           <div>
             {!isLoading && (
               <div className="mx-auto mb-12 flex w-full max-w-xl rounded-2xl border border-border bg-muted p-1">

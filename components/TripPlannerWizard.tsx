@@ -6,7 +6,7 @@ import {
   MapPin, Calendar as CalendarIcon, Users, Plane, DollarSign, Hotel, Bus, Star,
   ChevronRight, ChevronLeft, Check, Minus, Plus, Sparkles,
   Wifi, Coffee, UtensilsCrossed, Dumbbell, CarFront, Train, ArrowRight, BedDouble,
-  Compass, AlertTriangle, Lightbulb, Pencil, Loader2
+  Compass, AlertTriangle, Lightbulb, Pencil, Loader2, X
 } from 'lucide-react';
 import AirportAutocomplete from './AirportAutocomplete';
 import { Calendar } from '@/components/ui/calendar';
@@ -18,11 +18,51 @@ type BudgetFlightCabinClass = 'economy' | 'business';
 type BudgetMode = 'total' | 'per_category';
 type TransportType = 'metro_subway' | 'train' | 'public_bus' | 'taxi' | 'rideshare_uber' | 'rental_car';
 type TransportPriority = 'cheapest' | 'fastest' | 'comfortable';
+type BudgetCategoryKey = 'flightBudget' | 'hotelBudget' | 'transportBudget' | 'dailyExpenseBudget';
+
+type AiBudgetGuide = Record<BudgetCategoryKey, number> & {
+  totalBudget: number;
+};
+
+type BudgetWarning = {
+  key: string;
+  kind: 'total-over' | 'category-over' | 'category-under';
+  label: string;
+  guideAmount: number;
+  selectedAmount: number;
+  selectedTotal: number;
+  categoryKey?: BudgetCategoryKey;
+};
+
+type BudgetEstimateCacheEntry = {
+  savedAt: number;
+  plannerPatch: Partial<PlannerData>;
+  aiBudgetGuide: AiBudgetGuide;
+  budgetFlightAverages: Record<BudgetFlightCabinClass, number>;
+  budgetFlightSamplesByCabin: Partial<Record<BudgetFlightCabinClass, BudgetFlightSample[]>>;
+  selectedBudgetFlightCabins: BudgetFlightCabinClass[];
+  budgetHotelAveragesByStars: Record<string, number> | null;
+  selectedBudgetHotelStars: number[];
+  note: string;
+};
+
+type BudgetFlightSample = {
+  index: number;
+  price: number;
+  airline: string;
+  cabin: string;
+  route?: string;
+  stops?: number;
+  duration?: number | string | null;
+  type?: string;
+};
 
 type DailyCategory = {
   key: string;
   label: string;
   estimatedCost: number;
+  suggestedPlace?: string;
+  suggestedPlaces?: { name: string; estimatedCost?: number; detail?: string }[];
   detail?: string;
   selected?: boolean;
 };
@@ -175,54 +215,6 @@ const STEPS = [
 
 const STEP_CONTENT_IDS = [0, 1, 2, 9, 6, 8] as const;
 
-interface DualRangeSliderProps {
-  min: number;
-  max: number;
-  step: number;
-  valueMin: number;
-  valueMax: number;
-  onChange: (min: number, max: number) => void;
-}
-
-function DualRangeSlider({ min, max, step, valueMin, valueMax, onChange }: DualRangeSliderProps) {
-  const range = max - min;
-  const clampedMin = Math.min(Math.max(valueMin, min), max - step);
-  const clampedMax = Math.max(Math.min(valueMax, max), min + step);
-  const safeMin = Math.min(clampedMin, clampedMax - step);
-  const safeMax = Math.max(clampedMax, safeMin + step);
-  const leftPercent = ((safeMin - min) / range) * 100;
-  const rightPercent = ((safeMax - min) / range) * 100;
-  const rangeInputClass = "pointer-events-none absolute inset-x-0 top-1/2 h-2 -translate-y-1/2 appearance-none bg-transparent accent-foreground [&::-moz-range-thumb]:pointer-events-auto [&::-moz-range-thumb]:h-5 [&::-moz-range-thumb]:w-5 [&::-moz-range-thumb]:appearance-none [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-2 [&::-moz-range-thumb]:border-background [&::-moz-range-thumb]:bg-foreground [&::-moz-range-thumb]:shadow-md [&::-moz-range-track]:h-2 [&::-moz-range-track]:bg-transparent [&::-webkit-slider-runnable-track]:h-2 [&::-webkit-slider-runnable-track]:bg-transparent [&::-webkit-slider-thumb]:pointer-events-auto [&::-webkit-slider-thumb]:h-5 [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-background [&::-webkit-slider-thumb]:bg-foreground [&::-webkit-slider-thumb]:shadow-md";
-
-  return (
-    <div className="relative h-10">
-      <div className="absolute inset-x-0 top-1/2 h-2 -translate-y-1/2 rounded-full bg-muted" />
-      <div
-        className="absolute top-1/2 h-2 -translate-y-1/2 rounded-full bg-foreground"
-        style={{ left: `${leftPercent}%`, width: `${rightPercent - leftPercent}%` }}
-      />
-      <input
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={safeMin}
-        onChange={event => onChange(Math.min(Number(event.target.value), safeMax - step), safeMax)}
-        className={`${rangeInputClass} z-20`}
-      />
-      <input
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={safeMax}
-        onChange={event => onChange(safeMin, Math.max(Number(event.target.value), safeMin + step))}
-        className={`${rangeInputClass} z-30`}
-      />
-    </div>
-  );
-}
-
 function formatTransportUsdPrice(option?: TransportOption) {
   if (!option) return { price: 'Manual', detail: '' };
 
@@ -330,6 +322,8 @@ function normalizeDailyCategorySelection(categories: any[]): DailyCategory[] {
     key: String(category?.key || category?.label || `daily_item_${index + 1}`),
     label: String(category?.label || category?.key || `Daily item ${index + 1}`),
     estimatedCost: Math.max(0, Math.round(Number(category?.estimatedCost || 0))),
+    suggestedPlace: category?.suggestedPlace || category?.place || category?.where ? String(category?.suggestedPlace || category?.place || category?.where) : undefined,
+    suggestedPlaces: Array.isArray(category?.suggestedPlaces) ? category.suggestedPlaces : undefined,
     detail: category?.detail ? String(category.detail) : undefined,
     selected: category?.selected !== false,
   }));
@@ -342,6 +336,7 @@ function formatDailyCategoryLabel(label: string) {
 export default function TripPlannerWizard({ onComplete, isLoading, initialStep = 0, initialData, onBudgetOverviewChange }: TripPlannerWizardProps) {
   const [step, setStep] = useState(Math.min(Math.max(initialStep, 0), STEPS.length - 1));
   const [direction, setDirection] = useState(1);
+  const [hasMounted, setHasMounted] = useState(false);
   // 'range' = initial picking (click from, then to), 'idle' = both set,
   // 'editDeparture' = picking departure only, 'editReturn' = picking return only
   const [datePickMode, setDatePickMode] = useState<'range' | 'idle' | 'editDeparture' | 'editReturn'>('range');
@@ -351,7 +346,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
       origin: '',
       destination: '',
       tripType: 'round_trip',
-      departureDate: new Date().toISOString().split('T')[0],
+      departureDate: '',
       returnDate: '',
       adults: 1,
       children: 0,
@@ -413,9 +408,19 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
   const budgetAutoAllocatedKeyRef = useRef('');
   const [selectedBudgetFlightCabins, setSelectedBudgetFlightCabins] = useState<BudgetFlightCabinClass[]>([]);
   const [budgetFlightAverages, setBudgetFlightAverages] = useState<Record<BudgetFlightCabinClass, number> | null>(null);
+  const [budgetFlightSamplesByCabin, setBudgetFlightSamplesByCabin] = useState<Partial<Record<BudgetFlightCabinClass, BudgetFlightSample[]>>>({});
   const [selectedBudgetHotelStars, setSelectedBudgetHotelStars] = useState<number[]>([]);
   const [budgetHotelAveragesByStars, setBudgetHotelAveragesByStars] = useState<Record<string, number> | null>(null);
   const [includePlaceVisits, setIncludePlaceVisits] = useState(true);
+  const [aiBudgetGuide, setAiBudgetGuide] = useState<AiBudgetGuide>(() => ({
+    totalBudget: data.totalBudget,
+    flightBudget: data.flightBudget,
+    hotelBudget: data.hotelBudget,
+    transportBudget: data.transportBudget,
+    dailyExpenseBudget: data.dailyExpenseBudget,
+  }));
+  const [budgetWarning, setBudgetWarning] = useState<BudgetWarning | null>(null);
+  const [dismissedBudgetWarningKeys, setDismissedBudgetWarningKeys] = useState<string[]>([]);
 
   const getBudgetAutoAllocateKey = (current: PlannerData, placesEnabled: boolean) => [
     current.origin,
@@ -438,6 +443,47 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
     (current.vibes || []).join(','),
   ].join('|');
 
+  const getBudgetEstimateCacheKey = (budgetAutoKey: string) => `travel-lite:budget-estimates:v8:${budgetAutoKey}`;
+
+  const applyBudgetEstimateCacheEntry = (entry: BudgetEstimateCacheEntry, budgetAutoKey: string, fromCache = false) => {
+    update(entry.plannerPatch);
+    setAiBudgetGuide(entry.aiBudgetGuide);
+    setDismissedBudgetWarningKeys([]);
+    setBudgetFlightAverages(entry.budgetFlightAverages);
+    setBudgetFlightSamplesByCabin(entry.budgetFlightSamplesByCabin || {});
+    setSelectedBudgetFlightCabins(entry.selectedBudgetFlightCabins);
+    setBudgetHotelAveragesByStars(entry.budgetHotelAveragesByStars);
+    setSelectedBudgetHotelStars(entry.selectedBudgetHotelStars);
+    setBudgetAutoAllocated(true);
+    budgetAutoAllocatedKeyRef.current = budgetAutoKey;
+    setBudgetEstimateNote(fromCache ? 'Cached live estimates applied. Same search, no API call needed.' : entry.note);
+  };
+
+  const readBudgetEstimateCache = (budgetAutoKey: string): BudgetEstimateCacheEntry | null => {
+    if (typeof window === 'undefined') return null;
+
+    try {
+      const raw = window.localStorage.getItem(getBudgetEstimateCacheKey(budgetAutoKey));
+      if (!raw) return null;
+      const entry = JSON.parse(raw) as BudgetEstimateCacheEntry;
+      if (!entry?.plannerPatch || !entry?.aiBudgetGuide) return null;
+      return entry;
+    } catch (error) {
+      console.warn('[Budget auto allocate] Cache read failed', error);
+      return null;
+    }
+  };
+
+  const writeBudgetEstimateCache = (budgetAutoKey: string, entry: BudgetEstimateCacheEntry) => {
+    if (typeof window === 'undefined') return;
+
+    try {
+      window.localStorage.setItem(getBudgetEstimateCacheKey(budgetAutoKey), JSON.stringify(entry));
+    } catch (error) {
+      console.warn('[Budget auto allocate] Cache write failed', error);
+    }
+  };
+
   const fetchBudgetEstimates = async () => {
     const budgetAutoKey = getBudgetAutoAllocateKey(data, includePlaceVisits);
     setBudgetEstimateLoading(true);
@@ -445,6 +491,12 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
     setBudgetEstimateNote('');
     setSelectedBudgetFlightCabins([]);
     setSelectedBudgetHotelStars([]);
+    const cachedEntry = readBudgetEstimateCache(budgetAutoKey);
+    if (cachedEntry) {
+      applyBudgetEstimateCacheEntry(cachedEntry, budgetAutoKey, true);
+      setBudgetEstimateLoading(false);
+      return;
+    }
     console.log('[Budget auto allocate] Requesting live averages', {
       origin: data.origin,
       destination: data.destination,
@@ -495,6 +547,10 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
         economy: Math.round(Number(json.flightAverages?.economy ?? json.flightPerPerson) || 0),
         business: Math.round(Number(json.flightAverages?.business ?? json.flightPerPerson) || 0),
       };
+      const flightSamplesByCabin = {
+        economy: Array.isArray(json.flightSamplesByCabin?.economy) ? json.flightSamplesByCabin.economy : [],
+        business: Array.isArray(json.flightSamplesByCabin?.business) ? json.flightSamplesByCabin.business : [],
+      } as Partial<Record<BudgetFlightCabinClass, BudgetFlightSample[]>>;
       const defaultFlightCabin: BudgetFlightCabinClass = data.cabinClass === 'business' ? 'business' : 'economy';
       const defaultHotelStar = Math.max(1, Math.min(5, Math.round(Number(data.hotelStars) || 3)));
       const hotelAveragesByStars = Object.fromEntries(
@@ -527,7 +583,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
         rawEstimates: json,
       });
 
-      update({
+      const plannerPatch: Partial<PlannerData> = {
         budgetMode: 'per_category',
         budgetMax: allocatedTotalBudget,
         totalBudget: allocatedTotalBudget,
@@ -542,22 +598,34 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
         budgetFlightCabins: data.includeFlight ? [defaultFlightCabin] : [],
         budgetHotelStars: data.includeHotel ? [defaultHotelStar] : [],
         budgetHotelAveragesByStars: hotelAveragesByStars,
-      });
-      setBudgetFlightAverages(flightAverages);
-      setSelectedBudgetFlightCabins(data.includeFlight ? [defaultFlightCabin] : []);
-      setBudgetHotelAveragesByStars(Object.keys(hotelAveragesByStars).length ? hotelAveragesByStars : null);
-      setSelectedBudgetHotelStars(data.includeHotel ? [defaultHotelStar] : []);
-      setBudgetAutoAllocated(true);
-      budgetAutoAllocatedKeyRef.current = budgetAutoKey;
-
+      };
+      const nextAiBudgetGuide: AiBudgetGuide = {
+        totalBudget: allocatedTotalBudget,
+        flightBudget,
+        hotelBudget,
+        transportBudget,
+        dailyExpenseBudget,
+      };
       const sources = json.sources
         ? [json.sources.flight, json.sources.hotel, json.sources.transport, json.sources.daily].filter(Boolean).join(' / ')
         : '';
-      setBudgetEstimateNote(
-        [json.currencyNote, sources ? 'Live estimates applied as selected slider values.' : 'Live estimates applied.']
-          .filter(Boolean)
-          .join(' - ')
-      );
+      const note = [json.currencyNote, sources ? 'Live estimates applied as selected slider values.' : 'Live estimates applied.']
+        .filter(Boolean)
+        .join(' - ');
+      const cacheEntry: BudgetEstimateCacheEntry = {
+        savedAt: Date.now(),
+        plannerPatch,
+        aiBudgetGuide: nextAiBudgetGuide,
+        budgetFlightAverages: flightAverages,
+        budgetFlightSamplesByCabin: flightSamplesByCabin,
+        selectedBudgetFlightCabins: data.includeFlight ? [defaultFlightCabin] : [],
+        budgetHotelAveragesByStars: Object.keys(hotelAveragesByStars).length ? hotelAveragesByStars : null,
+        selectedBudgetHotelStars: data.includeHotel ? [defaultHotelStar] : [],
+        note,
+      };
+
+      applyBudgetEstimateCacheEntry(cacheEntry, budgetAutoKey);
+      writeBudgetEstimateCache(budgetAutoKey, cacheEntry);
     } catch (error: any) {
       console.error('[Budget auto allocate] Failed', error?.message || error);
       setBudgetEstimateError(error?.message || 'Could not estimate budget.');
@@ -585,11 +653,87 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
 
   const activeContentStep: number = STEP_CONTENT_IDS[step] ?? 0;
   const fixedBudgetMode = data.budgetMode === 'total';
+  const selectedCategoryBudgetTotal =
+    (data.includeFlight ? data.flightBudget : 0) +
+    (data.includeHotel ? data.hotelBudget : 0) +
+    (data.includeTransport ? data.transportBudget : 0) +
+    (includePlaceVisits ? data.dailyExpenseBudget : 0);
+  const aiBudgetGuideTotal = aiBudgetGuide.totalBudget || data.totalBudget;
+  const selectedCategoryBudgetDelta = aiBudgetGuideTotal - selectedCategoryBudgetTotal;
+  const selectedCategoriesFitBudget = selectedCategoryBudgetDelta >= 0;
+  const totalOverBudgetWarningKey = `total-over:${selectedCategoryBudgetTotal}:${aiBudgetGuideTotal}`;
 
   const canProceed = () => {
     if (step === 0) return data.origin && data.destination;
     if (step === 1) return data.departureDate && (data.tripType !== 'round_trip' || data.returnDate);
     return true;
+  };
+
+  const budgetCategoryLabels: Record<BudgetCategoryKey, string> = {
+    flightBudget: 'Flights',
+    hotelBudget: 'Hotels',
+    transportBudget: 'Transportation',
+    dailyExpenseBudget: 'Places and daily spending',
+  };
+
+  const isBudgetCategoryEnabled = (categoryKey: BudgetCategoryKey) => {
+    if (categoryKey === 'flightBudget') return data.includeFlight;
+    if (categoryKey === 'hotelBudget') return data.includeHotel;
+    if (categoryKey === 'transportBudget') return data.includeTransport;
+    return includePlaceVisits;
+  };
+
+  const getSelectedTotalWithCategory = (categoryKey: BudgetCategoryKey, nextAmount: number) => {
+    const currentActiveAmount = isBudgetCategoryEnabled(categoryKey) ? Number(data[categoryKey] || 0) : 0;
+    const nextActiveAmount = isBudgetCategoryEnabled(categoryKey) ? nextAmount : 0;
+    return selectedCategoryBudgetTotal - currentActiveAmount + nextActiveAmount;
+  };
+
+  const maybeOpenCategoryBudgetWarning = (categoryKey: BudgetCategoryKey, nextAmount: number, nextSelectedTotal?: number) => {
+    if (activeContentStep !== 9 || fixedBudgetMode || !isBudgetCategoryEnabled(categoryKey)) return;
+
+    const guideAmount = Number(aiBudgetGuide[categoryKey] || 0);
+    if (guideAmount <= 0 || nextAmount === guideAmount) return;
+
+    const kind: BudgetWarning['kind'] = nextAmount > guideAmount ? 'category-over' : 'category-under';
+    const key = `${kind}:${categoryKey}:${nextAmount}:${guideAmount}`;
+    if (dismissedBudgetWarningKeys.includes(key) || budgetWarning?.key === key) return;
+
+    setBudgetWarning({
+      key,
+      kind,
+      label: budgetCategoryLabels[categoryKey],
+      guideAmount,
+      selectedAmount: nextAmount,
+      selectedTotal: nextSelectedTotal ?? getSelectedTotalWithCategory(categoryKey, nextAmount),
+      categoryKey,
+    });
+  };
+
+  const dismissBudgetWarning = () => {
+    if (budgetWarning) {
+      setDismissedBudgetWarningKeys(prev => prev.includes(budgetWarning.key) ? prev : [...prev, budgetWarning.key]);
+    }
+    setBudgetWarning(null);
+  };
+
+  const confirmBudgetWarning = () => {
+    if (!budgetWarning) return;
+
+    const nextGuide: AiBudgetGuide = {
+      ...aiBudgetGuide,
+      totalBudget: budgetWarning.kind === 'total-over' ? budgetWarning.selectedTotal : aiBudgetGuide.totalBudget,
+    };
+
+    setAiBudgetGuide(nextGuide);
+    if (budgetWarning.kind === 'total-over') {
+      update({
+        budgetMax: budgetWarning.selectedTotal,
+        totalBudget: budgetWarning.selectedTotal,
+      });
+    }
+    setDismissedBudgetWarningKeys(prev => prev.includes(budgetWarning.key) ? prev : [...prev, budgetWarning.key]);
+    setBudgetWarning(null);
   };
 
   const budgetAutoAllocateKey = getBudgetAutoAllocateKey(data, includePlaceVisits);
@@ -632,10 +776,35 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
   ]);
 
   useEffect(() => {
+    if (activeContentStep !== 9 || fixedBudgetMode) return;
+    if (selectedCategoryBudgetTotal <= aiBudgetGuideTotal) return;
+    if (dismissedBudgetWarningKeys.includes(totalOverBudgetWarningKey)) return;
+    if (budgetWarning) return;
+
+    setBudgetWarning({
+      key: totalOverBudgetWarningKey,
+      kind: 'total-over',
+      label: 'Total selected categories',
+      guideAmount: aiBudgetGuideTotal,
+      selectedAmount: selectedCategoryBudgetTotal,
+      selectedTotal: selectedCategoryBudgetTotal,
+    });
+  }, [
+    activeContentStep,
+    fixedBudgetMode,
+    selectedCategoryBudgetTotal,
+    aiBudgetGuideTotal,
+    dismissedBudgetWarningKeys,
+    totalOverBudgetWarningKey,
+    budgetWarning?.key,
+  ]);
+
+  useEffect(() => {
     if (!budgetAutoAllocated) return;
     if (budgetAutoAllocatedKeyRef.current && budgetAutoAllocatedKeyRef.current !== budgetAutoAllocateKey) {
       setBudgetAutoAllocated(false);
       setBudgetFlightAverages(null);
+      setBudgetFlightSamplesByCabin({});
       setSelectedBudgetFlightCabins([]);
       setBudgetHotelAveragesByStars(null);
       setSelectedBudgetHotelStars([]);
@@ -645,6 +814,14 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
   }, [budgetAutoAllocated, budgetAutoAllocateKey]);
 
   const progress = ((step + 1) / STEPS.length) * 100;
+
+  useEffect(() => {
+    setHasMounted(true);
+    if (!initialData?.departureDate && data.tripType === 'one_way' && !data.departureDate) {
+      update({ departureDate: new Date().toISOString().split('T')[0] });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Clear the default departure date for round trip when first entering Step 2,
   // so the range picker starts fully empty. Only fires when departure is still
@@ -698,7 +875,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
 
   const suggestedBudget = useMemo(() => {
     // Only calculate and log in an active browser session on/after Step 8 (step === 7)
-    if (typeof window === 'undefined' || step < 7) {
+    if (!hasMounted || step < 7) {
       return null;
     }
 
@@ -720,7 +897,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
     console.log('   🛍️ Daily misc:', misc * totalTravelers * nights, `($${misc}/person × ${totalTravelers} × ${nights} nights)`);
     console.log('   💰 Total suggestion:', rounded);
     return rounded;
-  }, [estimatedFlightPrice, data.hotelStars, data.hotelRooms, data.hotelRoomsPerApartment, nights, totalTravelers, step]);
+  }, [hasMounted, estimatedFlightPrice, data.hotelStars, data.hotelRooms, data.hotelRoomsPerApartment, nights, totalTravelers, step]);
 
   const cabinLabel = ({ economy: 'Economy', premium_economy: 'Premium Economy', business: 'Business', first: 'First Class' } as Record<string, string>)[data.cabinClass] || data.cabinClass;
 
@@ -734,15 +911,27 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
   useEffect(() => {
     if (step !== 7 || suggestedBudget === null) return;
     if (autoFilledRef.current === null || data.totalBudget === autoFilledRef.current) {
+      const flightBudget = Math.round(suggestedBudget * 0.45);
+      const hotelBudget = Math.round(suggestedBudget * 0.30);
+      const transportBudget = Math.round(suggestedBudget * 0.10);
+      const dailyExpenseBudget = Math.round(suggestedBudget * 0.15);
       setData(prev => ({
         ...prev,
         budgetMax: suggestedBudget,
         totalBudget: suggestedBudget,
-        flightBudget: Math.round(suggestedBudget * 0.45),
-        hotelBudget: Math.round(suggestedBudget * 0.30),
-        transportBudget: Math.round(suggestedBudget * 0.10),
-        dailyExpenseBudget: Math.round(suggestedBudget * 0.15),
+        flightBudget,
+        hotelBudget,
+        transportBudget,
+        dailyExpenseBudget,
       }));
+      setAiBudgetGuide({
+        totalBudget: suggestedBudget,
+        flightBudget,
+        hotelBudget,
+        transportBudget,
+        dailyExpenseBudget,
+      });
+      setDismissedBudgetWarningKeys([]);
       autoFilledRef.current = suggestedBudget;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1514,9 +1703,11 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
             ? Math.max(...selectedAverages)
             : 0;
 
+          const nextFlightBudget = flightPerPerson * travelerCount;
+          maybeOpenCategoryBudgetWarning('flightBudget', nextFlightBudget);
           update({
             budgetMode: 'per_category',
-            flightBudget: flightPerPerson * travelerCount,
+            flightBudget: nextFlightBudget,
             budgetFlightCabins: nextSelection,
           });
           setBudgetEstimateNote(
@@ -1543,9 +1734,11 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
           }
 
           const nightlyAverage = highestSelectedStar ? Number(appliedBudgetHotelAveragesByStars[String(highestSelectedStar)] || 0) : 0;
+          const nextHotelBudget = nightlyAverage > 0 ? nightlyAverage * hotelApartmentCount * safeNights : 0;
+          maybeOpenCategoryBudgetWarning('hotelBudget', nextHotelBudget);
           update({
             budgetMode: 'per_category',
-            hotelBudget: nightlyAverage > 0 ? nightlyAverage * hotelApartmentCount * safeNights : 0,
+            hotelBudget: nextHotelBudget,
             budgetHotelStars: nextSelection,
           });
           setBudgetEstimateNote(
@@ -1604,6 +1797,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
             },
             onChange: (value: number) => {
               unlockBudgetAutoAllocate();
+              maybeOpenCategoryBudgetWarning('flightBudget', value);
               update({ flightBudget: value, budgetMode: 'per_category' });
             },
           },
@@ -1624,6 +1818,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
             },
             onChange: (value: number) => {
               unlockBudgetAutoAllocate();
+              maybeOpenCategoryBudgetWarning('hotelBudget', value);
               update({ hotelBudget: value, budgetMode: 'per_category' });
             },
           },
@@ -1644,6 +1839,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
             },
             onChange: (value: number) => {
               unlockBudgetAutoAllocate();
+              maybeOpenCategoryBudgetWarning('transportBudget', value);
               update({ transportBudget: value, budgetMode: 'per_category' });
             },
           },
@@ -1664,23 +1860,21 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
             },
             onChange: (value: number) => {
               unlockBudgetAutoAllocate();
+              maybeOpenCategoryBudgetWarning('dailyExpenseBudget', value);
               update({ dailyExpenseBudget: value, budgetMode: 'per_category' });
             },
           },
         ];
-        const consumedBudget =
-          (data.includeFlight ? data.flightBudget : 0) +
-          (data.includeHotel ? data.hotelBudget : 0) +
-          (data.includeTransport ? data.transportBudget : 0) +
-          (placesEnabled ? data.dailyExpenseBudget : 0);
-        const budgetDelta = data.totalBudget - consumedBudget;
-        const budgetFits = budgetDelta >= 0;
+        const consumedBudget = selectedCategoryBudgetTotal;
+        const budgetDelta = selectedCategoryBudgetDelta;
+        const budgetFits = selectedCategoriesFitBudget;
         const transportBudgetPreviewTypes: TransportType[] = ['public_bus', 'taxi', 'rideshare_uber', 'metro_subway', 'rental_car'];
         const selectedTransportDailyTotal = data.transportOptions?.length
           ? calculateTransportBudgetFromSelections(data.transportOptions, data.transportBudgetSelections, 1)
           : 0;
         const updateTransportSelections = (nextSelections: Partial<Record<TransportType, TransportBudgetSelection>>) => {
           const nextBudget = calculateTransportBudgetFromSelections(data.transportOptions, nextSelections, safeNights);
+          maybeOpenCategoryBudgetWarning('transportBudget', nextBudget);
           update({
             transportBudgetSelections: nextSelections,
             transportBudget: nextBudget,
@@ -1721,9 +1915,11 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
           const nextDailyTotal = nextCategories
             .filter(category => category.selected !== false)
             .reduce((sum, category) => sum + Number(category.estimatedCost || 0), 0);
+          const nextDailyBudget = nextDailyTotal * travelerCount * safeNights;
+          maybeOpenCategoryBudgetWarning('dailyExpenseBudget', nextDailyBudget);
           update({
             dailyCategories: nextCategories,
-            dailyExpenseBudget: nextDailyTotal * travelerCount * safeNights,
+            dailyExpenseBudget: nextDailyBudget,
             budgetMode: 'per_category',
           });
         };
@@ -1761,45 +1957,93 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                   </button>
                 ))}
               </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className={`py-7 px-6 rounded-3xl bg-muted border border-border ${fixedBudgetMode ? 'sm:col-span-2' : ''}`}>
-                  <div className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground mb-2">Main Budget</div>
-                  <div className="text-5xl font-bold text-foreground title-text">
-                    ${data.budgetMin.toLocaleString()} - ${data.budgetMax.toLocaleString()}
+              {fixedBudgetMode ? (
+                <div className="rounded-3xl border border-border bg-muted px-6 py-7">
+                  <div className="flex items-center gap-3 mb-5">
+                    <div className="h-11 w-11 rounded-2xl border border-border bg-background flex items-center justify-center">
+                      <DollarSign className="h-5 w-5 text-muted-foreground" />
+                    </div>
+                    <div>
+                      <div className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground">Fixed Budget</div>
+                      <div className="mt-1 text-xs text-muted-foreground/60">Set the minimum and maximum trip budget.</div>
+                    </div>
                   </div>
-                  <div className="text-xs text-muted-foreground/60 mt-2">
-                    ~${Math.round(data.budgetMin / (data.adults || 1)).toLocaleString()} - ${Math.round(data.budgetMax / (data.adults || 1)).toLocaleString()} per person
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="rounded-2xl border border-border bg-background px-4 py-3">
+                      <span className="text-[10px] uppercase tracking-[0.16em] font-bold text-muted-foreground/50">Min Budget</span>
+                      <div className="mt-2 flex items-center gap-2">
+                        <span className="text-2xl title-text text-muted-foreground">$</span>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          value={data.budgetMin.toLocaleString()}
+                          onChange={event => {
+                            const nextMin = Math.max(0, Number(event.target.value.replace(/[^0-9]/g, '') || 0));
+                            update({ budgetMin: Math.min(nextMin, data.budgetMax) });
+                          }}
+                          className="w-full bg-transparent text-3xl font-bold text-foreground outline-none title-text"
+                        />
+                      </div>
+                    </label>
+                    <label className="rounded-2xl border border-border bg-background px-4 py-3">
+                      <span className="text-[10px] uppercase tracking-[0.16em] font-bold text-muted-foreground/50">Max Budget</span>
+                      <div className="mt-2 flex items-center gap-2">
+                        <span className="text-2xl title-text text-muted-foreground">$</span>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          value={data.budgetMax.toLocaleString()}
+                          onChange={event => {
+                            const nextMax = Math.max(0, Number(event.target.value.replace(/[^0-9]/g, '') || 0));
+                            update({ budgetMax: Math.max(nextMax, data.budgetMin), totalBudget: Math.max(nextMax, data.budgetMin) });
+                          }}
+                          className="w-full bg-transparent text-3xl font-bold text-foreground outline-none title-text"
+                        />
+                      </div>
+                    </label>
                   </div>
-                  <div className="text-xs text-muted-foreground/60 mt-2">
-                    {fixedBudgetMode ? 'AI will search for options within this range. The upper limit is your hard ceiling.' : 'Total money available for this trip plan. Detailed budgets use the upper limit as your ceiling.'}
+                  <div className="mt-4 text-xs text-muted-foreground/60">
+                    Starts at $0 - $5,000 by default. The AI will search within this fixed range.
                   </div>
                 </div>
-                {!fixedBudgetMode && (
+              ) : (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="py-7 px-6 rounded-3xl bg-muted border border-border">
+                    <div className="flex items-center gap-3 mb-4">
+                      <div className="h-11 w-11 rounded-2xl border border-border bg-background flex items-center justify-center">
+                        <Sparkles className="h-5 w-5 text-muted-foreground" />
+                      </div>
+                      <div className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground">AI Budget Guide</div>
+                    </div>
+                    <div className="text-5xl font-bold text-foreground title-text">
+                      ${data.budgetMax.toLocaleString()}
+                    </div>
+                    <div className="text-xs text-muted-foreground/60 mt-2">
+                      ~${Math.round(data.budgetMax / (data.adults || 1)).toLocaleString()} per person
+                    </div>
+                    <div className="text-xs text-muted-foreground/60 mt-2">
+                      AI estimates a useful trip budget from your route, dates, travelers, cabin, hotel rating, transport, and places.
+                    </div>
+                  </div>
                   <div className={`py-7 px-6 rounded-3xl border ${budgetFits ? 'bg-emerald-500/10 border-emerald-500/25' : 'bg-red-500/10 border-red-500/25'}`}>
-                    <div className={`text-[10px] uppercase tracking-[0.2em] font-bold mb-2 ${budgetFits ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-600 dark:text-red-300'}`}>Used Budget</div>
+                    <div className="flex items-center gap-3 mb-4">
+                      <div className={`h-11 w-11 rounded-2xl border flex items-center justify-center ${budgetFits ? 'border-emerald-500/25 bg-emerald-500/10' : 'border-red-500/25 bg-red-500/10'}`}>
+                        <DollarSign className={`h-5 w-5 ${budgetFits ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-600 dark:text-red-300'}`} />
+                      </div>
+                      <div className={`text-[10px] uppercase tracking-[0.2em] font-bold ${budgetFits ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-600 dark:text-red-300'}`}>Selected Categories</div>
+                    </div>
                     <div className={`text-5xl font-bold title-text ${budgetFits ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-600 dark:text-red-300'}`}>
                       ${consumedBudget.toLocaleString()}
                     </div>
                     <div className={`text-xs mt-2 ${budgetFits ? 'text-emerald-700/70 dark:text-emerald-300/70' : 'text-red-600/70 dark:text-red-300/70'}`}>
-                      {budgetFits ? `$${budgetDelta.toLocaleString()} remaining` : `$${Math.abs(budgetDelta).toLocaleString()} over budget`}
+                      Sum of selected flight, hotel, transport, and places budgets.
+                    </div>
+                    <div className={`text-xs mt-1 ${budgetFits ? 'text-emerald-700/70 dark:text-emerald-300/70' : 'text-red-600/70 dark:text-red-300/70'}`}>
+                      {budgetFits ? `$${budgetDelta.toLocaleString()} below AI ceiling` : `$${Math.abs(budgetDelta).toLocaleString()} above AI ceiling`}
                     </div>
                   </div>
-                )}
-              </div>
-              <DualRangeSlider
-                min={0}
-                max={50000}
-                step={100}
-                valueMin={data.budgetMin}
-                valueMax={data.budgetMax}
-                onChange={(min, max) => {
-                  unlockBudgetAutoAllocate();
-                  update({ budgetMin: min, budgetMax: max, totalBudget: max });
-                }}
-              />
-              <div className="flex justify-between text-[10px] text-muted-foreground/40 font-bold uppercase tracking-wider">
-                <span>$0</span><span>$50,000</span>
-              </div>
+                </div>
+              )}
               <div className="rounded-3xl border border-border bg-muted p-5">
                 <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                   <div>
@@ -2237,6 +2481,16 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
 
       // Step 9 - Review
       case 8:
+        const reviewBudgetCeiling = Number(data.budgetMax || data.totalBudget || 0);
+        const reviewBudgetRange = data.budgetMin > 0
+          ? `Selected range $${data.budgetMin.toLocaleString()} - $${reviewBudgetCeiling.toLocaleString()}`
+          : `Selected budget ceiling from slider`;
+        const reviewBudgetBreakdown = [
+          data.includeFlight ? `Flight $${data.flightBudget.toLocaleString()}` : null,
+          data.includeHotel ? `Hotel $${data.hotelBudget.toLocaleString()}` : null,
+          data.includeTransport ? `Transport $${data.transportBudget.toLocaleString()}` : null,
+          includePlaceVisits ? `Places $${data.dailyExpenseBudget.toLocaleString()}` : null,
+        ].filter(Boolean).join(' - ');
         return (
           <div className="space-y-6">
             <div className="grid grid-cols-2 gap-4">
@@ -2246,22 +2500,10 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                 { label: 'Travelers', value: `${data.adults} Adult${data.adults > 1 ? 's' : ''}`, sub: data.children > 0 ? `${data.children} Child${data.children > 1 ? 'ren' : ''}` : 'No children' },
                 {
                   label: 'Budget',
-                  value: data.budgetMode === 'total'
-                    ? `$${data.budgetMin > 0 ? `${data.budgetMin.toLocaleString()} - $${data.budgetMax.toLocaleString()}` : data.totalBudget.toLocaleString()}`
-                    : `$${[
-                        data.includeFlight ? data.flightBudget : 0,
-                        data.includeHotel ? data.hotelBudget : 0,
-                        data.includeTransport ? data.transportBudget : 0,
-                        includePlaceVisits ? data.dailyExpenseBudget : 0,
-                      ].reduce((a, b) => a + b, 0).toLocaleString()}`,
+                  value: `$${reviewBudgetCeiling.toLocaleString()}`,
                   sub: data.budgetMode === 'total'
-                    ? 'Fixed budget range - AI will stay within this limit'
-                    : [
-                        data.includeFlight ? `Flight $${data.flightBudget.toLocaleString()}` : null,
-                        data.includeHotel ? `Hotel $${data.hotelBudget.toLocaleString()}` : null,
-                        data.includeTransport ? `Transport $${data.transportBudget.toLocaleString()}` : null,
-                        includePlaceVisits ? `Places $${data.dailyExpenseBudget.toLocaleString()}` : null,
-                      ].filter(Boolean).join(' - ') || 'No categories enabled'
+                    ? `${reviewBudgetRange} - AI will stay within this limit`
+                    : `${reviewBudgetRange}${reviewBudgetBreakdown ? ` - allocation: ${reviewBudgetBreakdown}` : ''}`,
                 },
                 { label: 'Vibe', value: data.vibes.length > 0 ? data.vibes.map(v => VIBE_OPTIONS.find(vo => vo.id === v)?.emoji || '').join(' ') : 'General mix', sub: data.vibes.length > 0 ? data.vibes.map(v => VIBE_OPTIONS.find(vo => vo.id === v)?.label || '').join(', ') : 'All attractions' },
               ].map((item, i) => (
@@ -2279,6 +2521,74 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
 
   return (
     <div className="w-full max-w-2xl mx-auto">
+      <AnimatePresence>
+        {budgetWarning && (
+          <motion.div
+            className="fixed inset-0 z-[1000] flex items-center justify-center bg-background/70 px-4 backdrop-blur-sm"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            <motion.div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="over-budget-title"
+              className="w-full max-w-md rounded-3xl border border-red-500/25 bg-background p-6 shadow-[0_32px_90px_rgba(0,0,0,0.45)]"
+              initial={{ opacity: 0, y: 18, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 12, scale: 0.98 }}
+              transition={{ duration: 0.18 }}
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex items-start gap-4">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-red-500/25 bg-red-500/10">
+                    <AlertTriangle className="h-5 w-5 text-red-600 dark:text-red-300" />
+                  </div>
+                  <div>
+                    <div id="over-budget-title" className="text-lg font-black text-foreground">
+                      {budgetWarning.kind === 'category-under'
+                        ? 'You are going under the AI budget guide'
+                        : 'You are going over the AI budget guide'}
+                    </div>
+                    <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                      {budgetWarning.kind === 'category-under'
+                        ? `${budgetWarning.label} is now $${budgetWarning.selectedAmount.toLocaleString()}, below the AI guide of $${budgetWarning.guideAmount.toLocaleString()}. Real prices may be higher than this. Are you sure you want to continue with this lower budget?`
+                        : budgetWarning.kind === 'category-over'
+                          ? `${budgetWarning.label} is now $${budgetWarning.selectedAmount.toLocaleString()}, above the AI guide of $${budgetWarning.guideAmount.toLocaleString()}. Do you really want to spend more money here?`
+                          : `Your selected categories total is $${budgetWarning.selectedAmount.toLocaleString()}, above the AI guide of $${budgetWarning.guideAmount.toLocaleString()}. Do you really want to increase the budget?`}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={dismissBudgetWarning}
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border bg-muted text-muted-foreground transition hover:text-foreground"
+                  aria-label="Close warning"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={dismissBudgetWarning}
+                  className="rounded-2xl border border-border bg-background px-5 py-3 text-[11px] font-black uppercase tracking-[0.16em] text-muted-foreground transition hover:border-foreground/30 hover:text-foreground"
+                >
+                  Close
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmBudgetWarning}
+                  className="rounded-2xl bg-foreground px-5 py-3 text-[11px] font-black uppercase tracking-[0.16em] text-background transition hover:opacity-85"
+                >
+                  {budgetWarning.kind === 'category-under' ? 'Yes, use lower budget' : 'Yes, increase budget'}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Progress Bar */}
       <div className="mb-12">
         <div className="flex items-center justify-between mb-4">

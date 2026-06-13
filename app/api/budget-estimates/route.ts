@@ -105,6 +105,32 @@ function average(values: number[]) {
   return Math.round(usable.reduce((sum, value) => sum + value, 0) / usable.length);
 }
 
+function normalizeSuggestedPlaces(item: any, categoryCost: number) {
+  const rawSuggestions = Array.isArray(item?.suggestedPlaces)
+    ? item.suggestedPlaces
+    : [item?.suggestedPlace || item?.place || item?.where || item?.venue].filter(Boolean);
+
+  return rawSuggestions
+    .map((suggestion: any, index: number) => {
+      if (typeof suggestion === 'string') {
+        return {
+          name: suggestion.trim(),
+          estimatedCost: categoryCost,
+          detail: String(item?.detail || item?.notes || item?.description || '').trim(),
+        };
+      }
+      const name = String(suggestion?.name || suggestion?.label || suggestion?.place || suggestion?.where || suggestion?.venue || '').trim();
+      if (!name) return null;
+      return {
+        name,
+        estimatedCost: readPositiveNumber(suggestion?.estimatedCost ?? suggestion?.cost ?? suggestion?.price ?? suggestion?.amount) ?? categoryCost,
+        detail: String(suggestion?.detail || suggestion?.notes || suggestion?.description || item?.detail || '').trim(),
+      };
+    })
+    .filter((suggestion: { name: string; estimatedCost: number; detail: string } | null): suggestion is { name: string; estimatedCost: number; detail: string } => !!suggestion)
+    .slice(0, 5);
+}
+
 function normalizeDailyCategories(value: any) {
   if (!Array.isArray(value)) return [];
 
@@ -117,35 +143,13 @@ function normalizeDailyCategories(value: any) {
         key: String(item?.key || rawLabel.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || `daily_item_${index + 1}`),
         label: rawLabel,
         estimatedCost,
+        suggestedPlace: String(item?.suggestedPlace || item?.place || item?.where || item?.venue || '').trim(),
+        suggestedPlaces: normalizeSuggestedPlaces(item, estimatedCost),
         detail: String(item?.detail || item?.notes || item?.description || '').trim(),
       };
     })
-    .filter((item): item is { key: string; label: string; estimatedCost: number; detail: string } => !!item)
+    .filter((item): item is { key: string; label: string; estimatedCost: number; suggestedPlace: string; suggestedPlaces: { name: string; estimatedCost: number; detail: string }[]; detail: string } => !!item)
     .slice(0, 10);
-}
-
-function fallbackDailyCategories(total: number) {
-  const values = [
-    { key: 'breakfast', label: 'Breakfast', ratio: 0.14, detail: 'Morning meal estimate' },
-    { key: 'lunch', label: 'Lunch', ratio: 0.19, detail: 'Casual lunch estimate' },
-    { key: 'dinner', label: 'Dinner', ratio: 0.25, detail: 'Evening meal estimate' },
-    { key: 'coffee', label: 'Coffee', ratio: 0.06, detail: 'Coffee or quick drink' },
-    { key: 'shopping', label: 'Shopping', ratio: 0.14, detail: 'Small daily allowance' },
-    { key: 'daily_activity', label: 'Daily Activity', ratio: 0.22, detail: 'Attraction or experience ticket' },
-  ];
-  let used = 0;
-  return values.map((item, index) => {
-    const estimatedCost = index === values.length - 1
-      ? Math.max(1, total - used)
-      : Math.max(1, Math.round(total * item.ratio));
-    used += estimatedCost;
-    return {
-      key: item.key,
-      label: item.label,
-      estimatedCost,
-      detail: item.detail,
-    };
-  });
 }
 
 function readStarRating(value: any): number | null {
@@ -183,14 +187,15 @@ function addDays(dateValue: string, days: number) {
   return date.toISOString().split('T')[0];
 }
 
-function getFlightPrices(response: any) {
+function getFlightSamples(response: any, requestedCabin: string) {
   const itineraries = [
     ...(Array.isArray(response?.best_flights) ? response.best_flights : []),
     ...(Array.isArray(response?.other_flights) ? response.other_flights : []),
   ];
 
   return itineraries
-    .map((itinerary: any) => firstPositiveNumber(
+    .map((itinerary: any, index: number) => {
+      const price = firstPositiveNumber(
       itinerary?.price,
       itinerary?.extracted_price,
       itinerary?.total_price,
@@ -198,13 +203,51 @@ function getFlightPrices(response: any) {
       itinerary?.price_amount,
       itinerary?.displayed_price,
       itinerary?.fare?.price,
-      itinerary?.fare?.amount,
-      itinerary?.booking_options,
-      itinerary?.prices,
-      itinerary?.price_insights?.price,
-      itinerary?.price_insights?.lowest_price
-    ))
-    .filter((price): price is number => typeof price === 'number');
+      itinerary?.fare?.amount
+      );
+      if (typeof price !== 'number') return null;
+
+      const segments = Array.isArray(itinerary?.flights) ? itinerary.flights : [];
+      const firstSegment = segments[0] || {};
+      const lastSegment = segments[segments.length - 1] || firstSegment;
+      const airline = String(firstSegment?.airline || itinerary?.airline || itinerary?.airlines?.[0] || 'Airline unavailable');
+      const origin = String(firstSegment?.departure_airport?.id || firstSegment?.departure_airport?.name || '');
+      const destination = String(lastSegment?.arrival_airport?.id || lastSegment?.arrival_airport?.name || '');
+
+      return {
+        index,
+        price,
+        airline,
+        cabin: requestedCabin,
+        route: [origin, destination].filter(Boolean).join(' -> '),
+        stops: Math.max(0, segments.length - 1),
+        duration: itinerary?.total_duration || itinerary?.duration || null,
+        type: itinerary?.type || '',
+      };
+    })
+    .filter((sample): sample is { index: number; price: number; airline: string; cabin: string; route: string; stops: number; duration: any; type: string } => !!sample);
+}
+
+function getFlightPrices(response: any, requestedCabin: string) {
+  return getFlightSamples(response, requestedCabin).map(sample => sample.price);
+}
+
+function representativeAverage(values: number[]) {
+  const sorted = values.filter(value => Number.isFinite(value) && value > 0).sort((a, b) => a - b);
+  if (!sorted.length) return null;
+  if (sorted.length >= 5) {
+    const marketMedian = median(sorted) ?? sorted[Math.floor(sorted.length / 2)];
+    const highOutlierLimit = marketMedian * 1.8;
+    const trimmed = sorted.filter(value => value <= highOutlierLimit);
+    if (trimmed.length >= 3 && trimmed.length < sorted.length) {
+      return representativeAverage(trimmed);
+    }
+  }
+  if (sorted.length >= 4) {
+    const middle = sorted[Math.floor(sorted.length / 2)];
+    return average([sorted[0], sorted[1], middle, sorted[sorted.length - 1]]);
+  }
+  return average(sorted);
 }
 
 function getHotelNightlySamples(response: any, nights: number, forcedStars?: number, searchStar?: number) {
@@ -269,13 +312,13 @@ function getHotelAveragesByStars(samples: { price: number; stars: number | null 
     buckets[String(sample.stars)].push(sample.price);
   }
 
-  const baseAverage = average([
+  const baseAverage = representativeAverage([
     ...samples.map(sample => sample.price),
     ...fallbackPrices,
   ]) ?? 150;
   const averages: Record<string, number> = {};
   for (const star of ['1', '2', '3', '4', '5']) {
-    averages[star] = average(buckets[star]) ?? Math.max(35, Math.round(baseAverage * HOTEL_STAR_FALLBACK_MULTIPLIER[star]));
+    averages[star] = representativeAverage(buckets[star]) ?? Math.max(35, Math.round(baseAverage * HOTEL_STAR_FALLBACK_MULTIPLIER[star]));
   }
 
   return {
@@ -319,7 +362,7 @@ function buildHotelQuery(destinationCity: string, destinationCountry: string, ro
     destinationCountry,
     star ? `${star} star` : '',
     roomPhrase,
-  ].filter(Boolean).join(', ');
+  ].filter(Boolean).join(' ');
 }
 
 function stripJsonFences(text: string) {
@@ -374,6 +417,9 @@ async function callGeminiForDailyCosts(apiKey: string, prompt: string) {
     throw new Error('Gemini copied placeholder values instead of estimating current destination costs');
   }
   const dailyCategories = normalizeDailyCategories(parsed.dailyCategories);
+  if (!dailyCategories.length) {
+    throw new Error('Gemini returned no grounded daily categories');
+  }
   console.log('[Budget estimates] Gemini grounded response parsed:', {
     placeVisitCost,
     dailyCategories: dailyCategories.length,
@@ -382,7 +428,7 @@ async function callGeminiForDailyCosts(apiKey: string, prompt: string) {
   });
   return {
     placeVisitCost,
-    dailyCategories: dailyCategories.length ? dailyCategories : fallbackDailyCategories(placeVisitCost),
+    dailyCategories,
     currencyNote: String(parsed.currencyNote || ''),
   };
 }
@@ -438,9 +484,12 @@ async function getGeminiDailyCosts(prompt: string) {
       }
       console.log('[Budget estimates] Success via groq');
       const dailyCategories = normalizeDailyCategories(parsed.dailyCategories);
+      if (!dailyCategories.length) {
+        throw new Error('Groq returned no grounded daily categories');
+      }
       return {
         placeVisitCost,
-        dailyCategories: dailyCategories.length ? dailyCategories : fallbackDailyCategories(placeVisitCost),
+        dailyCategories,
         currencyNote: String(parsed.currencyNote || ''),
         source: 'groq',
       };
@@ -450,10 +499,10 @@ async function getGeminiDailyCosts(prompt: string) {
   }
 
   return {
-    placeVisitCost: 25,
-    dailyCategories: fallbackDailyCategories(25),
-    currencyNote: '',
-    source: 'static_fallback',
+    placeVisitCost: 0,
+    dailyCategories: [],
+    currencyNote: 'Grounded daily spending data unavailable.',
+    source: 'grounded_unavailable',
   };
 }
 
@@ -550,6 +599,8 @@ export async function POST(request: Request) {
     const checkInDate = departureDate || addDays('', 14);
     const checkOutDate = addDays(checkInDate, nights);
     const includePlaceVisits = body.includePlaceVisits !== false;
+    const adults = Math.max(1, Number(body.adults || 1));
+    const children = Math.max(0, Number(body.children || 0));
     const hotelApartments = Math.max(1, Number(body.hotelRooms || 1));
     const hotelRoomsPerApartment = Math.max(1, Number(body.hotelRoomsPerApartment || 1));
     const allowedCabinClasses = new Set(['economy', 'business']);
@@ -575,8 +626,8 @@ export async function POST(request: Request) {
       tripType,
       nights,
       tripDays,
-      adults: body.adults,
-      children: body.children,
+      adults,
+      children,
       includePlaceVisits,
       flightCabinClasses,
       hotelApartments,
@@ -609,8 +660,8 @@ export async function POST(request: Request) {
         query: buildHotelQuery(destinationCity, destinationCountry, hotelRoomsPerApartment) || destination,
         checkInDate,
         checkOutDate,
-        adults: 1,
-        children: 0,
+        adults,
+        children,
         countryCode: String(body.destinationCountryCode || 'us'),
         bedrooms: hotelRoomsPerApartment,
         vacationRentals: true,
@@ -621,8 +672,8 @@ export async function POST(request: Request) {
             query: buildHotelQuery(destinationCity, destinationCountry, hotelRoomsPerApartment, star) || destination,
             checkInDate,
             checkOutDate,
-            adults: 1,
-            children: 0,
+            adults,
+            children,
             countryCode: String(body.destinationCountryCode || 'us'),
             hotelClass: star,
           })
@@ -662,19 +713,22 @@ export async function POST(request: Request) {
       console.error('[Budget estimates] Step 4 failed:', dailyCosts.reason?.message || dailyCosts.reason);
     }
 
-    const flightPriceGroups = Object.fromEntries(
+    const flightSampleGroups = Object.fromEntries(
       flightCabinClasses.map((cabinClass, index) => {
-        const prices = flightResult.status === 'fulfilled'
+        const samples = flightResult.status === 'fulfilled'
           ? flightResult.value[index]?.status === 'fulfilled'
-            ? getFlightPrices(flightResult.value[index].value)
+            ? getFlightSamples(flightResult.value[index].value, cabinClass)
             : []
           : [];
-        return [cabinClass, prices];
+        return [cabinClass, samples];
       })
+    ) as Record<string, ReturnType<typeof getFlightSamples>>;
+    const flightPriceGroups = Object.fromEntries(
+      Object.entries(flightSampleGroups).map(([cabinClass, samples]) => [cabinClass, samples.map(sample => sample.price)])
     ) as Record<string, number[]>;
     const flightAverages = {
-      economy: average(flightPriceGroups.economy || []) ?? 800,
-      business: average(flightPriceGroups.business || []) ?? 2200,
+      economy: representativeAverage(flightPriceGroups.economy || []) ?? 800,
+      business: representativeAverage(flightPriceGroups.business || []) ?? 2200,
     };
     const flightPrices = Object.values(flightPriceGroups).flat();
     const hotelSamples = hotelResult.status === 'fulfilled' && hotelResult.value ? getHotelNightlySamples(hotelResult.value, nights) : [];
@@ -691,7 +745,7 @@ export async function POST(request: Request) {
     const hotelDebugByStars = buildHotelDebugByStars(hotelStarSamples.length ? hotelStarSamples : hotelSamples);
     const aiCosts = includePlaceVisits && dailyCosts.status === 'fulfilled' && dailyCosts.value
       ? dailyCosts.value
-      : { placeVisitCost: 25, dailyCategories: fallbackDailyCategories(25), currencyNote: '', source: 'static_fallback' };
+      : { placeVisitCost: 0, dailyCategories: [], currencyNote: 'Grounded daily spending data unavailable.', source: 'grounded_unavailable' };
     const transportCosts = transportResult.status === 'fulfilled' && transportResult.value
       ? transportResult.value
       : {
@@ -703,18 +757,19 @@ export async function POST(request: Request) {
         };
 
     const flightPerPerson = flightAverages.economy;
-    const hotelPerApartmentPerNight = average(hotelPrices) ?? 150;
+    const hotelPerApartmentPerNight = representativeAverage(hotelPrices) ?? 150;
     const transportPerPersonPerDay = transportCosts.transportPerPersonPerDay;
     const placeVisitCostPerDay = includePlaceVisits ? aiCosts.placeVisitCost : 0;
     const dailyCategories = includePlaceVisits ? aiCosts.dailyCategories : [];
 
-    console.log('[Budget estimates] Step 1 complete:', {
+    console.log('[Budget estimates] Step 1 complete:', JSON.stringify({
       samples: flightPrices.length,
       economyAveragePerPerson: flightAverages.economy,
       businessAveragePerPerson: flightAverages.business,
       cabinClasses: flightCabinClasses,
+      samplesByCabin: flightSampleGroups,
       source: flightPrices.length ? 'serpapi_google_flights' : 'fallback',
-    });
+    }, null, 2));
     console.log('[Budget estimates] Step 2 complete:', {
       samples: hotelPrices.length,
       averageHotelPerApartmentPerNight: hotelPerApartmentPerNight,
@@ -740,6 +795,12 @@ export async function POST(request: Request) {
     const responsePayload = {
       flightPerPerson,
       flightAverages,
+      flightSamplesByCabin: Object.fromEntries(
+        Object.entries(flightSampleGroups).map(([cabinClass, samples]) => [
+          cabinClass,
+          samples.slice(0, 12),
+        ])
+      ),
       hotelPerPersonPerNight: hotelPerApartmentPerNight,
       hotelPerApartmentPerNight,
       hotelAveragesByStars: hotelStarAverages.averages,

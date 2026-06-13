@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   ArrowRight,
@@ -133,6 +133,7 @@ function NumberStepper({ label, value, min, onChange }: { label: string; value: 
 }
 
 export default function SurpriseMeDiscovery({ onDestinationSelect }: SurpriseMeDiscoveryProps) {
+  const [today, setToday] = useState('');
   const [origin, setOrigin] = useState('');
   const [departureDate, setDepartureDate] = useState('');
   const [returnDate, setReturnDate] = useState('');
@@ -152,6 +153,10 @@ export default function SurpriseMeDiscovery({ onDestinationSelect }: SurpriseMeD
   const nights = getNights(departureDate, returnDate);
   const totalTravelers = adults + children;
   const numericBudget = Number(budget);
+
+  useEffect(() => {
+    setToday(todayKey());
+  }, []);
 
   const selectedVibes = useMemo(() => {
     const vibes = selectedInterests
@@ -267,7 +272,7 @@ export default function SurpriseMeDiscovery({ onDestinationSelect }: SurpriseMeD
                 <input
                   type="date"
                   value={departureDate}
-                  min={todayKey()}
+                  min={today}
                   onChange={event => setDepartureDate(event.target.value)}
                   className="w-full rounded-2xl border border-border bg-muted px-4 py-3 text-sm font-semibold text-foreground outline-none transition focus:border-foreground/30"
                 />
@@ -277,7 +282,7 @@ export default function SurpriseMeDiscovery({ onDestinationSelect }: SurpriseMeD
                 <input
                   type="date"
                   value={returnDate}
-                  min={departureDate || todayKey()}
+                  min={departureDate || today}
                   onChange={event => setReturnDate(event.target.value)}
                   className="w-full rounded-2xl border border-border bg-muted px-4 py-3 text-sm font-semibold text-foreground outline-none transition focus:border-foreground/30"
                 />
