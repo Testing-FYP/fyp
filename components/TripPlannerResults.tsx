@@ -3,6 +3,7 @@
 import { ReactNode, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion } from 'motion/react';
+import { formatFromUSD, useCurrency } from '@/context/CurrencyContext';
 import {
   AlertTriangle,
   Armchair,
@@ -69,12 +70,7 @@ function asNumber(value: any): number | null {
 function formatMoney(value: any, fallback = 'Unavailable') {
   const amount = asNumber(value);
   if (amount === null) return fallback;
-  return amount.toLocaleString('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: Number.isInteger(amount) ? 0 : 2,
-    maximumFractionDigits: Number.isInteger(amount) ? 0 : 2,
-  });
+  return formatFromUSD(amount);
 }
 
 function getBudgetComparisonSample(prices: number[]) {
@@ -2046,6 +2042,7 @@ function AISummary({ summary, destination, selections, plannerData }: { summary:
 }
 
 export default function TripPlannerResults({ results, onUpsell, isUpselling, plannerData }: TripPlannerResultsProps) {
+  useCurrency();
   const [activeSection, setActiveSection] = useState('overview');
   const [expandedCards, setExpandedCards] = useState<Set<number>>(new Set());
 

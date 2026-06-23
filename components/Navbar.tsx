@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '@/hooks/useAuth';
 import { PlaneTakeoff, User, BookOpen, LogIn, LogOut, Menu, X, Sparkles, ShoppingCart } from 'lucide-react';
+import CurrencySelector from '@/components/CurrencySelector';
 
 export default function Navbar() {
   const { user, isAuthenticated, logout } = useAuth();
@@ -117,6 +118,7 @@ export default function Navbar() {
             </Link>
           ) : null}
           <div className="hidden md:flex items-center gap-3">
+            <CurrencySelector />
             {isAuthenticated ? (
               <>
                 <Link href="/profile"
@@ -194,6 +196,7 @@ export default function Navbar() {
               </div>
 
               <div className="pt-8 border-t border-border mt-auto space-y-4">
+                <CurrencySelector />
                 {showCart ? (
                   <Link
                     href="/cart"

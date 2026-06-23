@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion } from 'motion/react';
 import { useAuth, BACKEND_URL } from '@/hooks/useAuth';
+import { useCurrency } from '@/context/CurrencyContext';
 import {
   ArrowLeft,
   BadgeCheck,
@@ -54,15 +55,6 @@ type PassengerDetail = {
   passportNumber: string;
 };
 
-function formatMoney(value: any) {
-  const amount = Number(value) || 0;
-  return amount.toLocaleString('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    maximumFractionDigits: Number.isInteger(amount) ? 0 : 2,
-  });
-}
-
 function formatDate(value?: string) {
   if (!value) return 'Not set';
   const date = new Date(`${value}T00:00:00`);
@@ -78,6 +70,7 @@ function itemIcon(type: string) {
 }
 
 export default function CartPage() {
+  const { convertFromUSD: formatMoney } = useCurrency();
   const router = useRouter();
   const [cart, setCart] = useState<TripCart | null>(null);
   const [loaded, setLoaded] = useState(false);

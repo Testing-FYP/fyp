@@ -7,6 +7,7 @@ import { format } from 'date-fns';
 import Image from 'next/image';
 import { useAuth } from '@/hooks/useAuth';
 import { useRouter } from 'next/navigation';
+import { useCurrency } from '@/context/CurrencyContext';
 
 interface BookingModalProps {
   offer: any;
@@ -15,6 +16,7 @@ interface BookingModalProps {
 
 export default function BookingModal({ offer, onClose }: BookingModalProps) {
   const { user, token, isAuthenticated } = useAuth();
+  const { convertFromUSD } = useCurrency();
   const router = useRouter();
   const [step, setStep] = useState<'details' | 'success'>('details');
   const [isLoading, setIsLoading] = useState(false);
@@ -221,7 +223,7 @@ export default function BookingModal({ offer, onClose }: BookingModalProps) {
                           return (
                             <div key={type} className="flex justify-between items-center text-xs">
                               <span className="text-muted-foreground font-light capitalize">{count} {type}{count > 1 ? (type === 'child' ? 'ren' : 's') : ''}</span>
-                              <span className="font-medium text-foreground">{offer.total_currency} {(parseFloat(offer.total_amount) / offer.passengers.length * count).toLocaleString()}</span>
+                              <span className="font-medium text-foreground">{convertFromUSD(parseFloat(offer.total_amount) / offer.passengers.length * count)}</span>
                             </div>
                           );
                         })}
@@ -231,7 +233,7 @@ export default function BookingModal({ offer, onClose }: BookingModalProps) {
                               <Briefcase className="w-3 h-3" />
                               Estimated Baggage Fee
                             </span>
-                            <span className="text-amber-600 font-medium">{offer.total_currency} {offer.estimated_baggage_fee.toLocaleString()}</span>
+                            <span className="text-amber-600 font-medium">{convertFromUSD(offer.estimated_baggage_fee)}</span>
                           </div>
                         ) : offer.total_included_baggage > 0 && (
                           <div className="flex justify-between items-center text-xs pt-2 border-t border-border">
@@ -248,7 +250,7 @@ export default function BookingModal({ offer, onClose }: BookingModalProps) {
                               <Hotel className="w-3 h-3" />
                               {offer.bundled_hotel.name}
                             </span>
-                            <span className="text-foreground font-medium">{offer.total_currency} {offer.bundled_hotel.price.toLocaleString()}</span>
+                            <span className="text-foreground font-medium">{convertFromUSD(offer.bundled_hotel.price)}</span>
                           </div>
                         )}
                         {offer.bundled_bus && (
@@ -257,23 +259,23 @@ export default function BookingModal({ offer, onClose }: BookingModalProps) {
                               <Bus className="w-3 h-3" />
                               {offer.bundled_bus.operator} ({offer.bundled_bus.class})
                             </span>
-                            <span className="text-foreground font-medium">{offer.total_currency} {offer.bundled_bus.price.toLocaleString()}</span>
+                            <span className="text-foreground font-medium">{convertFromUSD(offer.bundled_bus.price)}</span>
                           </div>
                         )}
                       </div>
                       <div className="pt-4 border-t border-border space-y-3">
                         <div className="flex justify-between items-center text-xs">
                           <span className="text-muted-foreground font-light">Base Fare</span>
-                          <span className="font-medium text-foreground">{offer.total_currency} {parseFloat(offer.base_amount).toLocaleString()}</span>
+                          <span className="font-medium text-foreground">{convertFromUSD(parseFloat(offer.base_amount))}</span>
                         </div>
                         <div className="flex justify-between items-center text-xs">
                           <span className="text-muted-foreground font-light">Taxes & Fees</span>
-                          <span className="font-medium text-foreground">{offer.total_currency} {parseFloat(offer.tax_amount).toLocaleString()}</span>
+                          <span className="font-medium text-foreground">{convertFromUSD(parseFloat(offer.tax_amount))}</span>
                         </div>
                       </div>
                       <div className="pt-6 border-t border-border flex justify-between items-end">
                         <span className="small-caps text-muted-foreground/40">Total Amount</span>
-                        <span className="text-4xl font-light title-text text-foreground">{offer.total_currency} {(offer.display_price || parseFloat(offer.total_amount)).toLocaleString()}</span>
+                        <span className="text-4xl font-light title-text text-foreground">{convertFromUSD(offer.display_price || parseFloat(offer.total_amount))}</span>
                       </div>
                     </div>
                     

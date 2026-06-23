@@ -22,6 +22,7 @@ import { useState } from 'react';
 import Image from 'next/image';
 import BookingModal from './BookingModal';
 import { useAuth } from '@/hooks/useAuth';
+import { useCurrency } from '@/context/CurrencyContext';
 
 /**
  * Parses an ISO 8601 duration string (e.g. "PT8H30M", "P1DT6H20M")
@@ -63,6 +64,7 @@ export default function FlightCard({ offer }: FlightCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
 
   const { token } = useAuth();
+  const { convertFromUSD } = useCurrency();
   
   // Detect if this is a round-trip offer
   const isRoundTrip = offer.slices.length > 1;
@@ -342,8 +344,7 @@ export default function FlightCard({ offer }: FlightCardProps) {
           <div>
              <span className="text-[10px] uppercase tracking-[0.3em] font-black text-muted-foreground/40 block mb-1">Total Package Price</span>
              <div className="flex items-end gap-2">
-               <span className="text-xs font-bold text-muted-foreground/40 mb-1">{offer.total_currency}</span>
-               <span className="text-4xl title-text text-foreground">{(offer.display_price || parseFloat(offer.total_amount)).toLocaleString()}</span>
+                <span className="text-4xl title-text text-foreground">{convertFromUSD(offer.display_price || parseFloat(offer.total_amount))}</span>
              </div>
           </div>
 
