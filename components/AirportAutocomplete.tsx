@@ -19,6 +19,7 @@ interface AirportAutocompleteProps {
   onSelect: (iata: string) => void;
   onSelectSuggestion?: (suggestion: AirportSuggestion) => void;
   placeholder: string;
+  source?: 'serpapi' | 'duffel';
 }
 
 function isValidAirportSuggestion(suggestion: any): suggestion is AirportSuggestion {
@@ -35,7 +36,7 @@ function isValidAirportSuggestion(suggestion: any): suggestion is AirportSuggest
   );
 }
 
-export default function AirportAutocomplete({ value, onSelect, onSelectSuggestion, placeholder }: AirportAutocompleteProps) {
+export default function AirportAutocomplete({ value, onSelect, onSelectSuggestion, placeholder, source = 'serpapi' }: AirportAutocompleteProps) {
   const [query, setQuery] = useState(value);
   const [suggestions, setSuggestions] = useState<AirportSuggestion[]>([]);
   const [isOpen, setIsOpen] = useState(false);
@@ -59,9 +60,13 @@ export default function AirportAutocomplete({ value, onSelect, onSelectSuggestio
       }
       setIsLoading(true);
       try {
-        const res = await fetch(`/api/google-api/google-flights-suggestions?query=${encodeURIComponent(query)}`);
+        const endpoint = source === 'duffel'
+          ? '/api/duffel/duffel-suggestions'
+          : '/api/google-api/google-flights-suggestions';
+        const res = await fetch(`${endpoint}?query=${encodeURIComponent(query)}`);
         const data = await res.json();
-        setSuggestions(Array.isArray(data) ? data.filter(isValidAirportSuggestion) : []);
+        const airports = Array.isArray(data) ? data : data?.airports;
+        setSuggestions(Array.isArray(airports) ? airports.filter(isValidAirportSuggestion) : []);
       } catch (err) {
         console.error(err);
       } finally {
@@ -71,7 +76,7 @@ export default function AirportAutocomplete({ value, onSelect, onSelectSuggestio
 
     const timeoutId = setTimeout(fetchSuggestions, 300);
     return () => clearTimeout(timeoutId);
-  }, [query]);
+  }, [query, source]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {

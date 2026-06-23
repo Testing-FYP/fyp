@@ -11,6 +11,13 @@ interface HotelCardProps {
 
 export default function HotelCard({ offer }: HotelCardProps) {
   const { convertFromUSD, currency } = useCurrency();
+  const sourceBadge = offer.dataSource === 'groq'
+    ? { label: '🤖 Groq', className: 'bg-violet-500/15 text-violet-700 dark:text-violet-300' }
+    : offer.dataSource === 'deepseek'
+      ? { label: '🤖 DeepSeek', className: 'bg-blue-500/15 text-blue-700 dark:text-blue-300' }
+      : offer.dataSource === 'groq-fallback'
+        ? { label: '🤖 DeepSeek → Groq', className: 'bg-orange-500/15 text-orange-700 dark:text-orange-300' }
+        : { label: '📡 SerpAPI', className: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300' };
   return (
     <motion.div 
       initial={{ opacity: 0, y: 20 }}
@@ -47,6 +54,7 @@ export default function HotelCard({ offer }: HotelCardProps) {
                 </div>
               </div>
               <div className="text-right">
+                <span className={`mb-2 inline-flex rounded-full px-2 py-1 text-[9px] font-bold ${sourceBadge.className}`}>{sourceBadge.label}</span>
                 <div className="text-sm text-muted-foreground mb-1">Per Night</div>
                 <div className="text-4xl title-text text-foreground">{convertFromUSD(offer.price)}</div>
                 <div className="text-[10px] text-muted-foreground uppercase tracking-widest">{currency}</div>

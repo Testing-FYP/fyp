@@ -339,6 +339,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
   useCurrency();
   const [step, setStep] = useState(Math.min(Math.max(initialStep, 0), STEPS.length - 1));
   const [direction, setDirection] = useState(1);
+  const [autocompleteSource, setAutocompleteSource] = useState<'serpapi' | 'duffel'>('serpapi');
   const [hasMounted, setHasMounted] = useState(false);
   // 'range' = initial picking (click from, then to), 'idle' = both set,
   // 'editDeparture' = picking departure only, 'editReturn' = picking return only
@@ -1055,6 +1056,23 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
       case 0:
         return (
           <div className="space-y-8">
+            <div className="flex items-center justify-between gap-3 rounded-2xl border border-border bg-muted/60 px-4 py-3">
+              <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">Autocomplete</span>
+              <div className="flex rounded-xl border border-border bg-background p-1">
+                {(['serpapi', 'duffel'] as const).map(source => (
+                  <button
+                    key={source}
+                    type="button"
+                    onClick={() => setAutocompleteSource(source)}
+                    className={`rounded-lg px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.12em] transition ${
+                      autocompleteSource === source ? 'bg-foreground text-background' : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    {source === 'serpapi' ? 'SerpAPI' : 'Duffel'}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div className="space-y-3">
               <label className="small-caps ml-1">Trip Type</label>
               <div className="flex gap-3">
@@ -1068,7 +1086,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
             </div>
             <div className="space-y-3 relative z-30">
               <label className="small-caps ml-1">From</label>
-              <AirportAutocomplete value={data.origin} onSelect={(v) => update({ origin: v })} placeholder="Departure City" />
+              <AirportAutocomplete value={data.origin} onSelect={(v) => update({ origin: v })} placeholder="Departure City" source={autocompleteSource} />
             </div>
             <div className="space-y-3 relative z-20">
               <label className="small-caps ml-1">To</label>
@@ -1085,6 +1103,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                   transportBudgetSelections: {},
                 })}
                 placeholder="Arrival City"
+                source={autocompleteSource}
               />
             </div>
           </div>

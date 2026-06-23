@@ -5,6 +5,7 @@ import path from 'path';
 import { searchSerpApiFlights as searchGoogleFlights } from '../google-api/google-flights';
 import { searchSerpApiHotels as searchGoogleHotels } from '../google-api/google-hotels';
 import { searchGoogleImagesLight } from '../google-api/google-images-light';
+import { generateMockFlights, generateMockHotels } from './mock-generator';
 
 const LOCATIONIQ_KEY = process.env.LOCATIONIQ_KEY || '';
 const SERPAPI_KEY = process.env.SERPAPI_API_KEY || '';
@@ -1838,7 +1839,11 @@ export async function POST(request: Request) {
       dailyCategories,
       nights,
       vibes,
+      mockSource: requestedMockSource,
     } = body;
+    const mockSource: 'serpapi' | 'groq' | 'deepseek' = requestedMockSource === 'groq' || requestedMockSource === 'deepseek'
+      ? requestedMockSource
+      : 'serpapi';
     const selectedDailyCategories = Array.isArray(dailyCategories)
       ? dailyCategories
           .filter((category: any) => category?.selected !== false)
@@ -1948,6 +1953,14 @@ export async function POST(request: Request) {
         ...Array(children).fill(null).map(() => ({ type: 'child' as const })),
       ];
 
+      const flightParams = {
+        origin, destination, destinationCity, destinationCountry, departureDate, returnDate, tripType,
+        adults, children, cabinClass: selectedFlightCabins[0] || body.cabinClass,
+      };
+
+      if (mockSource === 'groq' || mockSource === 'deepseek') {
+        flights = await generateMockFlights(flightParams, mockSource);
+      } else {
       try {
         const serpApiResults = await searchGoogleFlights({
           origin,
@@ -2096,6 +2109,7 @@ export async function POST(request: Request) {
       } catch (flightErr: any) {
         console.error('SerpApi flight search error:', flightErr.message);
       }
+      }
     }
 
     // ═══════════ STEP 3: FLIGHT SEARCH ═══════════
@@ -2117,6 +2131,13 @@ export async function POST(request: Request) {
 
     let hotels: any[] = [];
     {
+      if (mockSource === 'groq' || mockSource === 'deepseek') {
+        hotels = await generateMockHotels({
+          origin, destination, destinationCity, destinationCountry, departureDate, returnDate, tripType,
+          adults, children, nights: Number(nights) || 1, hotelStars: Number(body.hotelStars) || 3,
+          hotelRooms: Number(hotelRooms) || 1, hotelRoomsPerApartment: Number(hotelRoomsPerApartment) || 1,
+        }, mockSource);
+      } else {
       try {
         const selectedHotelStars = Array.isArray(budgetHotelStars)
           ? budgetHotelStars.map((star: any) => Math.round(Number(star))).filter((star: number) => star >= 1 && star <= 5)
@@ -2228,6 +2249,7 @@ export async function POST(request: Request) {
         }
       } catch (hotelErr: any) {
         console.error('SerpApi hotel search error:', hotelErr.message);
+      }
       }
 
       if (hotels.length === 0) {
