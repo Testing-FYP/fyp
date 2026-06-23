@@ -11,7 +11,6 @@ import {
 import AirportAutocomplete from './AirportAutocomplete';
 import { Calendar } from '@/components/ui/calendar';
 import type { DateRange } from 'react-day-picker';
-import { formatFromUSD, useCurrency } from '@/context/CurrencyContext';
 
 type TripType = 'one_way' | 'round_trip' | 'multi_city';
 type CabinClass = 'economy' | 'premium_economy' | 'business' | 'first';
@@ -336,7 +335,6 @@ function formatDailyCategoryLabel(label: string) {
 }
 
 export default function TripPlannerWizard({ onComplete, isLoading, initialStep = 0, initialData, onBudgetOverviewChange }: TripPlannerWizardProps) {
-  useCurrency();
   const [step, setStep] = useState(Math.min(Math.max(initialStep, 0), STEPS.length - 1));
   const [direction, setDirection] = useState(1);
   const [hasMounted, setHasMounted] = useState(false);
@@ -1581,7 +1579,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                   <Counter label="Nights" sublabel="How many nights to stay" value={data.nights} min={1} onChange={v => { nightsAutoSet.current = true; update({ nights: Math.min(30, v) }); }} />
                   <div className="px-6 space-y-1">
                     <div className="text-xs text-muted-foreground font-mono">
-                      {data.nights} night{data.nights !== 1 ? 's' : ''} × {data.hotelRooms} apartment{data.hotelRooms !== 1 ? 's' : ''} with {data.hotelRoomsPerApartment || 1} room{(data.hotelRoomsPerApartment || 1) !== 1 ? 's' : ''} inside each × {formatFromUSD(HOTEL_NIGHTLY[data.hotelStars] || 160)}/night = {formatFromUSD((HOTEL_NIGHTLY[data.hotelStars] || 160) * data.nights * Math.max(1, data.hotelRooms))}
+                      {data.nights} night{data.nights !== 1 ? 's' : ''} × {data.hotelRooms} apartment{data.hotelRooms !== 1 ? 's' : ''} with {data.hotelRoomsPerApartment || 1} room{(data.hotelRoomsPerApartment || 1) !== 1 ? 's' : ''} inside each × ${(HOTEL_NIGHTLY[data.hotelStars] || 160).toLocaleString()}/night = ${((HOTEL_NIGHTLY[data.hotelStars] || 160) * data.nights * Math.max(1, data.hotelRooms)).toLocaleString()}
                     </div>
                     <div className="text-[10px] text-muted-foreground/50">
                       Adjust if you won&apos;t need a hotel for the full duration.
@@ -2143,13 +2141,13 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                       <div className={`text-[10px] uppercase tracking-[0.2em] font-bold ${budgetFits ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-600 dark:text-red-300'}`}>Selected Categories</div>
                     </div>
                     <div className={`text-5xl font-bold title-text ${budgetFits ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-600 dark:text-red-300'}`}>
-                      {formatFromUSD(consumedBudget)}
+                      ${consumedBudget.toLocaleString()}
                     </div>
                     <div className={`text-xs mt-2 ${budgetFits ? 'text-emerald-700/70 dark:text-emerald-300/70' : 'text-red-600/70 dark:text-red-300/70'}`}>
                       Sum of selected flight, hotel, transport, and places budgets.
                     </div>
                     <div className={`text-xs mt-1 ${budgetFits ? 'text-emerald-700/70 dark:text-emerald-300/70' : 'text-red-600/70 dark:text-red-300/70'}`}>
-                      {budgetFits ? `${formatFromUSD(budgetDelta)} below AI ceiling` : `${formatFromUSD(Math.abs(budgetDelta))} above AI ceiling`}
+                      {budgetFits ? `$${budgetDelta.toLocaleString()} below AI ceiling` : `$${Math.abs(budgetDelta).toLocaleString()} above AI ceiling`}
                     </div>
                   </div>
                 </div>
@@ -2262,7 +2260,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                           {item.key === 'places' ? 'Needed money each day' : 'Selected value'}
                         </div>
                         <div className="mt-1 text-xl font-bold text-foreground font-mono">
-                          {formatFromUSD(item.value)}
+                          ${item.value.toLocaleString()}
                         </div>
                         {!item.enabled && item.value > 0 && (
                           <div className="mt-1 text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground/50">
@@ -2279,7 +2277,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                           </span>
                           {data.transportOptions?.length ? (
                             <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground/50">
-                              {formatFromUSD(selectedTransportDailyTotal)} per day
+                              ${selectedTransportDailyTotal.toLocaleString()} per day
                             </span>
                           ) : null}
                         </div>
@@ -2380,7 +2378,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                           </span>
                           {dailyCategoryPreview.length ? (
                             <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground/50">
-                              {formatFromUSD(selectedDailyCategorySum)} per traveler/day
+                              ${selectedDailyCategorySum.toLocaleString()} per traveler/day
                             </span>
                           ) : null}
                         </div>
@@ -2409,7 +2407,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                                     {selected && <Check className="ml-auto h-3.5 w-3.5 shrink-0 text-emerald-600" />}
                                   </div>
                                   <div className="mt-2 font-mono text-sm font-black text-foreground">
-                                    {formatFromUSD(Number(category.estimatedCost || 0))}
+                                    ${Number(category.estimatedCost || 0).toLocaleString()}
                                   </div>
                                   {category.detail && (
                                     <div className="mt-1 text-[10px] leading-relaxed text-muted-foreground break-words">
@@ -2454,7 +2452,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                                   {BUDGET_FLIGHT_CABIN_LABELS[cabinClass]}
                                 </div>
                                 <div className={`mt-1 font-mono text-sm font-black ${selected ? 'text-background' : 'text-foreground'}`}>
-                                  {averagePrice ? formatFromUSD(averagePrice) : 'Manual'}
+                                  {averagePrice ? `$${averagePrice.toLocaleString()}` : 'Manual'}
                                 </div>
                               </button>
                             );
@@ -2520,7 +2518,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                                     {star} Star
                                   </div>
                                   <div className={`mt-1 font-mono text-sm font-black ${selected ? 'text-background' : 'text-foreground'}`}>
-                                    {averagePrice ? formatFromUSD(averagePrice) : 'Manual'}
+                                    {averagePrice ? `$${averagePrice.toLocaleString()}` : 'Manual'}
                                   </div>
                                 </button>
                               );

@@ -3,14 +3,12 @@
 import { motion } from 'motion/react';
 import { Hotel, Star, MapPin, CheckCircle2 } from 'lucide-react';
 import Image from 'next/image';
-import { useCurrency } from '@/context/CurrencyContext';
 
 interface HotelCardProps {
   offer: any;
 }
 
 export default function HotelCard({ offer }: HotelCardProps) {
-  const { convertFromUSD, currency } = useCurrency();
   return (
     <motion.div 
       initial={{ opacity: 0, y: 20 }}
@@ -48,8 +46,8 @@ export default function HotelCard({ offer }: HotelCardProps) {
               </div>
               <div className="text-right">
                 <div className="text-sm text-muted-foreground mb-1">Per Night</div>
-                <div className="text-4xl title-text text-foreground">{convertFromUSD(offer.price)}</div>
-                <div className="text-[10px] text-muted-foreground uppercase tracking-widest">{currency}</div>
+                <div className="text-4xl title-text text-foreground">${offer.price.toLocaleString()}</div>
+                <div className="text-[10px] text-muted-foreground uppercase tracking-widest">USD</div>
               </div>
             </div>
 

@@ -4,7 +4,6 @@ import './globals.css';
 import ThemeToggle from '@/components/ThemeToggle';
 import Navbar from '@/components/Navbar';
 import { AuthProvider } from '@/hooks/useAuth';
-import { CurrencyProvider } from '@/context/CurrencyContext';
 import { cn } from "@/lib/utils";
 
 const geist = Geist({subsets:['latin'],variable:'--font-sans'});
@@ -23,13 +22,11 @@ export default function RootLayout({children}: {children: React.ReactNode}) {
   return (
     <html lang="en" suppressHydrationWarning className={cn(playfair.variable, "font-sans", geist.variable)}>
       <body suppressHydrationWarning className="bg-background text-foreground antialiased transition-colors duration-300">
-        <CurrencyProvider>
-          <AuthProvider>
-            <Navbar />
-            {children}
-            <ThemeToggle />
-          </AuthProvider>
-        </CurrencyProvider>
+        <AuthProvider>
+          <Navbar />
+          {children}
+          <ThemeToggle />
+        </AuthProvider>
       </body>
     </html>
   );

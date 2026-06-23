@@ -8,7 +8,6 @@ import TripPlannerResults from '@/components/TripPlannerResults';
 import SurpriseMeDiscovery from '@/components/SurpriseMeDiscovery';
 import Image from 'next/image';
 import planeLoadingImage from './image.png';
-import { useCurrency } from '@/context/CurrencyContext';
 
 const GENERATOR_TRANSPORT_TYPES = [
   'metro_subway',
@@ -72,7 +71,6 @@ function TripGenerationLoading() {
 }
 
 export default function Home() {
-  const { convertFromUSD } = useCurrency();
   const [results, setResults] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isUpselling, setIsUpselling] = useState(false);
@@ -341,26 +339,26 @@ export default function Home() {
                       ].map(row => (
                         <div key={row.label} className={`flex justify-between items-center text-base font-medium ${row.value === 0 ? 'opacity-35 line-through' : ''}`}>
                           <span>{row.label}</span>
-                          <span className="font-mono font-bold">{convertFromUSD(row.value)}</span>
+                          <span className="font-mono font-bold">${row.value.toLocaleString()}</span>
                         </div>
                       ))}
                       <div className="border-t border-border pt-3 mt-1 space-y-1">
                         <div className="flex justify-between text-base text-muted-foreground">
                           <span>Total used</span>
-                          <span className="font-mono font-bold text-foreground">{convertFromUSD(budgetOverview.total)}</span>
+                          <span className="font-mono font-bold text-foreground">${budgetOverview.total.toLocaleString()}</span>
                         </div>
                         <div className={`flex justify-between text-base font-bold ${budgetOverview.isOverBudget ? 'text-red-500' : 'text-green-600'}`}>
                           <span>{budgetOverview.isOverBudget ? 'Over budget' : 'Remaining'}</span>
-                          <span className="font-mono">{budgetOverview.isOverBudget ? '-' : '+'}{convertFromUSD(Math.abs(budgetOverview.remaining))}</span>
+                          <span className="font-mono">{budgetOverview.isOverBudget ? '-' : '+'}${Math.abs(budgetOverview.remaining).toLocaleString()}</span>
                         </div>
                       </div>
                       {budgetOverview.isOverBudget ? (
                         <div className="rounded-xl bg-red-500/10 border border-red-500/20 px-3 py-2 text-sm text-red-500 leading-relaxed">
-                          You are {convertFromUSD(Math.abs(budgetOverview.remaining))} over your budget.
+                          You are ${Math.abs(budgetOverview.remaining).toLocaleString()} over your budget.
                         </div>
                       ) : budgetOverview.total > 0 ? (
                         <div className="rounded-xl bg-green-500/10 border border-green-500/20 px-3 py-2 text-sm text-green-700 dark:text-green-400 leading-relaxed">
-                          Within budget. {convertFromUSD(budgetOverview.remaining)} still unallocated.
+                          Within budget. ${budgetOverview.remaining.toLocaleString()} still unallocated.
                         </div>
                       ) : null}
                   </div>
