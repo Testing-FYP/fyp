@@ -69,7 +69,13 @@ export default function WeatherWidget({ lat, lon, city, country, departureDate, 
           minC: data.daily.temperature_2m_min[index],
           weathercode: data.daily.weathercode[index],
           precipProb: data.daily.precipitation_probability_mean[index],
-        }));
+        })).filter((day: DayForecast) => (
+          day.maxC !== null &&
+          day.maxC !== undefined &&
+          day.minC !== null &&
+          day.minC !== undefined &&
+          !(day.maxC === 0 && day.minC === 0)
+        ));
         setForecast(days);
       } catch (err) {
         if ((err as Error).name !== 'AbortError') setError(true);

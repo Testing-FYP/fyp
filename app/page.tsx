@@ -20,20 +20,12 @@ const GENERATOR_TRANSPORT_TYPES = [
   'rental_car',
 ];
 
-function TripGenerationLoading({ isComplete }: { isComplete: boolean }) {
-  const [percent, setPercent] = useState<number>(0);
+interface TripGenerationLoadingProps {
+  percent: number;
+  label: string;
+}
 
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setPercent(current => Math.min(90, current + 0.8 + Math.random() * 1.4));
-    }, 120);
-    return () => clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
-    if (isComplete) setPercent(100);
-  }, [isComplete]);
-
+function TripGenerationLoading({ percent, label }: TripGenerationLoadingProps) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 18 }}
@@ -70,9 +62,7 @@ function TripGenerationLoading({ isComplete }: { isComplete: boolean }) {
           </motion.div>
           <h2 className="title-text text-4xl text-foreground md:text-5xl">Preparing Your Trip</h2>
           <p className="mt-2 text-4xl font-bold tabular-nums text-foreground">{Math.round(percent)}%</p>
-          <p className="mx-auto mt-3 max-w-md text-sm leading-relaxed text-muted-foreground">
-            Matching flights, stays, transport, and activities into one overview.
-          </p>
+          <p className="mt-1 text-sm text-muted-foreground">{label}</p>
           <div className="mx-auto mt-6 h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-foreground/10">
             <motion.div
               className="h-full w-1/2 rounded-full bg-foreground"
@@ -91,6 +81,8 @@ export default function Home() {
   const { mockSource } = useDataSource();
   const [results, setResults] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [loadingPercent, setLoadingPercent] = useState(0);
+  const [loadingLabel, setLoadingLabel] = useState('Starting...');
   const [isUpselling, setIsUpselling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [plannerData, setPlannerData] = useState<PlannerData | null>(null);
@@ -167,15 +159,28 @@ export default function Home() {
   });
 
   const handleComplete = async (plannerData: PlannerData) => {
+    const sessionId = crypto.randomUUID();
+    setLoadingPercent(0);
+    setLoadingLabel('Starting...');
     setIsLoading(true);
     setError(null);
     setPlannerData(plannerData);
+
+    const evtSource = new EventSource(`http://localhost:5000/api/generate/progress/${sessionId}`);
+    evtSource.onmessage = (event) => {
+      try {
+        const { percent, label } = JSON.parse(event.data);
+        setLoadingPercent(percent);
+        setLoadingLabel(label);
+      } catch {}
+    };
+    evtSource.onerror = () => evtSource.close();
 
     try {
       const res = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...buildGeneratePayload(plannerData), mockSource }),
+        body: JSON.stringify({ ...buildGeneratePayload(plannerData), mockSource, sessionId }),
       });
       const json = await res.json();
 
@@ -193,6 +198,7 @@ export default function Home() {
     } catch (err: any) {
       setError(err.message);
     } finally {
+      evtSource.close();
       setIsLoading(false);
     }
   };
@@ -340,7 +346,7 @@ export default function Home() {
             )}
 
             {isLoading ? (
-              <TripGenerationLoading isComplete={!isLoading} />
+              <TripGenerationLoading percent={loadingPercent} label={loadingLabel} />
             ) : plannerMode === 'classic' ? (
               <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_672px_minmax(0,1fr)] gap-8 items-start">
                 <div className="hidden xl:block" />

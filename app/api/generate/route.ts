@@ -7,6 +7,19 @@ import { searchSerpApiHotels as searchGoogleHotels } from '../google-api/google-
 import { searchGoogleImagesLight } from '../google-api/google-images-light';
 import { generateMockFlights, generateMockHotels } from './mock-generator';
 
+async function emitProgress(sessionId: string | null, percent: number, label: string): Promise<void> {
+  if (!sessionId) return;
+  try {
+    await fetch(`http://localhost:5000/api/generate/progress/${sessionId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ percent, label }),
+    });
+  } catch {
+    // Non-fatal: progress reporting must never interrupt trip generation.
+  }
+}
+
 const LOCATIONIQ_KEY = process.env.LOCATIONIQ_KEY || '';
 const SERPAPI_KEY = process.env.SERPAPI_API_KEY || '';
 const HOTEL_STAR_OPTIONS = [1, 2, 3, 4, 5];
@@ -1840,6 +1853,7 @@ export async function POST(request: Request) {
       nights,
       vibes,
       mockSource: requestedMockSource,
+      sessionId = null,
     } = body;
     const mockSource: 'serpapi' | 'groq' | 'deepseek' = requestedMockSource === 'groq' || requestedMockSource === 'deepseek'
       ? requestedMockSource
@@ -1934,6 +1948,7 @@ export async function POST(request: Request) {
       coordinates: geoLat && geoLon ? { lat: geoLat, lon: geoLon } : null,
       geocodeSource: airportGeo ? 'airport' : cityGeo ? 'city' : 'none',
     });
+    await emitProgress(sessionId, 12, 'Destination located');
 
     // ═══════════ STEP 2: DESTINATION RESOLUTION ═══════════
     console.log('═══════════ STEP 2: DESTINATION RESOLUTION ═══════════');
@@ -2128,6 +2143,7 @@ export async function POST(request: Request) {
         .filter((price: number | null): price is number => price !== null)
         .slice(0, 10),
     });
+    await emitProgress(sessionId, 30, 'Flights found');
 
     let hotels: any[] = [];
     {
@@ -2315,6 +2331,7 @@ export async function POST(request: Request) {
         totalStay: getHotelStayPrice(hotel, Math.max(1, Number(nights) || 1), 1),
       })),
     });
+    await emitProgress(sessionId, 52, 'Hotels matched');
 
     let nearbyAttractions: any[] = [];
     if (geoLat && geoLon) {
@@ -2380,6 +2397,7 @@ export async function POST(request: Request) {
         distance: place?.distance,
       })),
     });
+    await emitProgress(sessionId, 62, 'Points of interest ready');
 
     let destinationImages: any[] = [];
     try {
@@ -2402,6 +2420,7 @@ export async function POST(request: Request) {
       console.warn('SerpApi Google Images search error:', imageErr.message);
       log.warn('Destination image search failed', imageErr.message);
     }
+    await emitProgress(sessionId, 70, 'Images loaded');
 
     let transport: any[] = [];
     {
@@ -2482,6 +2501,7 @@ export async function POST(request: Request) {
         vibes,
       },
     });
+    await emitProgress(sessionId, 75, 'AI crafting your summary...');
 
     try {
       // Build context from REAL LocationIQ data
@@ -2883,6 +2903,7 @@ If you are unsure whether a place matches, do NOT include it.
       placesToVisit: placesToVisit.length,
       upsellOptions: upsellOptions.length,
     });
+    await emitProgress(sessionId, 88, 'Summary complete');
     log.step(10, 'Gemini budget filter started', {
       sourceOptions: {
         flights: flights.length,
@@ -2967,6 +2988,7 @@ If you are unsure whether a place matches, do NOT include it.
       warnings: budgetFit.budgetFitAgent.warnings,
       summary: budgetFit.budgetFitAgent.summary,
     });
+    await emitProgress(sessionId, 95, 'Budget optimized');
 
     // ────────────────────────────────────────────────────────
     // STEP 8c: Calculate budget breakdown from the same allocations used by filtering
@@ -3050,6 +3072,7 @@ If you are unsure whether a place matches, do NOT include it.
     });
     log.done({ status: 'ok' });
 
+    await emitProgress(sessionId, 100, 'Trip ready!');
     return NextResponse.json(finalResponse);
   } catch (error: any) {
     console.error('Planner API Error:', error);

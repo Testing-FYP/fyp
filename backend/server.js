@@ -29,12 +29,62 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+const progressSessions = new Map();
+
 // Serve uploaded avatars as static files
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', server: 'TravelElite Backend', time: new Date().toISOString() });
+});
+
+app.get('/api/generate/progress/:sessionId', (req, res) => {
+  const { sessionId } = req.params;
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('Access-Control-Allow-Origin', process.env.CORS_ORIGIN || 'http://localhost:3000');
+  res.flushHeaders();
+
+  res.write(`data: ${JSON.stringify({ percent: 0, label: 'Starting...' })}\n\n`);
+
+  const heartbeat = setInterval(() => {
+    res.write(': heartbeat\n\n');
+  }, 15000);
+
+  progressSessions.set(sessionId, { res, heartbeat });
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    progressSessions.delete(sessionId);
+  });
+});
+
+app.post('/api/generate/progress/:sessionId', express.json(), (req, res) => {
+  const ip = req.ip || req.connection.remoteAddress || '';
+  const isLocal = ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+  if (!isLocal) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  const { sessionId } = req.params;
+  const { percent, label } = req.body;
+  const session = progressSessions.get(sessionId);
+
+  if (session) {
+    session.res.write(`data: ${JSON.stringify({ percent, label })}\n\n`);
+    if (percent >= 100) {
+      setTimeout(() => {
+        clearInterval(session.heartbeat);
+        session.res.end();
+        progressSessions.delete(sessionId);
+      }, 500);
+    }
+  }
+
+  res.json({ ok: true });
 });
 
 // Routes
