@@ -6,6 +6,8 @@ import Navbar from '@/components/Navbar';
 import { AuthProvider } from '@/hooks/useAuth';
 import { CurrencyProvider } from '@/context/CurrencyContext';
 import { cn } from "@/lib/utils";
+import { Toaster } from 'sonner';
+import BackToTop from '@/components/BackToTop';
 
 const geist = Geist({subsets:['latin'],variable:'--font-sans'});
 
@@ -28,6 +30,16 @@ export default function RootLayout({children}: {children: React.ReactNode}) {
             <Navbar />
             {children}
             <ThemeToggle />
+            <Toaster
+              position="top-right"
+              toastOptions={{
+                duration: 4000,
+                classNames: {
+                  toast: 'z-[200]',
+                },
+              }}
+            />
+            <BackToTop />
           </AuthProvider>
         </CurrencyProvider>
       </body>

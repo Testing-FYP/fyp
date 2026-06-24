@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
 import { PlaneTakeoff, Eye, EyeOff, User, Mail, Lock, Sparkles } from 'lucide-react';
+import { toast } from 'sonner';
 
 export default function AuthPage() {
   const [tab, setTab] = useState<'login' | 'signup'>('login');
@@ -40,6 +41,7 @@ export default function AuthPage() {
       setError(result.error);
     } else {
       router.push('/');
+      toast.success(tab === 'login' ? 'Welcome back!' : 'Account created! Welcome to TravelElite.');
     }
   };
 

@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useRouter } from 'next/navigation';
 import { useAuth, BACKEND_URL } from '@/hooks/useAuth';
 import { PlaneTakeoff, MapPin, Calendar, Users, Trash2, ArrowLeft, Plus, Tag } from 'lucide-react';
+import { toast } from 'sonner';
 
 interface Trip {
   id: string; title: string; origin: string; destination: string;
@@ -42,7 +43,10 @@ export default function TripsPage() {
     fetch(`${BACKEND_URL}/api/trips`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.json())
       .then(data => { setTrips(data.trips || []); setIsLoading(false); })
-      .catch(() => setIsLoading(false));
+      .catch(() => {
+        setIsLoading(false);
+        toast.error('Could not load your trips.');
+      });
   }, [token]);
 
   const handleDelete = async (id: string) => {

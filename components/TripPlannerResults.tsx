@@ -4,6 +4,7 @@ import { ReactNode, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion } from 'motion/react';
 import { formatFromUSD, useCurrency } from '@/context/CurrencyContext';
+import WeatherWidget from './WeatherWidget';
 import {
   AlertTriangle,
   Armchair,
@@ -2041,10 +2042,54 @@ function AISummary({ summary, destination, selections, plannerData }: { summary:
   );
 }
 
+function FlightCardSkeleton() {
+  return (
+    <div className="animate-pulse rounded-3xl border border-border bg-card p-5 shadow-sm">
+      <div className="flex items-center gap-4">
+        <div className="h-14 w-14 rounded-full bg-muted" />
+        <div>
+          <div className="h-4 w-48 rounded bg-muted" />
+          <div className="mt-2 h-3 w-32 rounded bg-muted" />
+        </div>
+      </div>
+      <div className="mt-4 grid grid-cols-4 gap-3">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <div key={index}>
+            <div className="h-3 w-16 rounded bg-muted" />
+            <div className="mt-1 h-4 w-24 rounded bg-muted" />
+          </div>
+        ))}
+      </div>
+      <div className="mt-4 h-10 w-full rounded-xl bg-muted" />
+    </div>
+  );
+}
+
+function HotelCardSkeleton() {
+  return (
+    <div className="flex flex-row overflow-hidden rounded-3xl border border-border bg-card shadow-sm animate-pulse">
+      <div className="h-full min-h-56 w-2/5 bg-muted" />
+      <div className="w-3/5 p-5">
+        <div className="h-4 w-24 rounded bg-muted" />
+        <div className="mt-3 h-5 w-48 rounded bg-muted" />
+        <div className="mt-2 h-3 w-32 rounded bg-muted" />
+        <div className="mt-4 h-4 w-20 rounded bg-muted" />
+        <div className="mt-4 h-8 w-full rounded-xl bg-muted" />
+      </div>
+    </div>
+  );
+}
+
 export default function TripPlannerResults({ results, onUpsell, isUpselling, plannerData }: TripPlannerResultsProps) {
   useCurrency();
   const [activeSection, setActiveSection] = useState('overview');
   const [expandedCards, setExpandedCards] = useState<Set<number>>(new Set());
+  const [skeletonReady, setSkeletonReady] = useState(false);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setSkeletonReady(true), 800);
+    return () => clearTimeout(timer);
+  }, []);
 
   const destination = getDestinationDisplay(results, plannerData);
   const budgetAgent = results?.budgetFitAgent;
@@ -2275,6 +2320,16 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
               places: selectedPlaces,
             }}
           />
+          {results?._debug?.geocodedCenter?.lat && (
+            <WeatherWidget
+              lat={results._debug.geocodedCenter.lat}
+              lon={results._debug.geocodedCenter.lon}
+              city={results._debug.resolvedDestination?.city || plannerData?.destinationCity || ''}
+              country={results._debug.resolvedDestination?.country || plannerData?.destinationCountry || ''}
+              departureDate={plannerData?.departureDate}
+              returnDate={plannerData?.returnDate}
+            />
+          )}
         </motion.section>
       )}
 
@@ -2336,7 +2391,10 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
             insight={flightBudgetInsight}
           />
           <BudgetCategoryNotice agent={budgetAgent} categoryKey="flights" />
-          {flightCards.length > 0 ? flightCards : null}
+          {!skeletonReady
+            ? Array.from({ length: 3 }).map((_, i) => <FlightCardSkeleton key={i} />)
+            : flightCards.length > 0 ? flightCards : null
+          }
         </motion.section>
       )}
 
@@ -2443,7 +2501,9 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
               The hotel provider returned listings that appear outside {destination}. They remain visible for review, but they are marked before booking.
             </WarningBanner>
           ) : null}
-          {hotels.length ? hotels.map(({ hotel, suspicious, distance }, index) => (
+          {!skeletonReady
+            ? Array.from({ length: 3 }).map((_, i) => <HotelCardSkeleton key={i} />)
+            : hotels.length ? hotels.map(({ hotel, suspicious, distance }, index) => (
             <HotelCard
               key={`${hotel?.id || hotel?.name || 'hotel'}-${hotel?.price || ''}-${index}`}
               hotel={hotel}
@@ -2461,7 +2521,8 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, pla
                 });
               }}
             />
-          )) : null}
+          )) : null
+          }
         </motion.section>
       )}
 

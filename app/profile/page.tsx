@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from 'react';
 import { motion } from 'motion/react';
 import { useRouter } from 'next/navigation';
 import { useAuth, BACKEND_URL } from '@/hooks/useAuth';
+import { toast } from 'sonner';
 import {
   User, Phone, Globe, CreditCard, MapPin, FileText, Camera,
   Save, ChevronRight, Bell, Wallet, Languages, ArrowLeft
@@ -22,7 +23,6 @@ export default function ProfilePage() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [form, setForm] = useState<Partial<Profile>>({});
   const [isSaving, setIsSaving] = useState(false);
-  const [saveMsg, setSaveMsg] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -52,7 +52,6 @@ export default function ProfilePage() {
       })
       .catch(err => {
         console.error('Profile fetch error:', err);
-        setSaveMsg('Error loading profile data. Please try again.');
       });
   }, [token, router, logout]);
 
@@ -66,16 +65,20 @@ export default function ProfilePage() {
 
   const handleSave = async () => {
     if (!token) return;
-    setIsSaving(true); setSaveMsg('');
-    const res = await fetch(`${BACKEND_URL}/api/profile`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(form),
-    });
-    const data = await res.json();
-    setIsSaving(false);
-    setSaveMsg(data.message || data.error || '');
-    setTimeout(() => setSaveMsg(''), 3000);
+    setIsSaving(true);
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/profile`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(form),
+      });
+      if (!res.ok) throw new Error('Failed to save profile');
+      toast.success('Profile saved.');
+    } catch {
+      toast.error('Could not save profile.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -277,12 +280,6 @@ export default function ProfilePage() {
               <Save className="w-4 h-4" />
               {isSaving ? 'Saving...' : 'Save Changes'}
             </button>
-            {saveMsg && (
-              <motion.span initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }}
-                className={`text-sm ${saveMsg.includes('success') || saveMsg.includes('!') ? 'text-green-500' : 'text-red-500'}`}>
-                {saveMsg}
-              </motion.span>
-            )}
           </motion.div>
         </div>
       </div>

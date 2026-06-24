@@ -23,6 +23,7 @@ import Image from 'next/image';
 import BookingModal from './BookingModal';
 import { useAuth } from '@/hooks/useAuth';
 import { useCurrency } from '@/context/CurrencyContext';
+import { toast } from 'sonner';
 
 /**
  * Parses an ISO 8601 duration string (e.g. "PT8H30M", "P1DT6H20M")
@@ -94,7 +95,7 @@ export default function FlightCard({ offer }: FlightCardProps) {
   const handleSave = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!token) {
-      alert('You must be signed in to save a trip.');
+      toast.error('Sign in to save trips.');
       return;
     }
     setIsSaving(true);
@@ -119,7 +120,7 @@ export default function FlightCard({ offer }: FlightCardProps) {
       });
       if (response.ok) setIsSaved(true);
     } catch (err) {
-      console.error(err);
+      toast.error('Could not save trip. Please try again.');
     } finally {
       setIsSaving(false);
     }

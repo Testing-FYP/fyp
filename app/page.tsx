@@ -20,7 +20,20 @@ const GENERATOR_TRANSPORT_TYPES = [
   'rental_car',
 ];
 
-function TripGenerationLoading() {
+function TripGenerationLoading({ isComplete }: { isComplete: boolean }) {
+  const [percent, setPercent] = useState<number>(0);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setPercent(current => Math.min(90, current + 0.8 + Math.random() * 1.4));
+    }, 120);
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (isComplete) setPercent(100);
+  }, [isComplete]);
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 18 }}
@@ -56,6 +69,7 @@ function TripGenerationLoading() {
             <Sparkles className="h-5 w-5" />
           </motion.div>
           <h2 className="title-text text-4xl text-foreground md:text-5xl">Preparing Your Trip</h2>
+          <p className="mt-2 text-4xl font-bold tabular-nums text-foreground">{Math.round(percent)}%</p>
           <p className="mx-auto mt-3 max-w-md text-sm leading-relaxed text-muted-foreground">
             Matching flights, stays, transport, and activities into one overview.
           </p>
@@ -326,7 +340,7 @@ export default function Home() {
             )}
 
             {isLoading ? (
-              <TripGenerationLoading />
+              <TripGenerationLoading isComplete={!isLoading} />
             ) : plannerMode === 'classic' ? (
               <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_672px_minmax(0,1fr)] gap-8 items-start">
                 <div className="hidden xl:block" />

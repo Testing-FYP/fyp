@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useRouter } from 'next/navigation';
 import { useAuth, BACKEND_URL } from '@/hooks/useAuth';
 import { PlaneTakeoff, Hotel, Bus, ArrowLeft, Calendar, Tag, BanknoteIcon, XCircle, CheckCircle, Clock } from 'lucide-react';
+import { toast } from 'sonner';
 
 interface Reservation {
   id: string; trip_title?: string; reservation_type: string;
@@ -37,7 +38,10 @@ export default function ReservationsPage() {
     fetch(`${BACKEND_URL}/api/reservations`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.json())
       .then(data => { setReservations(data.reservations || []); setIsLoading(false); })
-      .catch(() => setIsLoading(false));
+      .catch(() => {
+        setIsLoading(false);
+        toast.error('Could not load your reservations.');
+      });
   }, [token]);
 
   if (authLoading || isLoading) {
