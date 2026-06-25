@@ -14,8 +14,15 @@ interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
   isLoading: boolean;
-  login: (email: string, password: string) => Promise<{ error?: string }>;
-  signup: (email: string, password: string, first_name: string, last_name: string) => Promise<{ error?: string }>;
+  login: (email: string, password: string) => Promise<{ error?: string; needsVerification?: boolean; email?: string }>;
+  signup: (
+    email: string,
+    password: string,
+    first_name: string,
+    last_name: string
+  ) => Promise<{ error?: string; needsVerification?: boolean; email?: string }>;
+  verifyOTP: (email: string, otp: string) => Promise<{ error?: string }>;
+  resendOTP: (email: string) => Promise<{ error?: string }>;
   logout: () => void;
   token: string | null;
 }
@@ -45,7 +52,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         body: JSON.stringify({ email, password }),
       });
       const data = await res.json();
-      if (!res.ok) return { error: data.error || 'Login failed.' };
+      if (!res.ok) {
+        return {
+          error: data.error || 'Login failed.',
+          needsVerification: data.needsVerification,
+          email: data.email,
+        };
+      }
       localStorage.setItem('travel_token', data.token);
       localStorage.setItem('travel_user', JSON.stringify(data.user));
       setToken(data.token);
@@ -65,10 +78,47 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
       const data = await res.json();
       if (!res.ok) return { error: data.error || 'Signup failed.' };
+      if (data.needsVerification === true) {
+        return { needsVerification: true, email: data.email };
+      }
       localStorage.setItem('travel_token', data.token);
       localStorage.setItem('travel_user', JSON.stringify(data.user));
       setToken(data.token);
       setUser(data.user);
+      return {};
+    } catch {
+      return { error: 'Could not connect to server.' };
+    }
+  };
+
+  const verifyOTP = async (email: string, otp: string) => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/auth/verify-otp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, otp }),
+      });
+      const data = await res.json();
+      if (!res.ok) return { error: data.error || 'Verification failed' };
+      localStorage.setItem('travel_token', data.token);
+      localStorage.setItem('travel_user', JSON.stringify(data.user));
+      setToken(data.token);
+      setUser(data.user);
+      return {};
+    } catch {
+      return { error: 'Could not connect to server.' };
+    }
+  };
+
+  const resendOTP = async (email: string) => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/auth/resend-otp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      const data = await res.json();
+      if (!res.ok) return { error: data.error || 'Failed to resend OTP' };
       return {};
     } catch {
       return { error: 'Could not connect to server.' };
@@ -83,7 +133,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, isAuthenticated: !!user, isLoading, login, signup, logout, token }}>
+    <AuthContext.Provider value={{ user, isAuthenticated: !!user, isLoading, login, signup, verifyOTP, resendOTP, logout, token }}>
       {children}
     </AuthContext.Provider>
   );

@@ -25,7 +25,7 @@ export default function AuthPage() {
     e.preventDefault();
     setIsLoading(true);
     setError('');
-    let result: { error?: string };
+    let result: { error?: string; needsVerification?: boolean; email?: string };
     if (tab === 'login') {
       result = await login(form.email, form.password);
     } else {
@@ -38,7 +38,15 @@ export default function AuthPage() {
     }
     setIsLoading(false);
     if (result.error) {
+      if (result.needsVerification === true) {
+        toast.error('Please verify your email first.');
+        router.push(`/auth/verify?email=${encodeURIComponent(result.email || form.email)}`);
+        return;
+      }
+
       setError(result.error);
+    } else if (result.needsVerification === true && result.email) {
+      router.push(`/auth/verify?email=${encodeURIComponent(result.email)}`);
     } else {
       router.push('/');
       toast.success(tab === 'login' ? 'Welcome back!' : 'Account created! Welcome to TravelElite.');

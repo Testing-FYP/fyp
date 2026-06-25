@@ -14,6 +14,9 @@ CREATE TABLE Users (
   last_name NVARCHAR(100),
   created_at DATETIME2 DEFAULT GETDATE(),
   updated_at DATETIME2 DEFAULT GETDATE(),
+  otp VARCHAR(6) NULL,
+  otp_expires_at DATETIME NULL,
+  email_verified BIT NOT NULL DEFAULT 0,
   CONSTRAINT UQ_Users_Email UNIQUE (email)
 );
 
