@@ -17,6 +17,7 @@ CREATE TABLE Users (
   otp VARCHAR(6) NULL,
   otp_expires_at DATETIME NULL,
   email_verified BIT NOT NULL DEFAULT 0,
+  google_id NVARCHAR(255) NULL,
   CONSTRAINT UQ_Users_Email UNIQUE (email)
 );
 

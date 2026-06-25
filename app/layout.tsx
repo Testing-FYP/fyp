@@ -1,20 +1,21 @@
 import type {Metadata} from 'next';
-import { Inter, Playfair_Display, Geist } from 'next/font/google';
+import localFont from 'next/font/local';
 import './globals.css';
 import ThemeToggle from '@/components/ThemeToggle';
 import Navbar from '@/components/Navbar';
 import { AuthProvider } from '@/hooks/useAuth';
 import { CurrencyProvider } from '@/context/CurrencyContext';
+import SessionProviderWrapper from '@/components/SessionProviderWrapper';
 import { cn } from "@/lib/utils";
 import { Toaster } from 'sonner';
 import BackToTop from '@/components/BackToTop';
 
-const geist = Geist({subsets:['latin'],variable:'--font-sans'});
-
-const playfair = Playfair_Display({
-  subsets: ['latin'],
-  variable: '--font-display',
+const geist = localFont({
+  src: '../node_modules/next/dist/next-devtools/server/font/geist-latin.woff2',
+  variable: '--font-sans',
 });
+
+const playfair = {variable: '[--font-display:Georgia,serif]'};
 
 export const metadata: Metadata = {
   title: 'Travel Elite',
@@ -28,7 +29,7 @@ export default function RootLayout({children}: {children: React.ReactNode}) {
         <CurrencyProvider>
           <AuthProvider>
             <Navbar />
-            {children}
+            <SessionProviderWrapper>{children}</SessionProviderWrapper>
             <ThemeToggle />
             <Toaster
               position="top-right"
