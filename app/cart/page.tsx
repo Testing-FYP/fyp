@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion } from 'motion/react';
+import { CardElement, useElements, useStripe } from '@stripe/react-stripe-js';
+import StripeProvider from '@/components/StripeProvider';
 import { useAuth, BACKEND_URL } from '@/hooks/useAuth';
 import { useCurrency } from '@/context/CurrencyContext';
 import {
@@ -69,9 +71,11 @@ function itemIcon(type: string) {
   return MapPin;
 }
 
-export default function CartPage() {
+function CartPage() {
   const { convertFromUSD: formatMoney } = useCurrency();
   const router = useRouter();
+  const stripe = useStripe();
+  const elements = useElements();
   const [cart, setCart] = useState<TripCart | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [isPaying, setIsPaying] = useState(false);
@@ -80,9 +84,6 @@ export default function CartPage() {
   const [form, setForm] = useState({
     name: '',
     email: '',
-    card: '',
-    expiry: '',
-    cvc: '',
   });
   const [aiSnapshot, setAiSnapshot] = useState<any>(null);
   const [passengers, setPassengers] = useState<PassengerDetail[]>([]);
@@ -153,9 +154,7 @@ export default function CartPage() {
       if (!p.dateOfBirth.trim()) return `Please enter date of birth for Passenger ${i + 1}.`;
       if (!p.nationality.trim()) return `Please enter nationality for Passenger ${i + 1}.`;
     }
-    if (form.card.replace(/\s/g, '').length < 13) return 'Card number must be at least 13 digits.';
-    if (form.expiry.length !== 5) return 'Expiry must be in MM/YY format.';
-    if (form.cvc.length !== 3) return 'CVC must be 3 digits.';
+    if (!stripe || !elements) return 'Stripe is not loaded yet.';
     return '';
   };
 
@@ -173,11 +172,47 @@ export default function CartPage() {
       setError('Please sign in to complete your booking.');
       return;
     }
+    if (!stripe || !elements) {
+      setError('Stripe is not ready. Please refresh.');
+      return;
+    }
 
     setError('');
     setIsPaying(true);
 
     try {
+      const totalAmount = cart.items.reduce(
+        (sum: number, item: any) => sum + (Number(item.price) || 0),
+        0
+      );
+
+      const intentRes = await fetch(`${BACKEND_URL}/api/payments/create-intent`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ amount: totalAmount, currency: 'usd' }),
+      });
+      const intentData = await intentRes.json();
+      if (!intentRes.ok) throw new Error(intentData.error || 'Payment setup failed.');
+
+      const cardElement = elements.getElement(CardElement);
+      if (!cardElement) throw new Error('Card element not found.');
+
+      const { error: stripeError, paymentIntent } = await stripe.confirmCardPayment(
+        intentData.clientSecret,
+        {
+          payment_method: {
+            card: cardElement,
+            billing_details: { name: form.name, email: form.email },
+          },
+        }
+      );
+
+      if (stripeError) throw new Error(stripeError.message || 'Card payment failed.');
+      if (paymentIntent?.status !== 'succeeded') throw new Error('Payment was not completed.');
+
       const flightItem = cart.items.find((item: any) => item.type === 'flight');
       const hotelItem = cart.items.find((item: any) => item.type === 'hotel');
 
@@ -201,6 +236,7 @@ export default function CartPage() {
               total_amount: flightItem.price || null,
               currency: 'USD',
               cabin_class: null,
+              payment_intent_id: paymentIntent.id,
               booking_details: {
                 cartItem: flightItem,
                 passengers: passengers,
@@ -230,6 +266,7 @@ export default function CartPage() {
               passengers: cart.travelers || 1,
               total_amount: hotelItem.price || null,
               currency: 'USD',
+              payment_intent_id: paymentIntent.id,
               booking_details: {
                 cartItem: hotelItem,
                 passengers: passengers,
@@ -476,51 +513,23 @@ export default function CartPage() {
                 <input value={form.email} onChange={event => setForm({ ...form, email: event.target.value })} placeholder="Email receipt" className="mt-2 w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none transition focus:border-foreground" />
               </label>
               <label className="block">
-                <span className="text-xs font-bold text-muted-foreground">Card number</span>
-                <input
-                  value={form.card}
-                  onChange={e => {
-                    const digits = e.target.value.replace(/\D/g, '').slice(0, 16);
-                    const formatted = digits.replace(/(.{4})/g, '$1 ').trim();
-                    setForm({ ...form, card: formatted });
-                  }}
-                  placeholder="Card number"
-                  inputMode="numeric"
-                  maxLength={19}
-                  className="w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-foreground"
-                />
+                <span className="text-xs font-bold text-muted-foreground">Card details</span>
+                <div className="mt-2 w-full rounded-2xl border border-border bg-background px-4 py-3">
+                  <CardElement
+                    options={{
+                      style: {
+                        base: {
+                          fontSize: '14px',
+                          color: 'var(--foreground)',
+                          '::placeholder': { color: 'var(--muted-foreground)' },
+                        },
+                        invalid: { color: '#ef4444' },
+                      },
+                      hidePostalCode: true,
+                    }}
+                  />
+                </div>
               </label>
-              <div className="grid grid-cols-2 gap-3 overflow-hidden">
-                <label className="block">
-                  <span className="text-xs font-bold text-muted-foreground">MM/YY</span>
-                  <input
-                    value={form.expiry}
-                    onChange={e => {
-                      const digits = e.target.value.replace(/\D/g, '').slice(0, 4);
-                      const formatted = digits.length > 2 ? `${digits.slice(0, 2)}/${digits.slice(2)}` : digits;
-                      setForm({ ...form, expiry: formatted });
-                    }}
-                    placeholder="MM/YY"
-                    inputMode="numeric"
-                    maxLength={5}
-                    className="w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-foreground"
-                  />
-                </label>
-                <label className="block">
-                  <span className="text-xs font-bold text-muted-foreground">CVC</span>
-                  <input
-                    value={form.cvc}
-                    onChange={e => {
-                      const digits = e.target.value.replace(/\D/g, '').slice(0, 3);
-                      setForm({ ...form, cvc: digits });
-                    }}
-                    placeholder="CVC"
-                    inputMode="numeric"
-                    maxLength={3}
-                    className="w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-foreground"
-                  />
-                </label>
-              </div>
             </div>
 
             {error ? <p className="mt-4 rounded-2xl bg-red-500/10 px-4 py-3 text-sm font-semibold text-red-600">{error}</p> : null}
@@ -534,5 +543,13 @@ export default function CartPage() {
         </div>
       </div>
     </main>
+  );
+}
+
+export default function CartPageWrapper() {
+  return (
+    <StripeProvider>
+      <CartPage />
+    </StripeProvider>
   );
 }

@@ -86,6 +86,7 @@ CREATE TABLE Reservations (
   currency NVARCHAR(10) DEFAULT 'USD',
   cabin_class NVARCHAR(50),
   status NVARCHAR(50) DEFAULT 'confirmed',
+  payment_intent_id NVARCHAR(255) NULL,
   booking_details NVARCHAR(MAX),
   created_at DATETIME2 DEFAULT GETDATE(),
   updated_at DATETIME2 DEFAULT GETDATE(),
