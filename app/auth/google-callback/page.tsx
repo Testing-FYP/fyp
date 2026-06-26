@@ -37,7 +37,7 @@ export default function GoogleCallbackPage() {
           if (data.token) {
             localStorage.setItem("travel_token", data.token);
             localStorage.setItem("travel_user", JSON.stringify(data.user));
-            router.replace("/");
+            window.location.href = "/";
           } else {
             hasCompletedBridge.current = false;
             setError(data.error || "Sign-in failed");
