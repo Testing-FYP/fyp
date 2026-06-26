@@ -12,11 +12,11 @@ router.get('/', authMiddleware, async (req, res) => {
       `SELECT r.*, t.title as trip_title
        FROM Reservations r
        LEFT JOIN Trips t ON r.trip_id = t.id
-       WHERE r.user_id = @user_id
+       WHERE r.user_id = $1
        ORDER BY r.created_at DESC`,
-      { user_id: req.user.id }
+      [req.user.id]
     );
-    res.json({ reservations: result.recordset });
+    res.json({ reservations: result.rows });
   } catch (err) {
     console.error('Get reservations error:', err);
     res.status(500).json({ error: 'Server error.' });
@@ -63,30 +63,30 @@ router.post(
            (user_id, trip_id, reservation_type, provider, provider_booking_ref,
             origin, destination, departure_datetime, arrival_datetime,
             passengers, total_amount, currency, cabin_class, payment_intent_id, booking_details)
-         OUTPUT INSERTED.*
          VALUES
-           (@user_id, @trip_id, @reservation_type, @provider, @provider_booking_ref,
-            @origin, @destination, @departure_datetime, @arrival_datetime,
-            @passengers, @total_amount, @currency, @cabin_class, @payment_intent_id, @booking_details)`,
-        {
-          user_id: req.user.id,
-          trip_id: trip_id || null,
+           ($1, $2, $3, $4, $5,
+            $6, $7, $8, $9,
+            $10, $11, $12, $13, $14, $15)
+         RETURNING *`,
+        [
+          req.user.id,
+          trip_id || null,
           reservation_type,
-          provider: provider || null,
-          provider_booking_ref: provider_booking_ref || null,
+          provider || null,
+          provider_booking_ref || null,
           origin,
           destination,
-          departure_datetime: departure_datetime || null,
-          arrival_datetime: arrival_datetime || null,
-          passengers: passengers || 1,
-          total_amount: total_amount || null,
-          currency: currency || 'USD',
-          cabin_class: cabin_class || null,
-          payment_intent_id: payment_intent_id || null,
-          booking_details: booking_details ? JSON.stringify(booking_details) : null,
-        }
+          departure_datetime || null,
+          arrival_datetime || null,
+          passengers || 1,
+          total_amount || null,
+          currency || 'USD',
+          cabin_class || null,
+          payment_intent_id || null,
+          booking_details ? JSON.stringify(booking_details) : null,
+        ]
       );
-      res.status(201).json({ message: 'Reservation created!', reservation: result.recordset[0] });
+      res.status(201).json({ message: 'Reservation created!', reservation: result.rows[0] });
     } catch (err) {
       console.error('Create reservation error:', err);
       res.status(500).json({ error: 'Server error.' });
@@ -101,13 +101,13 @@ router.get('/:id', authMiddleware, async (req, res) => {
       `SELECT r.*, t.title as trip_title
        FROM Reservations r
        LEFT JOIN Trips t ON r.trip_id = t.id
-       WHERE r.id = @id AND r.user_id = @user_id`,
-      { id: req.params.id, user_id: req.user.id }
+       WHERE r.id = $1 AND r.user_id = $2`,
+      [req.params.id, req.user.id]
     );
-    if (result.recordset.length === 0) {
+    if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Reservation not found.' });
     }
-    res.json({ reservation: result.recordset[0] });
+    res.json({ reservation: result.rows[0] });
   } catch (err) {
     console.error('Get reservation error:', err);
     res.status(500).json({ error: 'Server error.' });
@@ -118,19 +118,19 @@ router.get('/:id', authMiddleware, async (req, res) => {
 router.put('/:id/cancel', authMiddleware, async (req, res) => {
   try {
     const check = await query(
-      `SELECT id, status FROM Reservations WHERE id = @id AND user_id = @user_id`,
-      { id: req.params.id, user_id: req.user.id }
+      `SELECT id, status FROM Reservations WHERE id = $1 AND user_id = $2`,
+      [req.params.id, req.user.id]
     );
-    if (check.recordset.length === 0) {
+    if (check.rows.length === 0) {
       return res.status(404).json({ error: 'Reservation not found.' });
     }
-    if (check.recordset[0].status === 'cancelled') {
+    if (check.rows[0].status === 'cancelled') {
       return res.status(400).json({ error: 'Reservation is already cancelled.' });
     }
 
     await query(
-      `UPDATE Reservations SET status = 'cancelled', updated_at = GETDATE() WHERE id = @id`,
-      { id: req.params.id }
+      `UPDATE Reservations SET status = 'cancelled', updated_at = NOW() WHERE id = $1`,
+      [req.params.id]
     );
     res.json({ message: 'Reservation cancelled successfully.' });
   } catch (err) {

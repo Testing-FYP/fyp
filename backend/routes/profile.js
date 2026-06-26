@@ -39,14 +39,14 @@ router.get('/', authMiddleware, async (req, res) => {
               p.preferred_currency, p.preferred_language, p.notifications_enabled
        FROM Users u
        LEFT JOIN Profiles p ON u.id = p.user_id
-       WHERE u.id = @id`,
-      { id: req.user.id }
+       WHERE u.id = $1`,
+      [req.user.id]
     );
 
-    if (result.recordset.length === 0) {
+    if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Profile not found.' });
     }
-    res.json({ profile: result.recordset[0] });
+    res.json({ profile: result.rows[0] });
   } catch (err) {
     console.error('Get profile error:', err);
     res.status(500).json({ error: 'Server error.' });
@@ -76,15 +76,15 @@ router.put('/', authMiddleware, async (req, res) => {
     if ((first_name && first_name.trim()) || (last_name && last_name.trim())) {
       await query(
         `UPDATE Users SET 
-           first_name = COALESCE(@first_name, first_name), 
-           last_name = COALESCE(@last_name, last_name), 
-           updated_at = GETDATE() 
-         WHERE id = @id`,
-        { 
-          first_name: first_name ? first_name.trim() : null, 
-          last_name: last_name ? last_name.trim() : null, 
-          id: req.user.id 
-        }
+           first_name = COALESCE($1, first_name), 
+           last_name = COALESCE($2, last_name), 
+           updated_at = NOW() 
+         WHERE id = $3`,
+        [ 
+          first_name ? first_name.trim() : null, 
+          last_name ? last_name.trim() : null, 
+          req.user.id 
+        ]
       );
     }
 
@@ -92,33 +92,33 @@ router.put('/', authMiddleware, async (req, res) => {
     await query(
       `UPDATE Profiles
        SET
-         phone = COALESCE(@phone, phone),
-         date_of_birth = COALESCE(@date_of_birth, date_of_birth),
-         nationality = COALESCE(@nationality, nationality),
-         passport_number = COALESCE(@passport_number, passport_number),
-         address = COALESCE(@address, address),
-         city = COALESCE(@city, city),
-         country = COALESCE(@country, country),
-         bio = COALESCE(@bio, bio),
-         preferred_currency = COALESCE(@preferred_currency, preferred_currency),
-         preferred_language = COALESCE(@preferred_language, preferred_language),
-         notifications_enabled = COALESCE(@notifications_enabled, notifications_enabled),
-         updated_at = GETDATE()
-       WHERE user_id = @user_id`,
-      {
-        phone: phone || null,
-        date_of_birth: date_of_birth || null,
-        nationality: nationality || null,
-        passport_number: passport_number || null,
-        address: address || null,
-        city: city || null,
-        country: country || null,
-        bio: bio || null,
-        preferred_currency: preferred_currency || null,
-        preferred_language: preferred_language || null,
-        notifications_enabled: notifications_enabled !== undefined ? (notifications_enabled ? 1 : 0) : null,
-        user_id: req.user.id,
-      }
+         phone = COALESCE($1, phone),
+         date_of_birth = COALESCE($2, date_of_birth),
+         nationality = COALESCE($3, nationality),
+         passport_number = COALESCE($4, passport_number),
+         address = COALESCE($5, address),
+         city = COALESCE($6, city),
+         country = COALESCE($7, country),
+         bio = COALESCE($8, bio),
+         preferred_currency = COALESCE($9, preferred_currency),
+         preferred_language = COALESCE($10, preferred_language),
+         notifications_enabled = COALESCE($11, notifications_enabled),
+         updated_at = NOW()
+       WHERE user_id = $12`,
+      [
+        phone || null,
+        date_of_birth || null,
+        nationality || null,
+        passport_number || null,
+        address || null,
+        city || null,
+        country || null,
+        bio || null,
+        preferred_currency || null,
+        preferred_language || null,
+        notifications_enabled !== undefined ? Boolean(notifications_enabled) : null,
+        req.user.id,
+      ]
     );
 
     res.json({ message: 'Profile updated successfully!' });
@@ -138,8 +138,8 @@ router.post('/avatar', authMiddleware, upload.single('avatar'), async (req, res)
 
   try {
     await query(
-      `UPDATE Profiles SET avatar_url = @avatar_url, updated_at = GETDATE() WHERE user_id = @user_id`,
-      { avatar_url, user_id: req.user.id }
+      `UPDATE Profiles SET avatar_url = $1, updated_at = NOW() WHERE user_id = $2`,
+      [avatar_url, req.user.id]
     );
     res.json({ message: 'Avatar uploaded!', avatar_url });
   } catch (err) {

@@ -38,10 +38,10 @@ router.post(
     try {
       // Check if email already exists
       const existing = await query(
-        'SELECT id FROM Users WHERE email = @email',
-        { email }
+        'SELECT id FROM Users WHERE email = $1',
+        [email]
       );
-      if (existing.recordset.length > 0) {
+      if (existing.rows.length > 0) {
         return res.status(409).json({ error: 'An account with this email already exists.' });
       }
 
@@ -50,25 +50,25 @@ router.post(
 
       const userResult = await query(
         `INSERT INTO Users (email, password_hash, password_plaintext, first_name, last_name)
-         OUTPUT INSERTED.id, INSERTED.email, INSERTED.first_name, INSERTED.last_name, INSERTED.created_at
-         VALUES (@email, @password_hash, @password_plaintext, @first_name, @last_name)`,
-        { email, password_hash, password_plaintext: password, first_name, last_name }
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING id, email, first_name, last_name, created_at`,
+        [email, password_hash, password, first_name, last_name]
       );
-      const user = userResult.recordset[0];
+      const user = userResult.rows[0];
 
       // Create empty profile
       await query(
-        `INSERT INTO Profiles (user_id) VALUES (@user_id)`,
-        { user_id: user.id }
+        `INSERT INTO Profiles (user_id) VALUES ($1)`,
+        [user.id]
       );
 
       const otp = generateOTP();
       const expiry = getOTPExpiry();
 
       await query(
-        `UPDATE Users SET otp = @otp, otp_expires_at = @otp_expires_at
-         WHERE email = @email`,
-        { otp, otp_expires_at: expiry, email }
+        `UPDATE Users SET otp = $1, otp_expires_at = $2
+         WHERE email = $3`,
+        [otp, expiry, email]
       );
 
       try {
@@ -95,53 +95,53 @@ router.post('/google', async (req, res) => {
 
   try {
     let result = await query(
-      'SELECT * FROM Users WHERE google_id = @googleId',
-      { googleId }
+      'SELECT * FROM Users WHERE google_id = $1',
+      [googleId]
     );
-    let user = result.recordset[0];
+    let user = result.rows[0];
 
     if (!user) {
       result = await query(
-        'SELECT * FROM Users WHERE email = @email',
-        { email }
+        'SELECT * FROM Users WHERE email = $1',
+        [email]
       );
-      user = result.recordset[0];
+      user = result.rows[0];
 
       if (user) {
         await query(
           `UPDATE Users
-           SET google_id = @googleId, email_verified = 1
-           WHERE email = @email`,
-          { googleId, email }
+           SET google_id = $1, email_verified = TRUE
+           WHERE email = $2`,
+          [googleId, email]
         );
         result = await query(
-          'SELECT * FROM Users WHERE email = @email',
-          { email }
+          'SELECT * FROM Users WHERE email = $1',
+          [email]
         );
-        user = result.recordset[0];
+        user = result.rows[0];
       } else {
         const insertResult = await query(
           `INSERT INTO Users
              (email, first_name, last_name, google_id,
               email_verified, password_hash, password_plaintext)
-           OUTPUT INSERTED.id
            VALUES
-             (@email, @firstName, @lastName, @googleId,
-              1, '', '')`,
-          { email, firstName, lastName, googleId }
+             ($1, $2, $3, $4,
+              TRUE, '', '')
+           RETURNING id`,
+          [email, firstName, lastName, googleId]
         );
-        const newId = insertResult.recordset[0].id;
+        const newId = insertResult.rows[0].id;
 
         await query(
-          `INSERT INTO Profiles (user_id) VALUES (@user_id)`,
-          { user_id: newId }
+          `INSERT INTO Profiles (user_id) VALUES ($1)`,
+          [newId]
         );
 
         result = await query(
-          'SELECT * FROM Users WHERE id = @id',
-          { id: newId }
+          'SELECT * FROM Users WHERE id = $1',
+          [newId]
         );
-        user = result.recordset[0];
+        user = result.rows[0];
       }
     }
 
@@ -169,10 +169,10 @@ router.post('/verify-otp', async (req, res) => {
   try {
     const result = await query(
       `SELECT id, email, first_name, last_name, otp, otp_expires_at, email_verified
-       FROM Users WHERE email = @email`,
-      { email }
+       FROM Users WHERE email = $1`,
+      [email]
     );
-    const user = result.recordset[0];
+    const user = result.rows[0];
 
     if (!user) {
       return res.status(400).json({ error: 'User not found' });
@@ -191,9 +191,9 @@ router.post('/verify-otp', async (req, res) => {
     }
 
     await query(
-      `UPDATE Users SET email_verified = 1, otp = NULL, otp_expires_at = NULL
-       WHERE email = @email`,
-      { email }
+      `UPDATE Users SET email_verified = TRUE, otp = NULL, otp_expires_at = NULL
+       WHERE email = $1`,
+      [email]
     );
 
     const token = jwt.sign(
@@ -228,10 +228,10 @@ router.post('/resend-otp', async (req, res) => {
 
   try {
     const result = await query(
-      'SELECT id, email, first_name, email_verified FROM Users WHERE email = @email',
-      { email }
+      'SELECT id, email, first_name, email_verified FROM Users WHERE email = $1',
+      [email]
     );
-    const user = result.recordset[0];
+    const user = result.rows[0];
 
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
@@ -245,9 +245,9 @@ router.post('/resend-otp', async (req, res) => {
     const expiry = getOTPExpiry();
 
     await query(
-      `UPDATE Users SET otp = @otp, otp_expires_at = @otp_expires_at
-       WHERE email = @email`,
-      { otp, otp_expires_at: expiry, email }
+      `UPDATE Users SET otp = $1, otp_expires_at = $2
+       WHERE email = $3`,
+      [otp, expiry, email]
     );
 
     await sendOTPEmail(email, otp, user.first_name);
@@ -276,15 +276,15 @@ router.post(
 
     try {
       const result = await query(
-        'SELECT id, email, first_name, last_name, password_hash, email_verified FROM Users WHERE email = @email',
-        { email }
+        'SELECT id, email, first_name, last_name, password_hash, email_verified FROM Users WHERE email = $1',
+        [email]
       );
 
-      if (result.recordset.length === 0) {
+      if (result.rows.length === 0) {
         return res.status(401).json({ error: 'Invalid email or password.' });
       }
 
-      const user = result.recordset[0];
+      const user = result.rows[0];
       if (!user.email_verified) {
         return res.status(403).json({
           error: 'Please verify your email before signing in.',
@@ -326,15 +326,15 @@ router.get('/me', authMiddleware, async (req, res) => {
               p.preferred_currency, p.preferred_language, p.notifications_enabled
        FROM Users u
        LEFT JOIN Profiles p ON u.id = p.user_id
-       WHERE u.id = @id`,
-      { id: req.user.id }
+       WHERE u.id = $1`,
+      [req.user.id]
     );
 
-    if (result.recordset.length === 0) {
+    if (result.rows.length === 0) {
       return res.status(404).json({ error: 'User not found.' });
     }
 
-    res.json({ user: result.recordset[0] });
+    res.json({ user: result.rows[0] });
   } catch (err) {
     console.error('Get me error:', err);
     res.status(500).json({ error: 'Server error.' });

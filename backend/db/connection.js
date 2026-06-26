@@ -1,41 +1,32 @@
-const sql = require('mssql');
+const { Pool } = require('pg');
 require('dotenv').config();
 
-const config = {
-  server: process.env.DB_SERVER,
-  port: parseInt(process.env.DB_PORT) || 1433,
-  database: process.env.DB_NAME,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  options: {
-    encrypt: process.env.DB_ENCRYPT === 'true',
-    trustServerCertificate: process.env.DB_TRUST_SERVER_CERTIFICATE === 'true',
-    enableArithAbort: true,
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false,
   },
-  pool: {
-    max: 10,
-    min: 0,
-    idleTimeoutMillis: 30000,
-  },
-};
+});
 
-let pool = null;
-
-async function getPool() {
-  if (!pool) {
-    pool = await sql.connect(config);
-    console.log('✅ Connected to SQL Server: TravelEliteDB');
-  }
-  return pool;
+async function query(sqlText, params = []) {
+  const result = await pool.query(sqlText, params);
+  return { rows: result.rows };
 }
 
-async function query(sqlText, params = {}) {
-  const p = await getPool();
-  const request = p.request();
-  for (const [key, value] of Object.entries(params)) {
-    request.input(key, value);
+async function withTransaction(fn) {
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+    const result = await fn(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
   }
-  return request.query(sqlText);
 }
 
-module.exports = { getPool, query, sql };
+module.exports = { pool, query, withTransaction };

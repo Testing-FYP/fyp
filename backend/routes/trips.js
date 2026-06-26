@@ -12,11 +12,11 @@ router.get('/', authMiddleware, async (req, res) => {
       `SELECT id, title, origin, destination, departure_date, return_date,
               passengers, trip_type, status, notes, offer_id, total_amount, currency, created_at
        FROM Trips
-       WHERE user_id = @user_id
+       WHERE user_id = $1
        ORDER BY created_at DESC`,
-      { user_id: req.user.id }
+      [req.user.id]
     );
-    res.json({ trips: result.recordset });
+    res.json({ trips: result.rows });
   } catch (err) {
     console.error('Get trips error:', err);
     res.status(500).json({ error: 'Server error.' });
@@ -49,26 +49,26 @@ router.post(
         `INSERT INTO Trips
            (user_id, title, origin, destination, departure_date, return_date,
             passengers, trip_type, notes, offer_id, total_amount, currency)
-         OUTPUT INSERTED.*
          VALUES
-           (@user_id, @title, @origin, @destination, @departure_date, @return_date,
-            @passengers, @trip_type, @notes, @offer_id, @total_amount, @currency)`,
-        {
-          user_id: req.user.id,
+           ($1, $2, $3, $4, $5, $6,
+            $7, $8, $9, $10, $11, $12)
+         RETURNING *`,
+        [
+          req.user.id,
           title,
           origin,
           destination,
           departure_date,
-          return_date: return_date || null,
-          passengers: passengers || 1,
-          trip_type: trip_type || 'flight',
-          notes: notes || null,
-          offer_id: offer_id || null,
-          total_amount: total_amount || null,
-          currency: currency || null,
-        }
+          return_date || null,
+          passengers || 1,
+          trip_type || 'flight',
+          notes || null,
+          offer_id || null,
+          total_amount || null,
+          currency || null,
+        ]
       );
-      res.status(201).json({ message: 'Trip saved!', trip: result.recordset[0] });
+      res.status(201).json({ message: 'Trip saved!', trip: result.rows[0] });
     } catch (err) {
       console.error('Create trip error:', err);
       res.status(500).json({ error: 'Server error.' });
@@ -80,13 +80,13 @@ router.post(
 router.get('/:id', authMiddleware, async (req, res) => {
   try {
     const result = await query(
-      `SELECT * FROM Trips WHERE id = @id AND user_id = @user_id`,
-      { id: req.params.id, user_id: req.user.id }
+      `SELECT * FROM Trips WHERE id = $1 AND user_id = $2`,
+      [req.params.id, req.user.id]
     );
-    if (result.recordset.length === 0) {
+    if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Trip not found.' });
     }
-    res.json({ trip: result.recordset[0] });
+    res.json({ trip: result.rows[0] });
   } catch (err) {
     console.error('Get trip error:', err);
     res.status(500).json({ error: 'Server error.' });
@@ -103,28 +103,28 @@ router.patch('/:id', authMiddleware, async (req, res) => {
 
   try {
     const check = await query(
-      `SELECT id FROM Trips WHERE id = @id AND user_id = @user_id`,
-      { id: req.params.id, user_id: req.user.id }
+      `SELECT id FROM Trips WHERE id = $1 AND user_id = $2`,
+      [req.params.id, req.user.id]
     );
-    if (check.recordset.length === 0) {
+    if (check.rows.length === 0) {
       return res.status(404).json({ error: 'Trip not found.' });
     }
 
     await query(
       `UPDATE Trips
        SET
-         status = COALESCE(@status, status),
-         notes = COALESCE(@notes, notes),
-         title = COALESCE(@title, title),
-         updated_at = GETDATE()
-       WHERE id = @id AND user_id = @user_id`,
-      {
-        status: status || null,
-        notes: notes || null,
-        title: title || null,
-        id: req.params.id,
-        user_id: req.user.id,
-      }
+         status = COALESCE($1, status),
+         notes = COALESCE($2, notes),
+         title = COALESCE($3, title),
+         updated_at = NOW()
+       WHERE id = $4 AND user_id = $5`,
+      [
+        status || null,
+        notes || null,
+        title || null,
+        req.params.id,
+        req.user.id,
+      ]
     );
     res.json({ message: 'Trip updated successfully!' });
   } catch (err) {
@@ -137,16 +137,16 @@ router.patch('/:id', authMiddleware, async (req, res) => {
 router.delete('/:id', authMiddleware, async (req, res) => {
   try {
     const check = await query(
-      `SELECT id FROM Trips WHERE id = @id AND user_id = @user_id`,
-      { id: req.params.id, user_id: req.user.id }
+      `SELECT id FROM Trips WHERE id = $1 AND user_id = $2`,
+      [req.params.id, req.user.id]
     );
-    if (check.recordset.length === 0) {
+    if (check.rows.length === 0) {
       return res.status(404).json({ error: 'Trip not found.' });
     }
 
     await query(
-      `DELETE FROM Trips WHERE id = @id AND user_id = @user_id`,
-      { id: req.params.id, user_id: req.user.id }
+      `DELETE FROM Trips WHERE id = $1 AND user_id = $2`,
+      [req.params.id, req.user.id]
     );
     res.json({ message: 'Trip deleted.' });
   } catch (err) {
