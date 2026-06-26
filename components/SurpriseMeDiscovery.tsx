@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   ArrowRight,
@@ -24,6 +24,7 @@ import {
   Users,
   Waves,
 } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import AirportAutocomplete from './AirportAutocomplete';
 import type { PlannerData } from './TripPlannerWizard';
 
@@ -47,41 +48,41 @@ type SurpriseMeDiscoveryProps = {
 
 type InterestOption = {
   id: string;
-  label: string;
+  labelKey: string;
   icon: any;
   vibe?: PlannerData['vibes'][number];
 };
 
 const INTEREST_OPTIONS: InterestOption[] = [
-  { id: 'family', label: 'Family friendly', icon: Baby, vibe: 'family_friendly' },
-  { id: 'beach', label: 'Beach', icon: Waves, vibe: 'nature_outdoors' },
-  { id: 'shopping', label: 'Shopping', icon: ShoppingBag, vibe: 'shopping_exploring' },
-  { id: 'nature', label: 'Nature', icon: Mountain, vibe: 'nature_outdoors' },
-  { id: 'culture', label: 'Culture', icon: Landmark, vibe: 'culture_history' },
-  { id: 'food', label: 'Food', icon: Utensils, vibe: 'food_drink' },
-  { id: 'nightlife', label: 'Nightlife', icon: Moon, vibe: 'nightlife_entertainment' },
-  { id: 'wellness', label: 'Wellness', icon: Leaf, vibe: 'relaxation_wellness' },
+  { id: 'family', labelKey: 'interests.family', icon: Baby, vibe: 'family_friendly' },
+  { id: 'beach', labelKey: 'interests.beach', icon: Waves, vibe: 'nature_outdoors' },
+  { id: 'shopping', labelKey: 'interests.shopping', icon: ShoppingBag, vibe: 'shopping_exploring' },
+  { id: 'nature', labelKey: 'interests.nature', icon: Mountain, vibe: 'nature_outdoors' },
+  { id: 'culture', labelKey: 'interests.culture', icon: Landmark, vibe: 'culture_history' },
+  { id: 'food', labelKey: 'interests.food', icon: Utensils, vibe: 'food_drink' },
+  { id: 'nightlife', labelKey: 'interests.nightlife', icon: Moon, vibe: 'nightlife_entertainment' },
+  { id: 'wellness', labelKey: 'interests.wellness', icon: Leaf, vibe: 'relaxation_wellness' },
 ];
 
 const REGION_OPTIONS = [
-  { id: 'nearby', label: 'Nearby' },
-  { id: 'middle_east', label: 'Middle East' },
-  { id: 'europe', label: 'Europe' },
-  { id: 'asia', label: 'Asia' },
-  { id: 'anywhere', label: 'Anywhere' },
+  { id: 'nearby', labelKey: 'regions.nearby' },
+  { id: 'middle_east', labelKey: 'regions.middleEast' },
+  { id: 'europe', labelKey: 'regions.europe' },
+  { id: 'asia', labelKey: 'regions.asia' },
+  { id: 'anywhere', labelKey: 'regions.anywhere' },
 ];
 
 const CLIMATE_OPTIONS = [
-  { id: 'warm', label: 'Warm' },
-  { id: 'mild', label: 'Mild' },
-  { id: 'cool', label: 'Cool' },
-  { id: 'open', label: 'Open' },
+  { id: 'warm', labelKey: 'climates.warm' },
+  { id: 'mild', labelKey: 'climates.mild' },
+  { id: 'cool', labelKey: 'climates.cool' },
+  { id: 'open', labelKey: 'climates.open' },
 ];
 
 const PACE_OPTIONS = [
-  { id: 'slow', label: 'Slow' },
-  { id: 'balanced', label: 'Balanced' },
-  { id: 'packed', label: 'Packed' },
+  { id: 'slow', labelKey: 'paces.slow' },
+  { id: 'balanced', labelKey: 'paces.balanced' },
+  { id: 'packed', labelKey: 'paces.packed' },
 ];
 
 function todayKey() {
@@ -104,7 +105,7 @@ function budgetSplit(totalBudget: number) {
   };
 }
 
-function NumberStepper({ label, value, min, onChange }: { label: string; value: number; min: number; onChange: (value: number) => void }) {
+function NumberStepper({ label, value, min, onChange, decreaseLabel, increaseLabel }: { label: string; value: number; min: number; onChange: (value: number) => void; decreaseLabel: string; increaseLabel: string }) {
   return (
     <div className="flex items-center justify-between rounded-2xl border border-border bg-muted px-4 py-3">
       <span className="text-sm font-bold text-foreground">{label}</span>
@@ -114,7 +115,7 @@ function NumberStepper({ label, value, min, onChange }: { label: string; value: 
           onClick={() => onChange(Math.max(min, value - 1))}
           disabled={value <= min}
           className="flex h-8 w-8 items-center justify-center rounded-xl border border-border bg-background text-sm font-black text-foreground transition hover:border-foreground/30 disabled:opacity-30"
-          aria-label={`Decrease ${label}`}
+          aria-label={decreaseLabel}
         >
           -
         </button>
@@ -123,7 +124,7 @@ function NumberStepper({ label, value, min, onChange }: { label: string; value: 
           type="button"
           onClick={() => onChange(value + 1)}
           className="flex h-8 w-8 items-center justify-center rounded-xl border border-foreground bg-foreground text-sm font-black text-background transition hover:opacity-80"
-          aria-label={`Increase ${label}`}
+          aria-label={increaseLabel}
         >
           +
         </button>
@@ -133,7 +134,10 @@ function NumberStepper({ label, value, min, onChange }: { label: string; value: 
 }
 
 export default function SurpriseMeDiscovery({ onDestinationSelect }: SurpriseMeDiscoveryProps) {
+  const t = useTranslations('surprise');
+  const [today, setToday] = useState('');
   const [origin, setOrigin] = useState('');
+  const [autocompleteSource, setAutocompleteSource] = useState<'serpapi' | 'duffel'>('serpapi');
   const [departureDate, setDepartureDate] = useState('');
   const [returnDate, setReturnDate] = useState('');
   const [adults, setAdults] = useState(0);
@@ -153,6 +157,10 @@ export default function SurpriseMeDiscovery({ onDestinationSelect }: SurpriseMeD
   const totalTravelers = adults + children;
   const numericBudget = Number(budget);
 
+  useEffect(() => {
+    setToday(todayKey());
+  }, []);
+
   const selectedVibes = useMemo(() => {
     const vibes = selectedInterests
       .map(id => INTEREST_OPTIONS.find(option => option.id === id)?.vibe)
@@ -168,23 +176,23 @@ export default function SurpriseMeDiscovery({ onDestinationSelect }: SurpriseMeD
 
   const generateDestinations = async () => {
     if (!origin) {
-      setError('Choose your departure airport first.');
+      setError(t('errors.chooseDepartureAirport'));
       return;
     }
     if (!departureDate) {
-      setError('Choose a departure date.');
+      setError(t('errors.chooseDepartureDate'));
       return;
     }
     if (totalTravelers < 1) {
-      setError('Add at least one traveler.');
+      setError(t('errors.addTraveler'));
       return;
     }
     if (!Number.isFinite(numericBudget) || numericBudget < 1) {
-      setError('Enter your total budget.');
+      setError(t('errors.enterBudget'));
       return;
     }
     if (!region || !climate || !pace) {
-      setError('Choose a region, climate, and pace.');
+      setError(t('errors.chooseRegionClimatePace'));
       return;
     }
 
@@ -193,7 +201,7 @@ export default function SurpriseMeDiscovery({ onDestinationSelect }: SurpriseMeD
     setDestinations([]);
 
     try {
-      const response = await fetch('/api/planner/surprise', {
+      const response = await fetch('/api/surprise', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -212,10 +220,10 @@ export default function SurpriseMeDiscovery({ onDestinationSelect }: SurpriseMeD
         }),
       });
       const json = await response.json();
-      if (!response.ok || json.error) throw new Error(json.error || 'Could not generate destination ideas.');
+      if (!response.ok || json.error) throw new Error(json.error || t('errors.generateFailed'));
       setDestinations(json.destinations || []);
     } catch (err: any) {
-      setError(err?.message || 'Could not generate destination ideas.');
+      setError(err?.message || t('errors.generateFailed'));
     } finally {
       setIsLoading(false);
     }
@@ -231,15 +239,7 @@ export default function SurpriseMeDiscovery({ onDestinationSelect }: SurpriseMeD
       returnDate,
       adults,
       children,
-      includeFlight,
-      includeHotel,
-      includeTransport: true,
-      transportTypes: ['bus'],
-      transportPriority: pace === 'packed' ? 'fastest' : 'cheapest',
       vibes: selectedVibes,
-      hotelStars: travelerSafeBudget >= 3500 ? 5 : travelerSafeBudget >= 2200 ? 4 : 3,
-      hotelRooms: Math.max(1, Math.ceil(totalTravelers / 3)),
-      hotelBeds: Math.max(1, Math.ceil(totalTravelers / 2)),
       nights,
       budgetMode: 'total',
       ...budgetSplit(travelerSafeBudget),
@@ -255,37 +255,60 @@ export default function SurpriseMeDiscovery({ onDestinationSelect }: SurpriseMeD
               <Sparkles className="h-6 w-6" />
             </div>
             <div>
-              <p className="small-caps">Surprise Me</p>
-              <h2 className="mt-2 text-3xl title-text text-foreground">Find somewhere that fits</h2>
+              <p className="small-caps">{t('form.badge')}</p>
+              <h2 className="mt-2 text-3xl title-text text-foreground">{t('form.title')}</h2>
               <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-                Answer the basics and choose from a destination library before the full trip planner runs.
+                {t('form.description')}
               </p>
             </div>
           </div>
 
           <div className="mt-7 space-y-6">
+            <div className="flex items-center justify-between gap-3 rounded-2xl border border-border bg-muted/60 px-4 py-3">
+              <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">Autocomplete</span>
+              <div className="flex rounded-xl border border-border bg-background p-1">
+                {(['serpapi', 'duffel'] as const).map(source => (
+                  <button
+                    key={source}
+                    type="button"
+                    onClick={() => setAutocompleteSource(source)}
+                    className={`rounded-lg px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.12em] transition ${
+                      autocompleteSource === source ? 'bg-foreground text-background' : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    {source === 'serpapi' ? 'SerpAPI' : 'Duffel'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <div className="space-y-3">
-              <label className="small-caps ml-1">From</label>
-              <AirportAutocomplete value={origin} onSelect={setOrigin} placeholder="Departure airport" />
+              <label className="small-caps ml-1">{t('form.from')}</label>
+              <AirportAutocomplete
+                value={origin}
+                onSelect={setOrigin}
+                placeholder={t('form.departureAirport')}
+                source={autocompleteSource}
+              />
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="space-y-2">
-                <span className="small-caps ml-1 flex items-center gap-2"><CalendarDays className="h-3.5 w-3.5" />Departure</span>
+                <span className="small-caps ml-1 flex items-center gap-2"><CalendarDays className="h-3.5 w-3.5" />{t('form.departure')}</span>
                 <input
                   type="date"
                   value={departureDate}
-                  min={todayKey()}
+                  min={today}
                   onChange={event => setDepartureDate(event.target.value)}
                   className="w-full rounded-2xl border border-border bg-muted px-4 py-3 text-sm font-semibold text-foreground outline-none transition focus:border-foreground/30"
                 />
               </label>
               <label className="space-y-2">
-                <span className="small-caps ml-1 flex items-center gap-2"><CalendarDays className="h-3.5 w-3.5" />Return</span>
+                <span className="small-caps ml-1 flex items-center gap-2"><CalendarDays className="h-3.5 w-3.5" />{t('form.return')}</span>
                 <input
                   type="date"
                   value={returnDate}
-                  min={departureDate || todayKey()}
+                  min={departureDate || today}
                   onChange={event => setReturnDate(event.target.value)}
                   className="w-full rounded-2xl border border-border bg-muted px-4 py-3 text-sm font-semibold text-foreground outline-none transition focus:border-foreground/30"
                 />
@@ -293,24 +316,24 @@ export default function SurpriseMeDiscovery({ onDestinationSelect }: SurpriseMeD
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2">
-              <NumberStepper label="Adults" value={adults} min={1} onChange={setAdults} />
-              <NumberStepper label="Children" value={children} min={0} onChange={setChildren} />
+              <NumberStepper label={t('form.adults')} value={adults} min={1} onChange={setAdults} decreaseLabel={t('actions.decrease', { label: t('form.adults') })} increaseLabel={t('actions.increase', { label: t('form.adults') })} />
+              <NumberStepper label={t('form.children')} value={children} min={0} onChange={setChildren} decreaseLabel={t('actions.decrease', { label: t('form.children') })} increaseLabel={t('actions.increase', { label: t('form.children') })} />
             </div>
 
             <label className="space-y-2">
-              <span className="small-caps ml-1 flex items-center gap-2"><DollarSign className="h-3.5 w-3.5" />Total Budget</span>
+              <span className="small-caps ml-1 flex items-center gap-2"><DollarSign className="h-3.5 w-3.5" />{t('form.totalBudget')}</span>
               <input
                 type="number"
                 min={1}
                 value={budget}
                 onChange={event => setBudget(event.target.value)}
-                placeholder="Enter total budget in USD"
+                placeholder={t('form.budgetPlaceholder')}
                 className="w-full rounded-2xl border border-border bg-muted px-4 py-3 text-sm font-semibold text-foreground outline-none transition focus:border-foreground/30"
               />
             </label>
 
             <div className="space-y-3">
-              <p className="small-caps ml-1">What matters?</p>
+              <p className="small-caps ml-1">{t('form.whatMatters')}</p>
               <div className="grid grid-cols-2 gap-2">
                 {INTEREST_OPTIONS.map(option => {
                   const selected = selectedInterests.includes(option.id);
@@ -327,7 +350,7 @@ export default function SurpriseMeDiscovery({ onDestinationSelect }: SurpriseMeD
                       }`}
                     >
                       <Icon className="h-4 w-4 shrink-0" />
-                      <span>{option.label}</span>
+                      <span>{t(option.labelKey)}</span>
                       {selected ? <Check className="ml-auto h-3.5 w-3.5 shrink-0" /> : null}
                     </button>
                   );
@@ -336,14 +359,14 @@ export default function SurpriseMeDiscovery({ onDestinationSelect }: SurpriseMeD
             </div>
 
             <div className="grid gap-3">
-              <OptionGroup label="Region" value={region} onChange={setRegion} options={REGION_OPTIONS} />
-              <OptionGroup label="Climate" value={climate} onChange={setClimate} options={CLIMATE_OPTIONS} />
-              <OptionGroup label="Pace" value={pace} onChange={setPace} options={PACE_OPTIONS} icon={Gauge} />
+              <OptionGroup label={t('form.region')} value={region} onChange={setRegion} options={REGION_OPTIONS} t={t} />
+              <OptionGroup label={t('form.climate')} value={climate} onChange={setClimate} options={CLIMATE_OPTIONS} t={t} />
+              <OptionGroup label={t('form.pace')} value={pace} onChange={setPace} options={PACE_OPTIONS} icon={Gauge} t={t} />
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2">
-              <ToggleButton active={includeFlight} onClick={() => setIncludeFlight(prev => !prev)} icon={Plane} label="Flights" />
-              <ToggleButton active={includeHotel} onClick={() => setIncludeHotel(prev => !prev)} icon={Hotel} label="Hotels" />
+              <ToggleButton active={includeFlight} onClick={() => setIncludeFlight(prev => !prev)} icon={Plane} label={t('form.flights')} />
+              <ToggleButton active={includeHotel} onClick={() => setIncludeHotel(prev => !prev)} icon={Hotel} label={t('form.hotels')} />
             </div>
 
             {error ? (
@@ -359,7 +382,7 @@ export default function SurpriseMeDiscovery({ onDestinationSelect }: SurpriseMeD
               className="btn-primary flex w-full items-center justify-center gap-3 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-              <span>{isLoading ? 'Finding options' : 'Generate destination library'}</span>
+              <span>{isLoading ? t('actions.findingOptions') : t('actions.generateLibrary')}</span>
             </button>
           </div>
         </section>
@@ -388,8 +411,8 @@ export default function SurpriseMeDiscovery({ onDestinationSelect }: SurpriseMeD
               >
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
                   <div>
-                    <p className="small-caps">Destination Library</p>
-                    <h3 className="mt-2 text-3xl title-text text-foreground">Choose your surprise</h3>
+                    <p className="small-caps">{t('results.badge')}</p>
+                    <h3 className="mt-2 text-3xl title-text text-foreground">{t('results.title')}</h3>
                   </div>
                   <button
                     type="button"
@@ -397,12 +420,12 @@ export default function SurpriseMeDiscovery({ onDestinationSelect }: SurpriseMeD
                     className="inline-flex items-center gap-2 rounded-full border border-border px-4 py-2 text-xs font-black uppercase tracking-[0.14em] text-muted-foreground transition hover:border-foreground/30 hover:text-foreground"
                   >
                     <RefreshCw className="h-3.5 w-3.5" />
-                    Refresh
+                    {t('actions.refresh')}
                   </button>
                 </div>
                 <div className="grid gap-4">
                   {destinations.map(destination => (
-                    <DestinationCard key={`${destination.iata}-${destination.city}`} destination={destination} onSelect={selectDestination} />
+                    <DestinationCard key={`${destination.iata}-${destination.city}`} destination={destination} onSelect={selectDestination} matchLabel={t('results.match')} estimatedTotalLabel={t('results.estimatedTotal')} chooseLabel={t('actions.choose')} />
                   ))}
                 </div>
               </motion.div>
@@ -416,9 +439,9 @@ export default function SurpriseMeDiscovery({ onDestinationSelect }: SurpriseMeD
               >
                 <div className="max-w-sm">
                   <MapPin className="mx-auto h-9 w-9 text-muted-foreground" />
-                  <h3 className="mt-4 text-2xl title-text text-foreground">Your destination library will appear here</h3>
+                  <h3 className="mt-4 text-2xl title-text text-foreground">{t('results.emptyTitle')}</h3>
                   <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-                    The best options include airport codes, fit reasons, budget hints, and the next step back into the planner.
+                    {t('results.emptyDescription')}
                   </p>
                 </div>
               </motion.div>
@@ -430,7 +453,7 @@ export default function SurpriseMeDiscovery({ onDestinationSelect }: SurpriseMeD
   );
 }
 
-function OptionGroup({ label, value, onChange, options, icon: Icon }: { label: string; value: string; onChange: (value: string) => void; options: { id: string; label: string }[]; icon?: any }) {
+function OptionGroup({ label, value, onChange, options, icon: Icon, t }: { label: string; value: string; onChange: (value: string) => void; options: { id: string; labelKey: string }[]; icon?: any; t: ReturnType<typeof useTranslations<'surprise'>> }) {
   return (
     <div className="space-y-2">
       <p className="small-caps ml-1 flex items-center gap-2">{Icon ? <Icon className="h-3.5 w-3.5" /> : null}{label}</p>
@@ -446,7 +469,7 @@ function OptionGroup({ label, value, onChange, options, icon: Icon }: { label: s
                 : 'border-border bg-background text-muted-foreground hover:border-foreground/30 hover:text-foreground'
             }`}
           >
-            {option.label}
+            {t(option.labelKey)}
           </button>
         ))}
       </div>
@@ -471,14 +494,14 @@ function ToggleButton({ active, onClick, icon: Icon, label }: { active: boolean;
   );
 }
 
-function DestinationCard({ destination, onSelect }: { destination: SurpriseDestination; onSelect: (destination: SurpriseDestination) => void }) {
+function DestinationCard({ destination, onSelect, matchLabel, estimatedTotalLabel, chooseLabel }: { destination: SurpriseDestination; onSelect: (destination: SurpriseDestination) => void; matchLabel: string; estimatedTotalLabel: string; chooseLabel: string }) {
   return (
     <article className="rounded-3xl border border-border bg-card p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-xl">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <div className="flex flex-wrap items-center gap-2">
             <span className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-sm font-black text-emerald-700 dark:text-emerald-300">
-              {destination.matchScore}% match
+              {destination.matchScore}% {matchLabel}
             </span>
             <span className="rounded-xl border border-border bg-muted px-3 py-1.5 text-sm font-black text-foreground">
               {destination.iata}
@@ -490,7 +513,7 @@ function DestinationCard({ destination, onSelect }: { destination: SurpriseDesti
         </div>
         <div className="sm:text-right">
           <p className="text-2xl title-text text-foreground">${destination.estimatedBudget.toLocaleString()}</p>
-          <p className="text-xs font-black uppercase tracking-[0.14em] text-muted-foreground">estimated total</p>
+          <p className="text-xs font-black uppercase tracking-[0.14em] text-muted-foreground">{estimatedTotalLabel}</p>
         </div>
       </div>
 
@@ -519,7 +542,7 @@ function DestinationCard({ destination, onSelect }: { destination: SurpriseDesti
           onClick={() => onSelect(destination)}
           className="btn-primary inline-flex items-center justify-center gap-2 px-6 py-3"
         >
-          Choose
+          {chooseLabel}
           <ArrowRight className="h-4 w-4" />
         </button>
       </div>

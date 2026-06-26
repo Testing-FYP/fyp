@@ -1,17 +1,23 @@
 'use client';
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '@/hooks/useAuth';
-import { PlaneTakeoff, User, Calendar, BookOpen, LogIn, LogOut, Menu, X, Sparkles } from 'lucide-react';
+import { PlaneTakeoff, User, BookOpen, LogIn, LogOut, Menu, X, Sparkles, ShoppingCart } from 'lucide-react';
+import CurrencySelector from '@/components/CurrencySelector';
+import LanguageSwitcher from '@/components/LanguageSwitcher';
+import { useTranslations } from 'next-intl';
 
 export default function Navbar() {
+  const t = useTranslations('nav');
   const { user, isAuthenticated, logout } = useAuth();
-  const pathname = usePathname();
   const router = useRouter();
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [cartCount, setCartCount] = useState(0);
+  const [hasTrip, setHasTrip] = useState(false);
+  const pathname = usePathname();
 
   useEffect(() => {
     const handleScroll = () => setScrolled(window.scrollY > 20);
@@ -19,17 +25,55 @@ export default function Navbar() {
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
+  useEffect(() => {
+    const readCart = () => {
+      try {
+        const raw = localStorage.getItem('travelEliteCart');
+        const cart = raw ? JSON.parse(raw) : null;
+        setCartCount(cart?.items?.length || 0);
+      } catch { setCartCount(0); }
+    };
+    readCart();
+    window.addEventListener('storage', readCart);
+    return () => window.removeEventListener('storage', readCart);
+  }, []);
+
+  useEffect(() => {
+    const checkTrip = () => {
+      try {
+        const hasResults = !!localStorage.getItem('travelEliteResults');
+        const onCartPage = window.location.pathname === '/cart';
+        setHasTrip(hasResults || onCartPage);
+      } catch { setHasTrip(false); }
+    };
+    checkTrip();
+    window.addEventListener('storage', checkTrip);
+    return () => window.removeEventListener('storage', checkTrip);
+  }, [pathname]);
+
+  const showCart = hasTrip;
+
   const navLinks = [
-    { href: '/', label: 'Explore', icon: PlaneTakeoff },
-    { href: '/planner', label: 'AI Planner', icon: Sparkles },
-    { href: '/trips', label: 'My Trips', icon: Calendar, auth: true },
-    { href: '/reservations', label: 'Reservations', icon: BookOpen, auth: true },
+    { href: '/planner', label: t('planner'), icon: Sparkles },
+    { href: '/reservations', label: t('reservations'), icon: BookOpen },
   ];
 
   const handleLogout = () => {
     logout();
     router.push('/auth');
     setMobileOpen(false);
+  };
+
+  const handleAuthLink = (e: React.MouseEvent, href: string) => {
+    if (href === '/reservations' && !isAuthenticated) {
+      e.preventDefault();
+      router.push('/auth');
+    }
+  };
+
+  const isActiveLink = (href: string) => {
+    if (href === '/planner') return pathname === '/' || pathname === '/planner';
+    return pathname === href;
   };
 
   return (
@@ -47,12 +91,11 @@ export default function Navbar() {
           {/* Desktop Nav */}
           <nav className="hidden md:flex items-center gap-1">
             {navLinks.map(link => {
-              if (link.auth && !isAuthenticated) return null;
-              const isActive = pathname === link.href;
               return (
                 <Link key={link.href} href={link.href}
-                  className={`px-4 py-2 rounded-xl text-sm small-caps tracking-wider transition-all duration-200 flex items-center gap-1.5 ${
-                    isActive
+                  onClick={(e) => handleAuthLink(e, link.href)}
+                  className={`flex items-center gap-2 rounded-full px-4 py-1.5 text-sm font-semibold transition-all ${
+                    isActiveLink(link.href)
                       ? 'bg-foreground text-background'
                       : 'text-muted-foreground hover:text-foreground hover:bg-muted'
                   }`}>
@@ -63,31 +106,45 @@ export default function Navbar() {
             })}
           </nav>
 
-          {/* Desktop Auth */}
           <div className="hidden md:flex items-center gap-3">
+            {showCart ? (
+              <Link
+                href="/cart"
+                className="relative hidden h-9 w-9 items-center justify-center rounded-full transition hover:bg-muted md:flex"
+              >
+                <ShoppingCart className="h-4 w-4" />
+                {cartCount > 0 ? (
+                  <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-foreground text-[10px] font-black text-background">
+                    {cartCount}
+                  </span>
+                ) : null}
+              </Link>
+            ) : null}
+            <LanguageSwitcher />
+            <CurrencySelector />
             {isAuthenticated ? (
               <>
                 <Link href="/profile"
-                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm text-muted-foreground hover:text-foreground hover:bg-muted transition-all small-caps tracking-wider">
+                  className="flex items-center gap-2 px-4 py-2 rounded-full text-sm border border-border text-muted-foreground hover:border-foreground/30 hover:text-foreground hover:bg-muted transition-all small-caps tracking-wider">
                   <User className="w-3.5 h-3.5" />
-                  {user?.first_name || 'Profile'}
+                  {user?.first_name || t('profile')}
                 </Link>
                 <button onClick={handleLogout}
-                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm border border-border text-muted-foreground hover:border-foreground/30 hover:text-foreground transition-all small-caps tracking-wider">
-                  <LogOut className="w-3.5 h-3.5" /> Sign Out
+                  className="flex items-center gap-2 px-4 py-2 rounded-full text-sm border border-border text-muted-foreground hover:border-foreground/30 hover:text-foreground transition-all small-caps tracking-wider">
+                  <LogOut className="w-3.5 h-3.5" /> {t('signOut')}
                 </button>
               </>
             ) : (
               <Link href="/auth"
-                className="flex items-center gap-2 px-5 py-2.5 bg-foreground text-background rounded-xl text-sm small-caps tracking-wider hover:opacity-90 transition-all">
-                <LogIn className="w-3.5 h-3.5" /> Sign In
+                className="flex items-center gap-2 px-5 py-2.5 bg-foreground text-background rounded-full text-sm small-caps tracking-wider hover:opacity-90 transition-all">
+                <LogIn className="w-3.5 h-3.5" /> {t('signIn')}
               </Link>
             )}
           </div>
 
           {/* Mobile Menu Button */}
           <button onClick={() => setMobileOpen(v => !v)}
-            className="md:hidden p-2 rounded-xl hover:bg-muted transition-colors">
+            className="md:hidden p-2 rounded-full hover:bg-muted transition-colors">
             {mobileOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
           </button>
         </div>
@@ -125,17 +182,16 @@ export default function Navbar() {
               </div>
 
               <div className="space-y-4 flex-1">
-                <div className="small-caps text-[10px] text-muted-foreground/50 mb-4 px-4">CURATED ELITE TRAVEL</div>
+                <div className="small-caps text-[10px] text-muted-foreground/50 mb-4 px-4">{t('curatedLabel')}</div>
                 {navLinks.map(link => {
-                  if (link.auth && !isAuthenticated) return null;
                   return (
-                    <Link key={link.href} href={link.href} onClick={() => setMobileOpen(false)}
-                      className={`flex items-center gap-4 px-5 py-4 rounded-2xl text-base tracking-wide transition-all ${
-                        pathname === link.href 
-                        ? 'bg-foreground text-background font-bold shadow-lg shadow-foreground/10' 
-                        : 'hover:bg-muted text-foreground'
+                    <Link key={link.href} href={link.href} onClick={(e) => { setMobileOpen(false); handleAuthLink(e, link.href); }}
+                      className={`flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold transition-all ${
+                        isActiveLink(link.href)
+                          ? 'bg-foreground text-background'
+                          : 'text-muted-foreground hover:text-foreground hover:bg-muted'
                       }`}>
-                      <link.icon className={`w-5 h-5 ${pathname === link.href ? 'opacity-100' : 'opacity-40'}`} /> 
+                      <link.icon className={`w-5 h-5 ${isActiveLink(link.href) ? 'opacity-100' : 'opacity-40'}`} /> 
                       <span className="font-medium uppercase text-xs tracking-[0.1em]">{link.label}</span>
                     </Link>
                   );
@@ -143,24 +199,40 @@ export default function Navbar() {
               </div>
 
               <div className="pt-8 border-t border-border mt-auto space-y-4">
+                <LanguageSwitcher />
+                <CurrencySelector />
+                {showCart ? (
+                  <Link
+                    href="/cart"
+                    onClick={() => setMobileOpen(false)}
+                    className="relative flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-muted"
+                  >
+                    <ShoppingCart className="h-4 w-4" />
+                    {cartCount > 0 ? (
+                      <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-foreground text-[10px] font-black text-background">
+                        {cartCount}
+                      </span>
+                    ) : null}
+                  </Link>
+                ) : null}
                 {isAuthenticated ? (
                   <>
                     <Link href="/profile" onClick={() => setMobileOpen(false)}
                       className="flex items-center gap-4 px-5 py-4 rounded-2xl text-sm tracking-wide hover:bg-muted text-foreground">
                       <User className="w-5 h-5 opacity-40" /> 
-                      <span className="font-medium uppercase text-xs tracking-[0.1em]">Profile</span>
+                      <span className="font-medium uppercase text-xs tracking-[0.1em]">{t('profile')}</span>
                     </Link>
                     <button onClick={handleLogout}
                       className="w-full flex items-center gap-4 px-5 py-4 rounded-2xl text-sm tracking-wide hover:bg-muted text-foreground">
                       <LogOut className="w-5 h-5 opacity-40" /> 
-                      <span className="font-medium uppercase text-xs tracking-[0.1em]">Sign Out</span>
+                      <span className="font-medium uppercase text-xs tracking-[0.1em]">{t('signOut')}</span>
                     </button>
                   </>
                 ) : (
                   <Link href="/auth" onClick={() => setMobileOpen(false)}
                     className="flex items-center gap-4 px-5 py-5 rounded-2xl text-sm tracking-wide bg-foreground text-background shadow-xl shadow-foreground/20">
                     <LogIn className="w-5 h-5" /> 
-                    <span className="font-black uppercase text-xs tracking-[0.2em]">Sign In</span>
+                    <span className="font-black uppercase text-xs tracking-[0.2em]">{t('signIn')}</span>
                   </Link>
                 )}
               </div>

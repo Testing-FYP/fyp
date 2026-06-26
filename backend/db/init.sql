@@ -14,6 +14,10 @@ CREATE TABLE Users (
   last_name NVARCHAR(100),
   created_at DATETIME2 DEFAULT GETDATE(),
   updated_at DATETIME2 DEFAULT GETDATE(),
+  otp VARCHAR(6) NULL,
+  otp_expires_at DATETIME NULL,
+  email_verified BIT NOT NULL DEFAULT 0,
+  google_id NVARCHAR(255) NULL,
   CONSTRAINT UQ_Users_Email UNIQUE (email)
 );
 
@@ -82,6 +86,7 @@ CREATE TABLE Reservations (
   currency NVARCHAR(10) DEFAULT 'USD',
   cabin_class NVARCHAR(50),
   status NVARCHAR(50) DEFAULT 'confirmed',
+  payment_intent_id NVARCHAR(255) NULL,
   booking_details NVARCHAR(MAX),
   created_at DATETIME2 DEFAULT GETDATE(),
   updated_at DATETIME2 DEFAULT GETDATE(),

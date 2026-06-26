@@ -1,0 +1,38 @@
+Return ONLY valid JSON with no markdown.
+
+Use current, grounded public information for tourist spending in {{DESTINATION}} for travel around {{DATES}}. Consider seasonality, attraction entry fees, and food/drink/activity patterns implied by these vibes: {{VIBES}}.
+
+Estimate in USD:
+- placeVisitCost: total average daily spend for one traveler across the returned daily categories. Include meals, drinks, attraction/activity entry, and optional shopping/activity allowance. Do not include hotel, flight, or local transportation.
+- dailyCategories: 5 to 10 category objects that explain the daily total. Include breakfast, lunch, dinner, coffee, shopping, and at least one destination-relevant daily activity such as zoo, museum, attraction ticket, beach club, tour, show, or local experience when realistic. Each category must include 3 to 5 concrete suggested places, neighborhoods, markets, cafes, restaurant types, beaches, attractions, or activities in the destination where a traveler would normally spend that amount.
+- currencyNote: one short note about local currency/pricing confidence.
+- basis: one short sentence naming the real factors you used, such as museum/activity tickets, food/drink patterns, or current attraction prices.
+
+Return this exact JSON object shape, using real estimated numbers:
+{
+  "placeVisitCost": <number>,
+  "dailyCategories": [
+    {
+      "key": "breakfast",
+      "label": "Breakfast",
+      "estimatedCost": <number>,
+      "suggestedPlaces": [
+        { "name": "real cafe/neighborhood/place/type in the destination", "estimatedCost": <number>, "detail": "where to take breakfast and what normal spending includes" }
+      ],
+      "detail": "overall breakfast spending note"
+    }
+  ],
+  "currencyNote": <string>,
+  "basis": <string>
+}
+
+Rules:
+- Return at least 5 categories and at most 10 categories.
+- Always include breakfast, lunch, dinner, coffee, and shopping unless a category is culturally or practically unavailable, then replace it with a better destination-specific category and explain briefly in detail.
+- Add destination-relevant categories for daily activities, for example zoo, museum, landmark ticket, local tour, beach activity, theme park, gallery, show, or neighborhood experience.
+- Each estimatedCost must be a USD number for one traveler for one day.
+- suggestedPlaces must contain at least 3 and at most 5 destination-specific options per category. Prefer real named places when confident; otherwise use specific neighborhoods or local types, such as "a cafe in El Born" or "a tapas bar near Gracia".
+- Each suggestedPlaces item estimatedCost should be a normal spend for one traveler for that option. It can be close to the category estimatedCost, but may vary slightly by place.
+- detail must answer: where should the traveler do this category in the destination, and what normal spending does the number cover?
+- placeVisitCost must equal the rounded sum of dailyCategories.estimatedCost.
+- Do not copy placeholder values. Do not use generic worldwide averages. Numeric fields must be calculated from the destination, dates, season, selected vibes, and current grounded search results.

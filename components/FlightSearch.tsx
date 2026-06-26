@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Search, MapPin, Calendar, Plus, X, Plane, ArrowRight, Minus, AlertCircle, TriangleAlert, ChevronDown, Loader2 } from 'lucide-react';
 import AirportAutocomplete from './AirportAutocomplete';
+import { useCurrency } from '@/context/CurrencyContext';
 
 interface AirportSuggestion {
   id: string;
@@ -29,11 +30,20 @@ interface FlightSearchProps {
 type TripType = 'one_way' | 'round_trip' | 'multi_city';
 
 export default function FlightSearch({ onSearch, isLoading }: FlightSearchProps) {
+  const { convertFromUSD } = useCurrency();
   const [tripType, setTripType] = useState<TripType>('one_way');
   const [slices, setSlices] = useState<Slice[]>([
-    { origin: '', destination: '', departure_date: new Date().toISOString().split('T')[0] }
+    { origin: '', destination: '', departure_date: '' }
   ]);
   const [returnDate, setReturnDate] = useState('');
+
+  useEffect(() => {
+    setSlices(currentSlices => currentSlices.map((slice, index) =>
+      index === 0 && !slice.departure_date
+        ? { ...slice, departure_date: new Date().toISOString().split('T')[0] }
+        : slice
+    ));
+  }, []);
 
   const addSlice = () => {
     const lastSlice = slices[slices.length - 1];
@@ -363,7 +373,7 @@ export default function FlightSearch({ onSearch, isLoading }: FlightSearchProps)
                       <span className="text-[10px] text-black uppercase tracking-[0.15em] font-bold leading-tight">Max</span>
                       <span className="text-[10px] text-black uppercase tracking-[0.15em] font-bold leading-tight">Budget</span>
                     </div>
-                    <span className="text-xl md:text-2xl font-bold text-black font-mono leading-none tracking-tight">${maxBudget.toLocaleString()}</span>
+                     <span className="text-xl md:text-2xl font-bold text-black font-mono leading-none tracking-tight">{convertFromUSD(maxBudget)}</span>
                   </div>
                   <div className="px-4">
                     <input 

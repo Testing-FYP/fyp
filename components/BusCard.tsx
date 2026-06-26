@@ -1,6 +1,7 @@
 'use client';
 
 import { motion } from 'motion/react';
+import { useCurrency } from '@/context/CurrencyContext';
 import { Bus, Clock, MapPin, CheckCircle2, ArrowRight } from 'lucide-react';
 import Image from 'next/image';
 
@@ -9,6 +10,7 @@ interface BusCardProps {
 }
 
 export default function BusCard({ offer }: BusCardProps) {
+  const { convertFromUSD, currency } = useCurrency();
   return (
     <motion.div 
       initial={{ opacity: 0, y: 20 }}
@@ -54,8 +56,8 @@ export default function BusCard({ offer }: BusCardProps) {
               </div>
               <div className="text-right">
                 <div className="text-sm text-muted-foreground mb-1">One Way</div>
-                <div className="text-4xl title-text text-foreground">${offer.price.toLocaleString()}</div>
-                <div className="text-[10px] text-muted-foreground uppercase tracking-widest">USD</div>
+                <div className="text-4xl title-text text-foreground">{convertFromUSD(offer.price)}</div>
+                <div className="text-[10px] text-muted-foreground uppercase tracking-widest">{currency}</div>
               </div>
             </div>
 

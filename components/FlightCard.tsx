@@ -22,6 +22,8 @@ import { useState } from 'react';
 import Image from 'next/image';
 import BookingModal from './BookingModal';
 import { useAuth } from '@/hooks/useAuth';
+import { useCurrency } from '@/context/CurrencyContext';
+import { toast } from 'sonner';
 
 /**
  * Parses an ISO 8601 duration string (e.g. "PT8H30M", "P1DT6H20M")
@@ -63,6 +65,14 @@ export default function FlightCard({ offer }: FlightCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
 
   const { token } = useAuth();
+  const { convertFromUSD } = useCurrency();
+  const sourceBadge = offer.dataSource === 'groq'
+    ? { label: '🤖 Groq', className: 'bg-violet-500/15 text-violet-700 dark:text-violet-300' }
+    : offer.dataSource === 'deepseek'
+      ? { label: '🤖 DeepSeek', className: 'bg-blue-500/15 text-blue-700 dark:text-blue-300' }
+      : offer.dataSource === 'groq-fallback'
+        ? { label: '🤖 DeepSeek → Groq', className: 'bg-orange-500/15 text-orange-700 dark:text-orange-300' }
+        : { label: '📡 SerpAPI', className: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300' };
   
   // Detect if this is a round-trip offer
   const isRoundTrip = offer.slices.length > 1;
@@ -85,7 +95,7 @@ export default function FlightCard({ offer }: FlightCardProps) {
   const handleSave = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!token) {
-      alert('You must be signed in to save a trip.');
+      toast.error('Sign in to save trips.');
       return;
     }
     setIsSaving(true);
@@ -110,7 +120,7 @@ export default function FlightCard({ offer }: FlightCardProps) {
       });
       if (response.ok) setIsSaved(true);
     } catch (err) {
-      console.error(err);
+      toast.error('Could not save trip. Please try again.');
     } finally {
       setIsSaving(false);
     }
@@ -341,9 +351,9 @@ export default function FlightCard({ offer }: FlightCardProps) {
         <div className="px-10 py-8 bg-muted/30 border-t border-border flex items-center justify-between">
           <div>
              <span className="text-[10px] uppercase tracking-[0.3em] font-black text-muted-foreground/40 block mb-1">Total Package Price</span>
+             <span className={`mb-2 inline-flex rounded-full px-2 py-1 text-[9px] font-bold ${sourceBadge.className}`}>{sourceBadge.label}</span>
              <div className="flex items-end gap-2">
-               <span className="text-xs font-bold text-muted-foreground/40 mb-1">{offer.total_currency}</span>
-               <span className="text-4xl title-text text-foreground">{(offer.display_price || parseFloat(offer.total_amount)).toLocaleString()}</span>
+                <span className="text-4xl title-text text-foreground">{convertFromUSD(offer.display_price || parseFloat(offer.total_amount))}</span>
              </div>
           </div>
 

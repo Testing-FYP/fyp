@@ -53,6 +53,7 @@ router.post(
       total_amount,
       currency,
       cabin_class,
+      payment_intent_id,
       booking_details,
     } = req.body;
 
@@ -61,12 +62,12 @@ router.post(
         `INSERT INTO Reservations
            (user_id, trip_id, reservation_type, provider, provider_booking_ref,
             origin, destination, departure_datetime, arrival_datetime,
-            passengers, total_amount, currency, cabin_class, booking_details)
+            passengers, total_amount, currency, cabin_class, payment_intent_id, booking_details)
          OUTPUT INSERTED.*
          VALUES
            (@user_id, @trip_id, @reservation_type, @provider, @provider_booking_ref,
             @origin, @destination, @departure_datetime, @arrival_datetime,
-            @passengers, @total_amount, @currency, @cabin_class, @booking_details)`,
+            @passengers, @total_amount, @currency, @cabin_class, @payment_intent_id, @booking_details)`,
         {
           user_id: req.user.id,
           trip_id: trip_id || null,
@@ -81,6 +82,7 @@ router.post(
           total_amount: total_amount || null,
           currency: currency || 'USD',
           cabin_class: cabin_class || null,
+          payment_intent_id: payment_intent_id || null,
           booking_details: booking_details ? JSON.stringify(booking_details) : null,
         }
       );

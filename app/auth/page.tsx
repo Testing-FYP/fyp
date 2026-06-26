@@ -1,11 +1,15 @@
 'use client';
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { signIn } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
 import { PlaneTakeoff, Eye, EyeOff, User, Mail, Lock, Sparkles } from 'lucide-react';
+import { toast } from 'sonner';
+import { useTranslations } from 'next-intl';
 
 export default function AuthPage() {
+  const t = useTranslations('auth');
   const [tab, setTab] = useState<'login' | 'signup'>('login');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -24,7 +28,7 @@ export default function AuthPage() {
     e.preventDefault();
     setIsLoading(true);
     setError('');
-    let result: { error?: string };
+    let result: { error?: string; needsVerification?: boolean; email?: string };
     if (tab === 'login') {
       result = await login(form.email, form.password);
     } else {
@@ -37,9 +41,18 @@ export default function AuthPage() {
     }
     setIsLoading(false);
     if (result.error) {
+      if (result.needsVerification === true) {
+        toast.error('Please verify your email first.');
+        router.push(`/auth/verify?email=${encodeURIComponent(result.email || form.email)}`);
+        return;
+      }
+
       setError(result.error);
+    } else if (result.needsVerification === true && result.email) {
+      router.push(`/auth/verify?email=${encodeURIComponent(result.email)}`);
     } else {
       router.push('/');
+      toast.success(tab === 'login' ? 'Welcome back!' : 'Account created! Welcome to TravelElite.');
     }
   };
 
@@ -72,17 +85,17 @@ export default function AuthPage() {
         <div className="bg-card border border-border rounded-3xl p-8 shadow-2xl backdrop-blur-xl">
           {/* Tab Toggle */}
           <div className="flex bg-muted rounded-2xl p-1 mb-8">
-            {(['login', 'signup'] as const).map(t => (
+            {(['login', 'signup'] as const).map(authMode => (
               <button
-                key={t}
-                onClick={() => { setTab(t); setError(''); setForm({ email: '', password: '', first_name: '', last_name: '' }); }}
+                key={authMode}
+                onClick={() => { setTab(authMode); setError(''); setForm({ email: '', password: '', first_name: '', last_name: '' }); }}
                 className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-all duration-300 small-caps tracking-wider ${
-                  tab === t
+                  tab === authMode
                     ? 'bg-background text-foreground shadow-sm'
                     : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
-                {t === 'login' ? 'Sign In' : 'Sign Up'}
+                {authMode === 'login' ? t('signIn') : t('signUp')}
               </button>
             ))}
           </div>
@@ -106,7 +119,7 @@ export default function AuthPage() {
                         name="first_name"
                         value={form.first_name}
                         onChange={handleChange}
-                        placeholder="First Name"
+                        placeholder={t('firstName')}
                         required
                         className="w-full pl-11 pr-4 py-3.5 bg-muted border border-border rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-foreground/20 transition-all placeholder:text-muted-foreground"
                       />
@@ -118,7 +131,7 @@ export default function AuthPage() {
                         name="last_name"
                         value={form.last_name}
                         onChange={handleChange}
-                        placeholder="Last Name"
+                        placeholder={t('lastName')}
                         required
                         className="w-full pl-11 pr-4 py-3.5 bg-muted border border-border rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-foreground/20 transition-all placeholder:text-muted-foreground"
                       />
@@ -135,7 +148,7 @@ export default function AuthPage() {
                 name="email"
                 value={form.email}
                 onChange={handleChange}
-                placeholder="Email Address"
+                placeholder={t('email')}
                 required
                 className="w-full pl-11 pr-4 py-3.5 bg-muted border border-border rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-foreground/20 transition-all placeholder:text-muted-foreground"
                 autoComplete="email"
@@ -149,7 +162,7 @@ export default function AuthPage() {
                 name="password"
                 value={form.password}
                 onChange={handleChange}
-                placeholder={tab === 'signup' ? 'Password (min. 6 chars)' : 'Password'}
+                placeholder={t('password')}
                 required
                 className="w-full pl-11 pr-12 py-3.5 bg-muted border border-border rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-foreground/20 transition-all placeholder:text-muted-foreground"
                 autoComplete={tab === 'login' ? 'current-password' : 'new-password'}
@@ -190,19 +203,44 @@ export default function AuthPage() {
               ) : (
                 <>
                   <Sparkles className="w-4 h-4" />
-                  {tab === 'login' ? 'Sign In' : 'Create Account'}
+                  {tab === 'login' ? t('signIn') : t('signUp')}
                 </>
               )}
             </button>
           </form>
 
+          <div className="mt-4">
+            <div className="relative mb-4">
+              <div className="absolute inset-0 flex items-center">
+                <span className="w-full border-t border-border" />
+              </div>
+              <div className="relative flex justify-center text-xs uppercase">
+                <span className="bg-card px-2 text-muted-foreground">or</span>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => signIn('google')}
+              className="w-full flex items-center justify-center gap-3 border border-border rounded-2xl px-4 py-3 text-sm font-medium hover:bg-muted active:scale-[0.98] transition-all duration-200"
+            >
+              <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
+                <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.08 17.74 9.5 24 9.5z" />
+                <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z" />
+                <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" />
+                <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-3.59-13.46-8.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
+              </svg>
+              {t('continueWithGoogle')}
+            </button>
+          </div>
+
           <p className="text-center text-muted-foreground text-xs mt-6">
-            {tab === 'login' ? "Don't have an account? " : 'Already have an account? '}
+            {tab === 'login' ? `${t('noAccount')} ` : `${t('haveAccount')} `}
             <button
               onClick={() => { setTab(tab === 'login' ? 'signup' : 'login'); setError(''); }}
               className="text-foreground underline underline-offset-2 hover:opacity-70 transition-opacity"
             >
-              {tab === 'login' ? 'Sign up free' : 'Sign in'}
+              {tab === 'login' ? t('signUp') : t('signIn')}
             </button>
           </p>
         </div>

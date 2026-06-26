@@ -10,20 +10,47 @@ interface AirportSuggestion {
   iata_code: string;
   city_name: string;
   country_name: string;
+  country_code?: string;
+  iata_country_code?: string;
 }
 
 interface AirportAutocompleteProps {
   value: string;
   onSelect: (iata: string) => void;
+  onSelectSuggestion?: (suggestion: AirportSuggestion) => void;
   placeholder: string;
+  source?: 'serpapi' | 'duffel';
 }
 
-export default function AirportAutocomplete({ value, onSelect, placeholder }: AirportAutocompleteProps) {
+function isValidAirportSuggestion(suggestion: any): suggestion is AirportSuggestion {
+  const iata = String(suggestion?.iata_code || '').trim();
+  const cityName = String(suggestion?.city_name || '').trim();
+  const airportName = String(suggestion?.name || '').trim();
+
+  return (
+    /^[A-Z]{3}$/.test(iata) &&
+    cityName.length > 0 &&
+    airportName.length > 0 &&
+    airportName.toLowerCase() !== 'none' &&
+    cityName.toLowerCase() !== 'none'
+  );
+}
+
+export default function AirportAutocomplete({ value, onSelect, onSelectSuggestion, placeholder, source = 'serpapi' }: AirportAutocompleteProps) {
   const [query, setQuery] = useState(value);
   const [suggestions, setSuggestions] = useState<AirportSuggestion[]>([]);
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const selectedDisplayRef = useRef<{ iata: string; label: string } | null>(null);
+
+  useEffect(() => {
+    if (selectedDisplayRef.current?.iata === value) {
+      setQuery(selectedDisplayRef.current.label);
+      return;
+    }
+    setQuery(value);
+  }, [value]);
 
   useEffect(() => {
     const fetchSuggestions = async () => {
@@ -33,9 +60,13 @@ export default function AirportAutocomplete({ value, onSelect, placeholder }: Ai
       }
       setIsLoading(true);
       try {
-        const res = await fetch(`/api/airports/suggestions?query=${encodeURIComponent(query)}`);
+        const endpoint = source === 'duffel'
+          ? '/api/duffel/duffel-suggestions'
+          : '/api/google-api/google-flights-suggestions';
+        const res = await fetch(`${endpoint}?query=${encodeURIComponent(query)}`);
         const data = await res.json();
-        setSuggestions(data || []);
+        const airports = Array.isArray(data) ? data : data?.airports;
+        setSuggestions(Array.isArray(airports) ? airports.filter(isValidAirportSuggestion) : []);
       } catch (err) {
         console.error(err);
       } finally {
@@ -45,7 +76,7 @@ export default function AirportAutocomplete({ value, onSelect, placeholder }: Ai
 
     const timeoutId = setTimeout(fetchSuggestions, 300);
     return () => clearTimeout(timeoutId);
-  }, [query]);
+  }, [query, source]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -60,20 +91,21 @@ export default function AirportAutocomplete({ value, onSelect, placeholder }: Ai
   return (
     <div className="relative" ref={containerRef}>
       <div className="relative group">
-        <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground group-focus-within:text-foreground transition-colors z-10" />
+        <MapPin className="absolute start-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground group-focus-within:text-foreground transition-colors z-10" />
         <input 
           type="text" 
           value={query}
           onChange={(e) => {
+            selectedDisplayRef.current = null;
             setQuery(e.target.value);
             setIsOpen(true);
           }}
           onFocus={() => setIsOpen(true)}
-          className="w-full bg-muted border border-border rounded-2xl py-4 pl-12 pr-4 focus:outline-none focus:border-foreground/20 focus:bg-muted/80 transition-all text-foreground"
+          className="w-full bg-muted border border-border rounded-2xl py-4 ps-12 pe-4 focus:outline-none focus:border-foreground/20 focus:bg-muted/80 transition-all text-foreground"
           placeholder={placeholder}
         />
         {isLoading && (
-          <div className="absolute right-4 top-1/2 -translate-y-1/2">
+          <div className="absolute end-4 top-1/2 -translate-y-1/2">
             <Loader2 className="w-4 h-4 text-muted-foreground animate-spin" />
           </div>
         )}
@@ -95,11 +127,14 @@ export default function AirportAutocomplete({ value, onSelect, placeholder }: Ai
                   key={s.id}
                   type="button"
                   onClick={() => {
+                    const displayLabel = `${s.city_name}, ${s.country_name} (${s.iata_code})`;
+                    selectedDisplayRef.current = { iata: s.iata_code, label: displayLabel };
                     onSelect(s.iata_code);
-                    setQuery(`${s.city_name} (${s.iata_code})`);
+                    onSelectSuggestion?.(s);
+                    setQuery(displayLabel);
                     setIsOpen(false);
                   }}
-                  className="w-full px-4 py-4 text-left hover:bg-muted rounded-2xl flex items-center justify-between transition-all group mb-1 last:mb-0"
+                  className="w-full px-4 py-4 text-start hover:bg-muted rounded-2xl flex items-center justify-between transition-all group mb-1 last:mb-0"
                 >
                   <div className="flex items-center gap-5">
                     <div className="w-11 h-11 rounded-2xl bg-muted flex items-center justify-center group-hover:bg-foreground/5 transition-all duration-500 group-hover:scale-105">
@@ -108,6 +143,7 @@ export default function AirportAutocomplete({ value, onSelect, placeholder }: Ai
                     <div>
                       <div className="font-bold text-[15px] text-foreground/80 group-hover:text-foreground transition-colors">{s.city_name}</div>
                       <div className="text-[10px] text-muted-foreground uppercase tracking-[0.15em] mt-1 font-semibold">{s.name}</div>
+                      <div className="text-[10px] text-muted-foreground/70 uppercase tracking-[0.15em] mt-1 font-semibold">{s.country_name}</div>
                     </div>
                   </div>
                   <div className="bg-muted px-3 py-2 rounded-xl text-[11px] font-bold text-muted-foreground border border-border group-hover:border-foreground/10 group-hover:text-foreground/60 transition-all font-mono">

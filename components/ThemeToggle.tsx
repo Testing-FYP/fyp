@@ -38,7 +38,7 @@ export default function ThemeToggle() {
       whileHover={{ scale: 1.05 }}
       whileTap={{ scale: 0.95 }}
       onClick={toggleTheme}
-      className="fixed bottom-8 right-8 z-[100] w-14 h-14 rounded-2xl bg-foreground text-background shadow-2xl flex items-center justify-center border border-border transition-colors duration-300"
+      className="fixed bottom-6 right-6 z-[100] w-14 h-14 rounded-2xl bg-foreground text-background shadow-2xl flex items-center justify-center border border-border transition-colors duration-300"
       aria-label="Toggle Theme"
     >
       {isDark ? <Sun className="w-6 h-6" /> : <Moon className="w-6 h-6" />}
