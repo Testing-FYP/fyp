@@ -12,6 +12,8 @@ import { useCurrency } from '@/context/CurrencyContext';
 import DataSourcePanel, { useDataSource } from '@/components/DataSourcePanel';
 import { useTranslations } from 'next-intl';
 
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:5000';
+
 const GENERATOR_TRANSPORT_TYPES = [
   'metro_subway',
   'train',
@@ -171,7 +173,7 @@ export default function Home() {
     setError(null);
     setPlannerData(plannerData);
 
-    const evtSource = new EventSource(`http://localhost:5000/api/generate/progress/${sessionId}`);
+    const evtSource = new EventSource(`${BACKEND_URL}/api/generate/progress/${sessionId}`);
     evtSource.onmessage = (event) => {
       try {
         const { percent, label } = JSON.parse(event.data);

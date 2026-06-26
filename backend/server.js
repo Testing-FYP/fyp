@@ -14,6 +14,20 @@ const paymentsRoutes = require('./routes/payments');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+function isLocalRequest(req) {
+  const ip = req.ip || req.socket?.remoteAddress || req.connection?.remoteAddress || '';
+  return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+}
+
+function isAuthorizedProgressUpdate(req) {
+  const internalApiKey = process.env.INTERNAL_API_KEY;
+  if (internalApiKey) {
+    return req.headers['x-internal-api-key'] === internalApiKey;
+  }
+
+  return isLocalRequest(req);
+}
+
 // Security & logging
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 app.use(morgan('dev'));
@@ -64,9 +78,7 @@ app.get('/api/generate/progress/:sessionId', (req, res) => {
 });
 
 app.post('/api/generate/progress/:sessionId', express.json(), (req, res) => {
-  const ip = req.ip || req.connection.remoteAddress || '';
-  const isLocal = ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
-  if (!isLocal) {
+  if (!isAuthorizedProgressUpdate(req)) {
     return res.status(403).json({ error: 'Forbidden' });
   }
 
@@ -108,7 +120,7 @@ app.use((err, req, res, next) => {
 
 app.listen(PORT, () => {
   console.log(`🚀 TravelElite Backend running on http://localhost:${PORT}`);
-  console.log(`   Database: ${process.env.DB_SERVER}/${process.env.DB_NAME}`);
+  console.log('   Database: Supabase/PostgreSQL via DATABASE_URL');
   console.log(`   CORS: ${process.env.CORS_ORIGIN}`);
 });
 

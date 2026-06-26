@@ -7,12 +7,17 @@ import { searchSerpApiHotels as searchGoogleHotels } from '../google-api/google-
 import { searchGoogleImagesLight } from '../google-api/google-images-light';
 import { generateMockFlights, generateMockHotels } from './mock-generator';
 
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:5000';
+
 async function emitProgress(sessionId: string | null, percent: number, label: string): Promise<void> {
   if (!sessionId) return;
   try {
-    await fetch(`http://localhost:5000/api/generate/progress/${sessionId}`, {
+    await fetch(`${BACKEND_URL}/api/generate/progress/${sessionId}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-internal-api-key': process.env.INTERNAL_API_KEY || '',
+      },
       body: JSON.stringify({ percent, label }),
     });
   } catch {
