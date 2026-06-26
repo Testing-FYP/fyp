@@ -12,6 +12,7 @@ import AirportAutocomplete from './AirportAutocomplete';
 import { Calendar } from '@/components/ui/calendar';
 import type { DateRange } from 'react-day-picker';
 import { formatFromUSD, useCurrency } from '@/context/CurrencyContext';
+import { useTranslations } from 'next-intl';
 
 type TripType = 'one_way' | 'round_trip' | 'multi_city';
 type CabinClass = 'economy' | 'premium_economy' | 'business' | 'first';
@@ -188,6 +189,17 @@ const VIBE_OPTIONS = [
   { id: 'family_friendly', label: 'Family Friendly', emoji: '👨‍👩‍👧' },
 ];
 
+const VIBE_TRANSLATION_KEYS: Record<string, string> = {
+  food_drink: 'foodDrink',
+  nature_outdoors: 'nature',
+  culture_history: 'cultureHistory',
+  shopping_exploring: 'shoppingExploring',
+  nightlife_entertainment: 'nightlife',
+  relaxation_wellness: 'relaxation',
+  art_architecture: 'art',
+  family_friendly: 'family',
+};
+
 const TRANSPORT_OPTIONS: { value: TransportType; label: string; icon: any }[] = [
   { value: 'metro_subway', label: 'Metro / Subway', icon: Train },
   { value: 'train', label: 'Train', icon: Train },
@@ -207,13 +219,13 @@ const BUDGET_HOTEL_STAR_OPTIONS = [1, 2, 3, 4, 5];
 const BUDGET_AUTO_ALLOCATE_DELAY_MS = 6600;
 
 const STEPS = [
-  { title: 'Where To', subtitle: 'Select your destination' },
-  { title: 'When', subtitle: 'Pick your travel dates' },
-  { title: 'Who', subtitle: 'How many travelers?' },
-  { title: 'Budget', subtitle: 'Set how the trip money should be used' },
-  { title: 'Your Vibe', subtitle: "What's your travel style?" },
-  { title: 'Review', subtitle: 'Confirm your trip details' },
-];
+  { titleKey: 'step1' },
+  { titleKey: 'step2' },
+  { titleKey: 'step3' },
+  { titleKey: 'step4' },
+  { titleKey: 'step5' },
+  { titleKey: 'step6' },
+] as const;
 
 const STEP_CONTENT_IDS = [0, 1, 2, 9, 6, 8] as const;
 
@@ -336,6 +348,13 @@ function formatDailyCategoryLabel(label: string) {
 }
 
 export default function TripPlannerWizard({ onComplete, isLoading, initialStep = 0, initialData, onBudgetOverviewChange }: TripPlannerWizardProps) {
+  const t = useTranslations('wizard');
+  const t1 = useTranslations('wizardStep1');
+  const t2 = useTranslations('wizardStep2');
+  const t3 = useTranslations('wizardStep3');
+  const t4 = useTranslations('wizardStep4');
+  const t5 = useTranslations('wizardStep5');
+  const t6 = useTranslations('wizardStep6');
   useCurrency();
   const [step, setStep] = useState(Math.min(Math.max(initialStep, 0), STEPS.length - 1));
   const [direction, setDirection] = useState(1);
@@ -1057,7 +1076,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
         return (
           <div className="space-y-8">
             <div className="flex items-center justify-between gap-3 rounded-2xl border border-border bg-muted/60 px-4 py-3">
-              <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">Autocomplete</span>
+              <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">{t1('autocomplete')}</span>
               <div className="flex rounded-xl border border-border bg-background p-1">
                 {(['serpapi', 'duffel'] as const).map(source => (
                   <button
@@ -1074,22 +1093,22 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
               </div>
             </div>
             <div className="space-y-3">
-              <label className="small-caps ml-1">Trip Type</label>
+              <label className="small-caps ml-1">{t1('tripType')}</label>
               <div className="flex gap-3">
                 {(['one_way', 'round_trip'] as TripType[]).map(type => (
                   <button key={type} type="button" onClick={() => update({ tripType: type })}
                     className={`flex-1 py-4 rounded-2xl border text-xs uppercase tracking-[0.15em] font-bold transition-all ${data.tripType === type ? 'bg-foreground text-background border-foreground shadow-lg shadow-foreground/10' : 'bg-background border-border text-muted-foreground hover:border-foreground/30'}`}>
-                    {type.replace('_', ' ')}
+                    {type === 'one_way' ? t1('oneWay') : t1('roundTrip')}
                   </button>
                 ))}
               </div>
             </div>
             <div className="space-y-3 relative z-30">
-              <label className="small-caps ml-1">From</label>
-              <AirportAutocomplete value={data.origin} onSelect={(v) => update({ origin: v })} placeholder="Departure City" source={autocompleteSource} />
+              <label className="small-caps ml-1">{t1('from')}</label>
+              <AirportAutocomplete value={data.origin} onSelect={(v) => update({ origin: v })} placeholder={t1('departureCity')} source={autocompleteSource} />
             </div>
             <div className="space-y-3 relative z-20">
-              <label className="small-caps ml-1">To</label>
+              <label className="small-caps ml-1">{t1('to')}</label>
               <AirportAutocomplete
                 value={data.destination}
                 onSelect={(v) => update({ destination: v, destinationCity: undefined, destinationCountry: undefined, destinationCountryCode: undefined, transportOptions: undefined, transportDataSource: undefined, transportBudgetSelections: {} })}
@@ -1102,7 +1121,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                   transportDataSource: undefined,
                   transportBudgetSelections: {},
                 })}
-                placeholder="Arrival City"
+                placeholder={t1('arrivalCity')}
                 source={autocompleteSource}
               />
             </div>
@@ -1158,11 +1177,11 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                   }`}>
                   <CalendarIcon className="w-5 h-5 text-muted-foreground flex-shrink-0" />
                   <div className="flex-1 min-w-0">
-                    <p className="text-[0.65rem] small-caps tracking-widest text-muted-foreground">Departure</p>
+                    <p className="text-[0.65rem] small-caps tracking-widest text-muted-foreground">{t('departure')}</p>
                     <p className="text-sm font-medium">
                       {rangeValue.from
                         ? rangeValue.from.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-                        : <span className="text-muted-foreground">Pick a date</span>}
+                        : <span className="text-muted-foreground">{t2('pickADate')}</span>}
                     </p>
                   </div>
                   {effectiveMode === 'idle' && (
@@ -1170,7 +1189,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                       type="button"
                       onClick={() => setDatePickMode('editDeparture')}
                       className="p-2 rounded-xl border border-border text-muted-foreground hover:text-foreground hover:border-foreground/30 hover:bg-foreground/5 transition-all flex-shrink-0"
-                      title="Change departure date"
+                      title={t2('changeDeparture')}
                     >
                       <Pencil className="w-3.5 h-3.5" />
                     </button>
@@ -1181,11 +1200,11 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                   }`}>
                   <CalendarIcon className="w-5 h-5 text-muted-foreground flex-shrink-0" />
                   <div className="flex-1 min-w-0">
-                    <p className="text-[0.65rem] small-caps tracking-widest text-muted-foreground">Return</p>
+                    <p className="text-[0.65rem] small-caps tracking-widest text-muted-foreground">{t('return')}</p>
                     <p className="text-sm font-medium">
                       {rangeValue.to
                         ? rangeValue.to.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-                        : <span className="text-muted-foreground">Pick a date</span>}
+                        : <span className="text-muted-foreground">{t2('pickADate')}</span>}
                     </p>
                   </div>
                   {effectiveMode === 'idle' && (
@@ -1193,7 +1212,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                       type="button"
                       onClick={() => setDatePickMode('editReturn')}
                       className="p-2 rounded-xl border border-border text-muted-foreground hover:text-foreground hover:border-foreground/30 hover:bg-foreground/5 transition-all flex-shrink-0"
-                      title="Change return date"
+                      title={t2('changeReturn')}
                     >
                       <Pencil className="w-3.5 h-3.5" />
                     </button>
@@ -1204,15 +1223,15 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
               {/* Editing hint */}
               {(effectiveMode === 'editDeparture' || effectiveMode === 'editReturn') && (
                 <p className="text-xs text-center text-muted-foreground">
-                  Select a new <span className="font-medium text-foreground">{effectiveMode === 'editDeparture' ? 'departure' : 'return'}</span> date
+                  {effectiveMode === 'editDeparture' ? t2('selectNewDeparture') : t2('selectNewReturn')}
                 </p>
               )}
 
               <div className="hidden">
                 <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">Selected dates</div>
                 <div className="mt-1 text-sm font-bold text-foreground">
-                  {selectedDateCount > 0 ? `${selectedDateCount} day${selectedDateCount !== 1 ? 's' : ''}` : 'No dates selected'}
-                  {selectedNights > 0 ? ` - ${selectedNights} night${selectedNights !== 1 ? 's' : ''}` : ''}
+                  {selectedDateCount > 0 ? `${selectedDateCount} ${selectedDateCount === 1 ? t2('day') : t2('days')}` : t2('noDatesSelected')}
+                  {selectedNights > 0 ? ` - ${selectedNights} ${selectedNights === 1 ? t2('night') : t2('nights')}` : ''}
                 </div>
               </div>
 
@@ -1226,7 +1245,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                         className="pointer-events-none absolute left-[calc(100%+0.75rem)] z-[9999] -translate-y-1/2 whitespace-nowrap rounded-lg border border-foreground bg-foreground px-3 py-1 text-xs font-black text-background shadow-2xl"
                         style={{ top: durationBadgeTop }}
                       >
-                        {selectedDateCount} day{selectedDateCount !== 1 ? 's' : ''}
+                        {selectedDateCount} {selectedDateCount === 1 ? t2('day') : t2('days')}
                       </div>
                     )}
                     <Calendar
@@ -1298,11 +1317,11 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
             <div className="bg-muted border border-border rounded-2xl py-4 px-5 flex items-center gap-3">
               <CalendarIcon className="w-5 h-5 text-muted-foreground flex-shrink-0" />
               <div>
-                <p className="text-[0.65rem] small-caps tracking-widest text-muted-foreground">Departure</p>
+                <p className="text-[0.65rem] small-caps tracking-widest text-muted-foreground">{t('departure')}</p>
                 <p className="text-sm font-medium">
                   {selectedDate
                     ? selectedDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-                    : <span className="text-muted-foreground">Pick a date</span>}
+                    : <span className="text-muted-foreground">{t2('pickADate')}</span>}
                 </p>
               </div>
             </div>
@@ -1329,8 +1348,8 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
       case 2:
         return (
           <div className="space-y-5">
-            <Counter label="Adults" sublabel="18 years and older" value={data.adults} min={1} onChange={v => update({ adults: v })} />
-            <Counter label="Children" sublabel="0 - 17 years" value={data.children} min={0} onChange={v => update({ children: v })} />
+            <Counter label={t('adults')} sublabel={t3('adultsAge')} value={data.adults} min={1} onChange={v => update({ adults: v })} />
+            <Counter label={t('children')} sublabel={t3('childrenAge')} value={data.children} min={0} onChange={v => update({ children: v })} />
           </div>
         );
 
@@ -1597,7 +1616,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
 
                 {/* Nights counter */}
                 <div className="space-y-2">
-                  <Counter label="Nights" sublabel="How many nights to stay" value={data.nights} min={1} onChange={v => { nightsAutoSet.current = true; update({ nights: Math.min(30, v) }); }} />
+                  <Counter label={t('nights')} sublabel="How many nights to stay" value={data.nights} min={1} onChange={v => { nightsAutoSet.current = true; update({ nights: Math.min(30, v) }); }} />
                   <div className="px-6 space-y-1">
                     <div className="text-xs text-muted-foreground font-mono">
                       {data.nights} night{data.nights !== 1 ? 's' : ''} × {data.hotelRooms} apartment{data.hotelRooms !== 1 ? 's' : ''} with {data.hotelRoomsPerApartment || 1} room{(data.hotelRoomsPerApartment || 1) !== 1 ? 's' : ''} inside each × {formatFromUSD(HOTEL_NIGHTLY[data.hotelStars] || 160)}/night = {formatFromUSD((HOTEL_NIGHTLY[data.hotelStars] || 160) * data.nights * Math.max(1, data.hotelRooms))}
@@ -1889,8 +1908,8 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
         const budgetRows = [
           {
             key: 'flight',
-            label: 'Flights for travelers',
-            detail: data.includeFlight ? (data.flightBudget > 0 ? `$${perPersonFlightBudget.toLocaleString()} per traveler × ${travelerText}` : pendingAutoText) : 'Flights turned off',
+            label: t4('flightsFor'),
+            detail: data.includeFlight ? (data.flightBudget > 0 ? `$${perPersonFlightBudget.toLocaleString()} ${t4('perTraveler')} × ${travelerText}` : pendingAutoText) : t4('flightsOff'),
             icon: Plane,
             value: data.flightBudget,
             max: 50000,
@@ -1910,8 +1929,8 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
           },
           {
             key: 'hotel',
-            label: 'Hotel for travelers',
-            detail: data.includeHotel ? (data.hotelBudget > 0 ? `$${perHotelApartmentNightBudget.toLocaleString()} per apartment/night × ${hotelApartmentCount} apartment${hotelApartmentCount !== 1 ? 's' : ''} × ${safeNights} day${safeNights !== 1 ? 's' : ''}. Searching ${hotelRoomsPerApartment}-room apartment${hotelRoomsPerApartment !== 1 ? 's' : ''}.` : pendingAutoText) : 'Hotel turned off',
+            label: t4('hotelFor'),
+            detail: data.includeHotel ? (data.hotelBudget > 0 ? `$${perHotelApartmentNightBudget.toLocaleString()} ${t4('perApartmentNight')} × ${hotelApartmentCount} ${t4('apartment')}${hotelApartmentCount !== 1 ? 's' : ''} × ${safeNights} ${safeNights === 1 ? t2('day') : t2('days')}. Searching ${hotelRoomsPerApartment}-room ${t4('apartment')}${hotelRoomsPerApartment !== 1 ? 's' : ''}.` : pendingAutoText) : t4('hotelOff'),
             icon: Hotel,
             value: data.hotelBudget,
             max: 50000,
@@ -1931,8 +1950,8 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
           },
           {
             key: 'transport',
-            label: 'Transportation for travelers',
-            detail: data.includeTransport ? (data.transportBudget > 0 ? `$${Math.round(data.transportBudget / safeNights).toLocaleString()} per day × ${safeNights} day${safeNights !== 1 ? 's' : ''}` : pendingAutoText) : 'Transportation turned off',
+            label: t4('transportFor'),
+            detail: data.includeTransport ? (data.transportBudget > 0 ? `$${Math.round(data.transportBudget / safeNights).toLocaleString()} ${t4('perDay')} × ${safeNights} ${safeNights === 1 ? t2('day') : t2('days')}` : pendingAutoText) : t4('transportOff'),
             icon: Bus,
             value: data.transportBudget,
             max: 30000,
@@ -1952,8 +1971,8 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
           },
           {
             key: 'places',
-            label: 'Places for travelers',
-            detail: placesEnabled ? (data.dailyExpenseBudget > 0 ? `$${placeVisitDayBudget.toLocaleString()} per traveler/day × ${safeNights} day${safeNights !== 1 ? 's' : ''} × ${travelerText}` : pendingAutoText) : 'Place visits turned off',
+            label: t4('placesFor'),
+            detail: placesEnabled ? (data.dailyExpenseBudget > 0 ? `$${placeVisitDayBudget.toLocaleString()} ${t4('perTravelerDay')} × ${safeNights} ${safeNights === 1 ? t2('day') : t2('days')} × ${travelerText}` : pendingAutoText) : t4('placesOff'),
             icon: Compass,
             value: data.dailyExpenseBudget,
             max: 30000,
@@ -2052,8 +2071,8 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
                 {([
-                  { value: 'total' as BudgetMode, label: 'Fixed Budget', sub: 'Use main budget only' },
-                  { value: 'per_category' as BudgetMode, label: 'Detailed', sub: 'Auto or manual split' },
+                  { value: 'total' as BudgetMode, label: t4('fixedBudget'), sub: t4('fixedBudgetSub') },
+                  { value: 'per_category' as BudgetMode, label: t4('detailed'), sub: t4('detailedSub') },
                 ]).map(option => (
                   <button
                     key={option.value}
@@ -2073,13 +2092,13 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                       <DollarSign className="h-5 w-5 text-muted-foreground" />
                     </div>
                     <div>
-                      <div className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground">Fixed Budget</div>
-                      <div className="mt-1 text-xs text-muted-foreground/60">Set the minimum and maximum trip budget.</div>
+                      <div className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground">{t4('fixedBudget')}</div>
+                      <div className="mt-1 text-xs text-muted-foreground/60">{t4('setMinMax')}</div>
                     </div>
                   </div>
                   <div className="grid gap-3 sm:grid-cols-2">
                     <label className="rounded-2xl border border-border bg-background px-4 py-3">
-                      <span className="text-[10px] uppercase tracking-[0.16em] font-bold text-muted-foreground/50">Min Budget</span>
+                      <span className="text-[10px] uppercase tracking-[0.16em] font-bold text-muted-foreground/50">{t4('minBudget')}</span>
                       <div className="mt-2 flex items-center gap-2">
                         <span className="text-2xl title-text text-muted-foreground">$</span>
                         <input
@@ -2095,7 +2114,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                       </div>
                     </label>
                     <label className="rounded-2xl border border-border bg-background px-4 py-3">
-                      <span className="text-[10px] uppercase tracking-[0.16em] font-bold text-muted-foreground/50">Max Budget</span>
+                      <span className="text-[10px] uppercase tracking-[0.16em] font-bold text-muted-foreground/50">{t4('maxBudget')}</span>
                       <div className="mt-2 flex items-center gap-2">
                         <span className="text-2xl title-text text-muted-foreground">$</span>
                         <input
@@ -2112,7 +2131,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                     </label>
                   </div>
                   <div className="mt-4 text-xs text-muted-foreground/60">
-                    Starts at $0 - $5,000 by default. The AI will search within this fixed range.
+                    {t4('defaultRange')}
                   </div>
                 </div>
               ) : (
@@ -2122,7 +2141,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                       <div className="h-11 w-11 rounded-2xl border border-border bg-background flex items-center justify-center">
                         <Sparkles className="h-5 w-5 text-muted-foreground" />
                       </div>
-                      <div className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground">AI Budget Guide</div>
+                      <div className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground">{t4('aiBudgetGuide')}</div>
                     </div>
                     {budgetAutoAllocated ? (
                       <div className="text-5xl font-bold text-foreground title-text">
@@ -2148,10 +2167,10 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                       </label>
                     )}
                     <div className="text-xs text-muted-foreground/60 mt-2">
-                      ~${Math.round(data.budgetMax / (data.adults || 1)).toLocaleString()} per person
+                      ~${Math.round(data.budgetMax / (data.adults || 1)).toLocaleString()} {t4('perPerson')}
                     </div>
                     <div className="text-xs text-muted-foreground/60 mt-2">
-                      AI estimates a useful trip budget from your route, dates, travelers, cabin, hotel rating, transport, and places.
+                      {t4('aiEstimate')}
                     </div>
                   </div>
                   <div className={`py-7 px-6 rounded-3xl border ${budgetFits ? 'bg-emerald-500/10 border-emerald-500/25' : 'bg-red-500/10 border-red-500/25'}`}>
@@ -2159,16 +2178,16 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                       <div className={`h-11 w-11 rounded-2xl border flex items-center justify-center ${budgetFits ? 'border-emerald-500/25 bg-emerald-500/10' : 'border-red-500/25 bg-red-500/10'}`}>
                         <DollarSign className={`h-5 w-5 ${budgetFits ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-600 dark:text-red-300'}`} />
                       </div>
-                      <div className={`text-[10px] uppercase tracking-[0.2em] font-bold ${budgetFits ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-600 dark:text-red-300'}`}>Selected Categories</div>
+                      <div className={`text-[10px] uppercase tracking-[0.2em] font-bold ${budgetFits ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-600 dark:text-red-300'}`}>{t4('selectedCategories')}</div>
                     </div>
                     <div className={`text-5xl font-bold title-text ${budgetFits ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-600 dark:text-red-300'}`}>
                       {formatFromUSD(consumedBudget)}
                     </div>
                     <div className={`text-xs mt-2 ${budgetFits ? 'text-emerald-700/70 dark:text-emerald-300/70' : 'text-red-600/70 dark:text-red-300/70'}`}>
-                      Sum of selected flight, hotel, transport, and places budgets.
+                      {t4('categorySum')}
                     </div>
                     <div className={`text-xs mt-1 ${budgetFits ? 'text-emerald-700/70 dark:text-emerald-300/70' : 'text-red-600/70 dark:text-red-300/70'}`}>
-                      {budgetFits ? `${formatFromUSD(budgetDelta)} below AI ceiling` : `${formatFromUSD(Math.abs(budgetDelta))} above AI ceiling`}
+                      {budgetFits ? `${formatFromUSD(budgetDelta)} ${t4('belowCeiling')}` : `${formatFromUSD(Math.abs(budgetDelta))} ${t4('aboveCeiling')}`}
                     </div>
                   </div>
                 </div>
@@ -2182,12 +2201,12 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                     <div className="mt-3 flex flex-wrap gap-2">
                       <div className="inline-flex items-center gap-2 rounded-2xl border border-border bg-background px-3 py-2">
                         <Users className="h-4 w-4 text-muted-foreground" />
-                        <span className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">People</span>
+                        <span className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">{t4('people')}</span>
                         <span className="font-mono text-sm font-black text-foreground">{travelerCount}</span>
                       </div>
                       <div className="inline-flex items-center gap-2 rounded-2xl border border-border bg-background px-3 py-2">
                         <CalendarIcon className="h-4 w-4 text-muted-foreground" />
-                        <span className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">Days</span>
+                        <span className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">{t4('days')}</span>
                         <span className="font-mono text-sm font-black text-foreground">{safeNights}</span>
                       </div>
                     </div>
@@ -2195,7 +2214,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                   {data.tripType === 'one_way' ? (
                     <div className="shrink-0">
                       <Counter
-                        label="Days"
+                        label={t4('days')}
                         sublabel="Stay length"
                         value={safeNights}
                         min={1}
@@ -2230,12 +2249,12 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                     className="w-full rounded-2xl border border-border bg-background px-5 py-4 text-[11px] font-black uppercase tracking-[0.16em] text-foreground transition hover:border-foreground/30 hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {budgetAutoAllocated
-                      ? 'Auto allocate applied'
+                      ? t4('autoAllocateApplied')
                       : budgetAutoDelayPending
-                        ? 'Applying after short wait...'
+                        ? t4('autoAllocateApplying')
                         : budgetEstimateLoading
                           ? 'Auto allocate when ready'
-                          : 'Auto allocate enabled categories'}
+                          : t4('autoAllocateEnabled')}
                   </button>
                   {budgetEstimateError && (
                     <div className="rounded-2xl border border-red-500/25 bg-red-500/10 px-4 py-3 text-xs font-semibold text-red-600 dark:text-red-300">
@@ -2278,14 +2297,14 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                     <div className="mt-5 flex items-end justify-between gap-4">
                       <div>
                         <div className="text-[10px] uppercase tracking-[0.16em] font-bold text-muted-foreground/50">
-                          {item.key === 'places' ? 'Needed money each day' : 'Selected value'}
+                          {item.key === 'places' ? t4('neededPerDay') : t4('selectedValue')}
                         </div>
                         <div className="mt-1 text-xl font-bold text-foreground font-mono">
                           {formatFromUSD(item.value)}
                         </div>
                         {!item.enabled && item.value > 0 && (
                           <div className="mt-1 text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground/50">
-                            Saved while off
+                            {t4('savedWhileOff')}
                           </div>
                         )}
                       </div>
@@ -2298,7 +2317,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                           </span>
                           {data.transportOptions?.length ? (
                             <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground/50">
-                              {formatFromUSD(selectedTransportDailyTotal)} per day
+                              {formatFromUSD(selectedTransportDailyTotal)} {t4('perDay')}
                             </span>
                           ) : null}
                         </div>
@@ -2334,13 +2353,13 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                                   <div className="flex min-w-0 items-start gap-2">
                                     <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                                     <div className="min-w-0 text-[11px] font-black uppercase leading-snug tracking-[0.14em] text-foreground">
-                                      {type === 'rideshare_uber' ? 'Uber' : type === 'rental_car' ? 'Rent Car' : optionMeta?.label || liveOption?.displayName || type}
+                                      {type === 'rideshare_uber' ? t4('uber') : type === 'rental_car' ? t4('rentCar') : optionMeta?.label || liveOption?.displayName || type}
                                     </div>
                                     {selected && <Check className="ml-auto h-3.5 w-3.5 shrink-0 text-emerald-600" />}
                                   </div>
                                   <div className="mt-3">
                                     <div className="font-mono text-sm font-black text-foreground">
-                                      {available ? transportPrice.price : 'Unavailable'}
+                                      {available ? transportPrice.price : t4('unavailable')}
                                     </div>
                                     {available && transportPrice.detail && (
                                       <div className="mt-1 text-[10px] font-bold uppercase tracking-[0.1em] text-muted-foreground/70">
@@ -2377,7 +2396,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                                 )}
                                 {selected && liveOption && (
                                   <div className="mt-2 rounded-lg bg-emerald-500/10 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.1em] text-emerald-700 dark:text-emerald-300">
-                                    ${(getTransportDailyUnitPrice(liveOption) * quantity).toFixed(2)} per day total
+                                    ${(getTransportDailyUnitPrice(liveOption) * quantity).toFixed(2)} {t4('perDay')} total
                                   </div>
                                 )}
                                 {liveOption?.notes && (
@@ -2399,7 +2418,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                           </span>
                           {dailyCategoryPreview.length ? (
                             <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground/50">
-                              {formatFromUSD(selectedDailyCategorySum)} per traveler/day
+                              {formatFromUSD(selectedDailyCategorySum)} {t4('perTravelerDay')}
                             </span>
                           ) : null}
                         </div>
@@ -2486,10 +2505,10 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                         <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
                           <div>
                             <div className="text-[10px] font-black uppercase tracking-[0.16em] text-muted-foreground/60">
-                              Hotel room setup
+                              {t4('hotelRoomSetup')}
                             </div>
                             <div className="mt-1 text-xs text-muted-foreground">
-                              Select the number of rooms and beds needed for your stay.
+                              {t4('hotelRoomSetupSub')}
                             </div>
                           </div>
                           <div className="text-right font-mono text-xs font-black text-foreground">
@@ -2520,7 +2539,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                             </span>
                             {appliedBudgetHotelAveragesByStars && (
                               <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground/50">
-                                Per apartment/night
+                                {t4('perApartmentNight')}
                               </span>
                             )}
                           </div>
@@ -2581,9 +2600,9 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
             <div className="text-center py-6 px-6 rounded-3xl bg-muted border border-border">
               <div className="flex items-center justify-center gap-3 mb-3">
                 <Compass className="w-6 h-6 text-foreground" />
-                <span className="text-lg font-bold text-foreground">What&apos;s Your Vibe?</span>
+                <span className="text-lg font-bold text-foreground">{t5('vibeTitle')}</span>
               </div>
-              <p className="text-xs text-muted-foreground/60">Select the experiences you&apos;re looking for. Choose as many as you like.</p>
+              <p className="text-xs text-muted-foreground/60">{t5('vibeSub')}</p>
             </div>
             <div className="grid grid-cols-2 gap-3">
               {VIBE_OPTIONS.map(v => {
@@ -2597,14 +2616,14 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                     })}
                     className={`flex items-center gap-3 py-4 px-5 rounded-2xl border text-left transition-all duration-200 ${selected ? 'bg-emerald-500 text-white border-emerald-500 shadow-lg shadow-emerald-500/20' : 'bg-background border-border text-muted-foreground hover:border-foreground/30'}`}>
                     <span className="text-xl">{v.emoji}</span>
-                    <span className="text-[11px] font-bold uppercase tracking-wider">{v.label}</span>
+                    <span className="text-[11px] font-bold uppercase tracking-wider">{t5(VIBE_TRANSLATION_KEYS[v.id])}</span>
                     {selected && <Check className="w-3.5 h-3.5 ml-auto shrink-0" />}
                   </button>
                 );
               })}
             </div>
             {data.vibes.length === 0 && (
-              <p className="text-center text-[10px] text-muted-foreground/40 uppercase tracking-wider">No vibe selected - we&apos;ll show a general mix of top attractions</p>
+              <p className="text-center text-[10px] text-muted-foreground/40 uppercase tracking-wider">{t5('noVibe')}</p>
             )}
           </div>
         );
@@ -2613,8 +2632,8 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
       case 8:
         const reviewBudgetCeiling = Number(data.budgetMax || data.totalBudget || 0);
         const reviewBudgetRange = data.budgetMin > 0
-          ? `Selected range $${data.budgetMin.toLocaleString()} - $${reviewBudgetCeiling.toLocaleString()}`
-          : `Selected budget ceiling from slider`;
+          ? `${t4('selectedValue')} $${data.budgetMin.toLocaleString()} - $${reviewBudgetCeiling.toLocaleString()}`
+          : t4('aiBudgetGuide');
         const reviewBudgetBreakdown = [
           data.includeFlight ? `Flight $${data.flightBudget.toLocaleString()}` : null,
           data.includeHotel ? `Hotel $${data.hotelBudget.toLocaleString()}` : null,
@@ -2625,17 +2644,17 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
           <div className="space-y-6">
             <div className="grid grid-cols-2 gap-4">
               {[
-                { label: 'Route', value: `${data.origin} → ${data.destination}`, sub: data.tripType.replace('_', ' ') },
-                { label: 'Dates', value: data.departureDate, sub: data.returnDate ? `Return: ${data.returnDate}` : 'One way' },
-                { label: 'Travelers', value: `${data.adults} Adult${data.adults > 1 ? 's' : ''}`, sub: data.children > 0 ? `${data.children} Child${data.children > 1 ? 'ren' : ''}` : 'No children' },
+                { label: t6('route'), value: `${data.origin} → ${data.destination}`, sub: data.tripType === 'one_way' ? t6('oneWay') : t1('roundTrip') },
+                { label: t6('dates'), value: data.departureDate, sub: data.returnDate ? `${t6('return')}: ${data.returnDate}` : t6('oneWay') },
+                { label: t6('travelers'), value: `${data.adults} ${data.adults === 1 ? t6('adult') : t6('adults')}`, sub: data.children > 0 ? `${data.children} ${data.children === 1 ? t6('child') : t6('children')}` : t6('noChildren') },
                 {
-                  label: 'Budget',
+                  label: t6('budget'),
                   value: `$${reviewBudgetCeiling.toLocaleString()}`,
                   sub: data.budgetMode === 'total'
-                    ? `${reviewBudgetRange} - AI will stay within this limit`
-                    : `${reviewBudgetRange}${reviewBudgetBreakdown ? ` - allocation: ${reviewBudgetBreakdown}` : ''}`,
+                    ? `${reviewBudgetRange} - ${t6('aiLimit')}`
+                    : `${reviewBudgetRange}${reviewBudgetBreakdown ? ` - ${t6('allocation')}: ${reviewBudgetBreakdown}` : ''}`,
                 },
-                { label: 'Vibe', value: data.vibes.length > 0 ? data.vibes.map(v => VIBE_OPTIONS.find(vo => vo.id === v)?.emoji || '').join(' ') : 'General mix', sub: data.vibes.length > 0 ? data.vibes.map(v => VIBE_OPTIONS.find(vo => vo.id === v)?.label || '').join(', ') : 'All attractions' },
+                { label: t6('vibe'), value: data.vibes.length > 0 ? data.vibes.map(v => VIBE_OPTIONS.find(vo => vo.id === v)?.emoji || '').join(' ') : t6('generalMix'), sub: data.vibes.length > 0 ? data.vibes.map(v => t5(VIBE_TRANSLATION_KEYS[v] || 'foodDrink')).join(', ') : t6('allAttractions') },
               ].map((item, i) => (
                 <div key={i} className="py-4 px-5 rounded-2xl bg-muted border border-border">
                   <div className="text-[9px] uppercase tracking-[0.2em] font-bold text-muted-foreground/40 mb-1">{item.label}</div>
@@ -2677,15 +2696,26 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                   <div>
                     <div id="over-budget-title" className="text-lg font-black text-foreground">
                       {budgetWarning.kind === 'category-under'
-                        ? 'You are going under the AI budget guide'
-                        : 'You are going over the AI budget guide'}
+                        ? t4('underBudgetTitle')
+                        : t4('overBudgetTitle')}
                     </div>
                     <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
                       {budgetWarning.kind === 'category-under'
-                        ? `${budgetWarning.label} is now $${budgetWarning.selectedAmount.toLocaleString()}, below the AI guide of $${budgetWarning.guideAmount.toLocaleString()}. Real prices may be higher than this. Are you sure you want to continue with this lower budget?`
+                        ? t4('underBudgetBody', {
+                            label: budgetWarning.label,
+                            selected: budgetWarning.selectedAmount.toLocaleString(),
+                            guide: budgetWarning.guideAmount.toLocaleString(),
+                          })
                         : budgetWarning.kind === 'category-over'
-                          ? `${budgetWarning.label} is now $${budgetWarning.selectedAmount.toLocaleString()}, above the AI guide of $${budgetWarning.guideAmount.toLocaleString()}. Do you really want to spend more money here?`
-                          : `Your selected categories total is $${budgetWarning.selectedAmount.toLocaleString()}, above the AI guide of $${budgetWarning.guideAmount.toLocaleString()}. Do you really want to increase the budget?`}
+                          ? t4('categoryOverBody', {
+                              label: budgetWarning.label,
+                              selected: budgetWarning.selectedAmount.toLocaleString(),
+                              guide: budgetWarning.guideAmount.toLocaleString(),
+                            })
+                          : t4('totalOverBody', {
+                              selected: budgetWarning.selectedAmount.toLocaleString(),
+                              guide: budgetWarning.guideAmount.toLocaleString(),
+                            })}
                     </p>
                   </div>
                 </div>
@@ -2693,7 +2723,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                   type="button"
                   onClick={dismissBudgetWarning}
                   className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border bg-muted text-muted-foreground transition hover:text-foreground"
-                  aria-label="Close warning"
+                  aria-label={t4('close')}
                 >
                   <X className="h-4 w-4" />
                 </button>
@@ -2704,14 +2734,14 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
                   onClick={dismissBudgetWarning}
                   className="rounded-2xl border border-border bg-background px-5 py-3 text-[11px] font-black uppercase tracking-[0.16em] text-muted-foreground transition hover:border-foreground/30 hover:text-foreground"
                 >
-                  Close
+                  {t4('close')}
                 </button>
                 <button
                   type="button"
                   onClick={confirmBudgetWarning}
                   className="rounded-2xl bg-foreground px-5 py-3 text-[11px] font-black uppercase tracking-[0.16em] text-background transition hover:opacity-85"
                 >
-                  {budgetWarning.kind === 'category-under' ? 'Yes, use lower budget' : 'Yes, increase budget'}
+                  {budgetWarning.kind === 'category-under' ? t4('yesLower') : t4('yesIncrease')}
                 </button>
               </div>
             </motion.div>
@@ -2723,7 +2753,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
       <div className="mb-12">
         <div className="flex items-center justify-between mb-4">
           <div className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground">
-            Step {step + 1} of {STEPS.length}
+            {t4('stepOf', { current: step + 1, total: STEPS.length })}
           </div>
           <div className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground/40">
             {Math.round(progress)}%
@@ -2748,8 +2778,10 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
           transition={{ duration: 0.4 }}
           className="mb-10"
         >
-          <h2 className="text-5xl title-text text-foreground mb-2">{STEPS[step].title}</h2>
-          <p className="text-muted-foreground text-sm font-light">{STEPS[step].subtitle}</p>
+          <h2 className="text-5xl title-text text-foreground mb-2">{t(STEPS[step].titleKey)}</h2>
+          <p className="text-muted-foreground text-sm font-light">
+            {step === 0 ? t1('subtitle') : step === 1 ? t2('subtitle') : step === 2 ? t3('subtitle') : step === 3 ? t4('subtitle') : step === 4 ? t5('subtitle') : t6('subtitle')}
+          </p>
         </motion.div>
       </AnimatePresence>
 
@@ -2772,7 +2804,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
         <button type="button" onClick={prev} disabled={step === 0}
           className={`flex items-center gap-2 px-6 py-3 rounded-full border text-xs uppercase tracking-[0.15em] font-bold transition-all ${step === 0 ? 'opacity-0 pointer-events-none' : 'border-border text-muted-foreground hover:border-foreground/30 hover:text-foreground'}`}>
           <ChevronLeft className="w-4 h-4" />
-          Back
+          {t('back')}
         </button>
 
         {step === STEPS.length - 1 ? (
@@ -2788,7 +2820,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
             ) : (
               <>
                 <Sparkles className="w-4 h-4" />
-                <span className="text-[11px] uppercase tracking-[0.2em] font-black">Generate My Trip Plan</span>
+                <span className="text-[11px] uppercase tracking-[0.2em] font-black">{t('generate')}</span>
                 <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
               </>
             )}
@@ -2796,7 +2828,7 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
         ) : (
           <button type="button" onClick={next} disabled={!canProceed()}
             className="btn-primary flex items-center gap-2 px-8 py-3 disabled:opacity-30 group">
-            <span className="text-[11px] uppercase tracking-[0.2em] font-black">Continue</span>
+            <span className="text-[11px] uppercase tracking-[0.2em] font-black">{t('next')}</span>
             <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
           </button>
         )}

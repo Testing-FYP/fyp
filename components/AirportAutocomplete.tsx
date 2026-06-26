@@ -91,7 +91,7 @@ export default function AirportAutocomplete({ value, onSelect, onSelectSuggestio
   return (
     <div className="relative" ref={containerRef}>
       <div className="relative group">
-        <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground group-focus-within:text-foreground transition-colors z-10" />
+        <MapPin className="absolute start-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground group-focus-within:text-foreground transition-colors z-10" />
         <input 
           type="text" 
           value={query}
@@ -101,11 +101,11 @@ export default function AirportAutocomplete({ value, onSelect, onSelectSuggestio
             setIsOpen(true);
           }}
           onFocus={() => setIsOpen(true)}
-          className="w-full bg-muted border border-border rounded-2xl py-4 pl-12 pr-4 focus:outline-none focus:border-foreground/20 focus:bg-muted/80 transition-all text-foreground"
+          className="w-full bg-muted border border-border rounded-2xl py-4 ps-12 pe-4 focus:outline-none focus:border-foreground/20 focus:bg-muted/80 transition-all text-foreground"
           placeholder={placeholder}
         />
         {isLoading && (
-          <div className="absolute right-4 top-1/2 -translate-y-1/2">
+          <div className="absolute end-4 top-1/2 -translate-y-1/2">
             <Loader2 className="w-4 h-4 text-muted-foreground animate-spin" />
           </div>
         )}
@@ -134,7 +134,7 @@ export default function AirportAutocomplete({ value, onSelect, onSelectSuggestio
                     setQuery(displayLabel);
                     setIsOpen(false);
                   }}
-                  className="w-full px-4 py-4 text-left hover:bg-muted rounded-2xl flex items-center justify-between transition-all group mb-1 last:mb-0"
+                  className="w-full px-4 py-4 text-start hover:bg-muted rounded-2xl flex items-center justify-between transition-all group mb-1 last:mb-0"
                 >
                   <div className="flex items-center gap-5">
                     <div className="w-11 h-11 rounded-2xl bg-muted flex items-center justify-center group-hover:bg-foreground/5 transition-all duration-500 group-hover:scale-105">

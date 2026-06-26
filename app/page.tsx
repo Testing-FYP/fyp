@@ -10,6 +10,7 @@ import Image from 'next/image';
 import planeLoadingImage from './image.png';
 import { useCurrency } from '@/context/CurrencyContext';
 import DataSourcePanel, { useDataSource } from '@/components/DataSourcePanel';
+import { useTranslations } from 'next-intl';
 
 const GENERATOR_TRANSPORT_TYPES = [
   'metro_subway',
@@ -26,6 +27,8 @@ interface TripGenerationLoadingProps {
 }
 
 function TripGenerationLoading({ percent, label }: TripGenerationLoadingProps) {
+  const t = useTranslations('loading');
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 18 }}
@@ -44,7 +47,7 @@ function TripGenerationLoading({ percent, label }: TripGenerationLoadingProps) {
         >
           <Image
             src={planeLoadingImage}
-            alt="Plane flying above the clouds"
+            alt={t('planeAlt')}
             fill
             priority
             className="object-cover"
@@ -60,7 +63,7 @@ function TripGenerationLoading({ percent, label }: TripGenerationLoadingProps) {
           >
             <Sparkles className="h-5 w-5" />
           </motion.div>
-          <h2 className="title-text text-4xl text-foreground md:text-5xl">Preparing Your Trip</h2>
+          <h2 className="title-text text-4xl text-foreground md:text-5xl">{t('preparingTrip')}</h2>
           <p className="mt-2 text-4xl font-bold tabular-nums text-foreground">{Math.round(percent)}%</p>
           <p className="mt-1 text-sm text-muted-foreground">{label}</p>
           <div className="mx-auto mt-6 h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-foreground/10">
@@ -77,6 +80,8 @@ function TripGenerationLoading({ percent, label }: TripGenerationLoadingProps) {
 }
 
 export default function Home() {
+  const tHome = useTranslations('home');
+  const tBudget = useTranslations('budget');
   const { convertFromUSD } = useCurrency();
   const { mockSource } = useDataSource();
   const [results, setResults] = useState<any>(null);
@@ -297,15 +302,17 @@ export default function Home() {
               <div className="p-2.5 rounded-2xl bg-foreground/10 backdrop-blur-xl border border-foreground/10">
                 <Sparkles className="w-6 h-6 text-foreground" />
               </div>
-              <span className="small-caps tracking-[0.3em] text-foreground/60">Powered by AI</span>
+              <span className="small-caps tracking-[0.3em] text-foreground/60">{tHome('badge')}</span>
             </div>
             <h1 className="text-6xl md:text-8xl title-text leading-[0.9] mb-4 text-foreground">
-              Plan Your <br />
-              <span className="italic font-light">Dream Trip</span>
+              {results ? tHome('titleResults') : tHome('title')} <br />
+              <span className="italic font-light">{tHome('titleItalic')}</span>
             </h1>
-            <p className="text-muted-foreground text-sm font-light max-w-lg mx-auto leading-relaxed mt-6">
-              Answer a few questions and our AI concierge will craft a personalized travel plan — with flights, hotels, activities, and a smart budget breakdown.
-            </p>
+            {!results && (
+              <p className="text-muted-foreground text-sm font-light max-w-lg mx-auto leading-relaxed mt-6">
+                {tHome('subtitle')}
+              </p>
+            )}
           </motion.div>
         </div>
       </section>
@@ -328,7 +335,7 @@ export default function Home() {
                   }`}
                 >
                   <Compass className="h-4 w-4" />
-                  Build My Trip
+                  {tHome('buildMyTrip')}
                 </button>
                 <button
                   type="button"
@@ -340,7 +347,7 @@ export default function Home() {
                   }`}
                 >
                   <Sparkles className="h-4 w-4" />
-                  Surprise Me
+                  {tHome('surpriseMe')}
                 </button>
               </div>
             )}
@@ -355,12 +362,12 @@ export default function Home() {
                 </div>
                 {budgetOverview?.isDetailedMode ? (
                   <div className="hidden xl:block sticky top-28 self-start w-72 rounded-3xl border border-border bg-muted/95 backdrop-blur-sm p-7 space-y-3 shadow-xl">
-                      <div className="text-xs uppercase tracking-[0.2em] font-bold text-muted-foreground mb-3">Budget Overview</div>
+                      <div className="text-xs uppercase tracking-[0.2em] font-bold text-muted-foreground mb-3">{tBudget('overview')}</div>
                       {[
-                        { label: 'Flights', value: budgetOverview.flights },
-                        { label: 'Hotel', value: budgetOverview.hotel },
-                        { label: 'Transport', value: budgetOverview.transport },
-                        { label: 'Places', value: budgetOverview.places },
+                        { label: tBudget('flights'), value: budgetOverview.flights },
+                        { label: tBudget('hotel'), value: budgetOverview.hotel },
+                        { label: tBudget('transport'), value: budgetOverview.transport },
+                        { label: tBudget('places'), value: budgetOverview.places },
                       ].map(row => (
                         <div key={row.label} className={`flex justify-between items-center text-base font-medium ${row.value === 0 ? 'opacity-35 line-through' : ''}`}>
                           <span>{row.label}</span>
@@ -369,21 +376,21 @@ export default function Home() {
                       ))}
                       <div className="border-t border-border pt-3 mt-1 space-y-1">
                         <div className="flex justify-between text-base text-muted-foreground">
-                          <span>Total used</span>
+                          <span>{tBudget('totalUsed')}</span>
                           <span className="font-mono font-bold text-foreground">{convertFromUSD(budgetOverview.total)}</span>
                         </div>
                         <div className={`flex justify-between text-base font-bold ${budgetOverview.isOverBudget ? 'text-red-500' : 'text-green-600'}`}>
-                          <span>{budgetOverview.isOverBudget ? 'Over budget' : 'Remaining'}</span>
+                          <span>{budgetOverview.isOverBudget ? tBudget('overBudget') : tBudget('remaining')}</span>
                           <span className="font-mono">{budgetOverview.isOverBudget ? '-' : '+'}{convertFromUSD(Math.abs(budgetOverview.remaining))}</span>
                         </div>
                       </div>
                       {budgetOverview.isOverBudget ? (
                         <div className="rounded-xl bg-red-500/10 border border-red-500/20 px-3 py-2 text-sm text-red-500 leading-relaxed">
-                          You are {convertFromUSD(Math.abs(budgetOverview.remaining))} over your budget.
+                          {tBudget('overBudget')}: {convertFromUSD(Math.abs(budgetOverview.remaining))}
                         </div>
                       ) : budgetOverview.total > 0 ? (
                         <div className="rounded-xl bg-green-500/10 border border-green-500/20 px-3 py-2 text-sm text-green-700 dark:text-green-400 leading-relaxed">
-                          Within budget. {convertFromUSD(budgetOverview.remaining)} still unallocated.
+                          {tBudget('withinBudget')}. {convertFromUSD(budgetOverview.remaining)} {tBudget('unallocated')}.
                         </div>
                       ) : null}
                   </div>
@@ -409,7 +416,7 @@ export default function Home() {
           <div ref={resultsRef}>
             <div className="flex items-center justify-between mb-16">
               <div>
-                <h2 className="text-4xl title-text text-foreground">Your Trip Plan</h2>
+                <h2 className="text-4xl title-text text-foreground">{tHome('yourTripPlan')}</h2>
                 <p className="text-muted-foreground text-sm font-light mt-1">
                   {plannerData?.origin} → {plannerData?.destination}
                 </p>
@@ -417,7 +424,7 @@ export default function Home() {
               <button onClick={handleReset}
                 className="flex items-center gap-2 px-6 py-3 rounded-full border border-border text-xs uppercase tracking-[0.15em] font-bold text-muted-foreground hover:border-foreground/30 hover:text-foreground transition-all">
                 <RotateCcw className="w-4 h-4" />
-                Start Over
+                {tHome('startOver')}
               </button>
             </div>
 
@@ -431,7 +438,7 @@ export default function Home() {
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-8 text-center md:text-left">
           <div className="title-text text-2xl tracking-widest font-bold">TRAVEL ELITE</div>
           <div className="text-muted-foreground/60 text-[10px] uppercase tracking-widest font-bold">
-            © 2026 TRAVEL ELITE. ALL RIGHTS RESERVED.
+            {tHome('footer')}
           </div>
         </div>
       </footer>

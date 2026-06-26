@@ -6,8 +6,10 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { MailCheck, PlaneTakeoff, RotateCcw, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
+import { useTranslations } from 'next-intl';
 
 function VerifyEmailContent() {
+  const t = useTranslations('auth');
   const router = useRouter();
   const searchParams = useSearchParams();
   const email = searchParams.get('email') || '';
@@ -129,9 +131,9 @@ function VerifyEmailContent() {
           </div>
 
           <div className="text-center mb-8">
-            <h1 className="text-xl font-medium tracking-tight mb-3">Verify your email</h1>
+            <h1 className="text-xl font-medium tracking-tight mb-3">{t('verifyEmail')}</h1>
             <p className="text-muted-foreground text-sm leading-6">
-              We sent a 6-digit code to{' '}
+              {t('enterOtp')}{' '}
               <span className="text-foreground break-all">{email || 'your email'}</span>
             </p>
           </div>
@@ -171,7 +173,7 @@ function VerifyEmailContent() {
               ) : (
                 <>
                   <Sparkles className="w-4 h-4" />
-                  Verify Email
+                  {t('verify')}
                 </>
               )}
             </button>
@@ -185,7 +187,7 @@ function VerifyEmailContent() {
               className="inline-flex items-center justify-center gap-2 text-muted-foreground text-xs hover:text-foreground transition-colors disabled:opacity-50 disabled:hover:text-muted-foreground"
             >
               <RotateCcw className="w-3.5 h-3.5" />
-              {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Resend code'}
+              {resendCooldown > 0 ? `${t('resendCode')} ${resendCooldown}s` : t('resendCode')}
             </button>
           </div>
         </div>
