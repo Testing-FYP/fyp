@@ -46,3 +46,14 @@ Thumbs.db
 
 # Uploads / local files
 backend/uploads/
+
+# Mobile Expo
+mobile/.expo/
+mobile/node_modules/
+mobile/dist/
+mobile/web-build/
+mobile/android/
+mobile/ios/
+# Mobile Expo
+mobile/.expo/
+mobile/.expo/**
