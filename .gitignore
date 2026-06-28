@@ -57,3 +57,8 @@ mobile/ios/
 # Mobile Expo
 mobile/.expo/
 mobile/.expo/**
+
+# AI tool local files
+mobile/.claude/
+mobile/CLAUDE.md
+mobile/AGENTS.md

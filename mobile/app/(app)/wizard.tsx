@@ -6,6 +6,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
+  Animated,
   Platform,
   Pressable,
   ScrollView,
@@ -14,7 +15,6 @@ import {
   Text,
   View,
 } from 'react-native';
-import Animated, { FadeInRight, FadeOutLeft } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Button } from '@/components/ui/Button';
@@ -241,6 +241,7 @@ export default function WizardScreen() {
   const { token } = useAuth();
   const { theme } = useTheme();
   const scrollRef = useRef<ScrollView>(null);
+  const stepTransition = useRef(new Animated.Value(0)).current;
   const [currentStep, setCurrentStep] = useState(1);
   const [error, setError] = useState('');
   const [showDeparturePicker, setShowDeparturePicker] = useState(false);
@@ -270,6 +271,17 @@ export default function WizardScreen() {
       budgetType: 'Fixed',
     };
   });
+
+  useEffect(() => {
+    stepTransition.setValue(0);
+    const animation = Animated.timing(stepTransition, {
+      toValue: 1,
+      duration: 220,
+      useNativeDriver: true,
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [currentStep, stepTransition]);
 
   useEffect(() => {
     if (!generating) {
@@ -532,7 +544,20 @@ export default function WizardScreen() {
       </View>
 
       <ScrollView ref={scrollRef} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-        <Animated.View key={currentStep} entering={FadeInRight.duration(220)} exiting={FadeOutLeft.duration(160)}>
+        <Animated.View
+          key={currentStep}
+          style={{
+            opacity: stepTransition,
+            transform: [
+              {
+                translateX: stepTransition.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [18, 0],
+                }),
+              },
+            ],
+          }}
+        >
           {renderStep()}
         </Animated.View>
 
