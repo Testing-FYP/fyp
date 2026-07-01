@@ -20,7 +20,7 @@ import { useTheme } from '@/hooks/useTheme';
 
 export default function SignupScreen() {
   const router = useRouter();
-  const { signup } = useAuth();
+  const { enterGuestMode, signup } = useAuth();
   const { theme } = useTheme();
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
@@ -36,6 +36,11 @@ export default function SignupScreen() {
   const handleGoogleError = useCallback((message: string) => {
     setError(message);
   }, []);
+
+  function handleGuestMode() {
+    enterGuestMode();
+    router.replace('/(app)');
+  }
 
   async function handleSignup() {
     const normalizedEmail = email.trim().toLowerCase();
@@ -147,6 +152,16 @@ export default function SignupScreen() {
 
           <GoogleSignInButton onError={handleGoogleError} onSuccess={handleGoogleSuccess} />
 
+          <Pressable
+            accessibilityRole="button"
+            onPress={handleGuestMode}
+            style={styles.guestButton}
+          >
+            <Text style={[styles.guestText, { color: theme.textSecondary }]}>
+              Continue as guest
+            </Text>
+          </Pressable>
+
           <Text style={[styles.footer, { color: theme.textSecondary }]}>
             Already have an account?{' '}
             <Link href="/(auth)/login" style={[styles.link, { color: theme.primary }]}>Sign in</Link>
@@ -179,6 +194,8 @@ const styles = StyleSheet.create({
   dividerRow: { alignItems: 'center', flexDirection: 'row', gap: 12, marginVertical: 24 },
   dividerLine: { flex: 1, height: 1 },
   dividerText: { fontSize: 12, fontWeight: '700', letterSpacing: 1 },
+  guestButton: { alignSelf: 'center', marginTop: 14, padding: 8 },
+  guestText: { fontSize: 14, fontWeight: '700' },
   footer: { fontSize: 15, lineHeight: 22, marginTop: 28, textAlign: 'center' },
   link: { fontWeight: '800' },
 });

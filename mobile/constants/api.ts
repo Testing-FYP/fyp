@@ -14,5 +14,7 @@ export const API = {
   googleUserInfo: 'https://www.googleapis.com/oauth2/v2/userinfo',
   trips: `${BACKEND_URL}/api/trips`,
   reservations: `${BACKEND_URL}/api/reservations`,
-  generate: `${BACKEND_URL}/api/generate`,
+  generate: 'https://travelelite.vercel.app/api/generate',
+  autocompleteSerpApi: 'https://travelelite.vercel.app/api/google-api/google-flights-suggestions',
+  autocompleteDuffel: 'https://travelelite.vercel.app/api/duffel/duffel-suggestions',
 } as const;

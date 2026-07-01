@@ -42,6 +42,9 @@ interface AuthContextValue {
   user: User | null;
   token: string | null;
   isLoading: boolean;
+  isGuest: boolean;
+  enterGuestMode: () => void;
+  exitGuestMode: () => void;
   login: (email: string, password: string) => Promise<void>;
   signup: (
     email: string,
@@ -91,6 +94,15 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isGuest, setIsGuest] = useState(false);
+
+  const enterGuestMode = useCallback(() => {
+    setIsGuest(true);
+  }, []);
+
+  const exitGuestMode = useCallback(() => {
+    setIsGuest(false);
+  }, []);
 
   const persistSession = useCallback(async (session: AuthResponse) => {
     await Promise.all([
@@ -244,6 +256,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
     } finally {
       setToken(null);
       setUser(null);
+      setIsGuest(false);
     }
   }, []);
 
@@ -252,6 +265,9 @@ export function AuthProvider({ children }: PropsWithChildren) {
       user,
       token,
       isLoading,
+      isGuest,
+      enterGuestMode,
+      exitGuestMode,
       login,
       signup,
       verifyOTP,
@@ -263,6 +279,9 @@ export function AuthProvider({ children }: PropsWithChildren) {
       user,
       token,
       isLoading,
+      isGuest,
+      enterGuestMode,
+      exitGuestMode,
       login,
       signup,
       verifyOTP,

@@ -5,14 +5,14 @@ import { useAuth } from '@/hooks/useAuth';
 import { useTheme } from '@/hooks/useTheme';
 
 export default function AppLayout() {
-  const { token, isLoading } = useAuth();
+  const { token, isLoading, isGuest } = useAuth();
   const { theme } = useTheme();
 
   if (isLoading) {
     return <LoadingSpinner fill />;
   }
 
-  if (!token) {
+  if (!token && !isGuest) {
     return <Redirect href="/(auth)/login" />;
   }
 

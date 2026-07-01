@@ -3,6 +3,7 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { AuthProvider } from '@/context/AuthContext';
+import { DataSourceProvider } from '@/context/DataSourceContext';
 import { ThemeProvider } from '@/context/ThemeContext';
 import { useTheme } from '@/hooks/useTheme';
 
@@ -27,9 +28,11 @@ export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <ThemeProvider>
-        <AuthProvider>
-          <RootNavigator />
-        </AuthProvider>
+        <DataSourceProvider>
+          <AuthProvider>
+            <RootNavigator />
+          </AuthProvider>
+        </DataSourceProvider>
       </ThemeProvider>
     </SafeAreaProvider>
   );

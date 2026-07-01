@@ -4,6 +4,7 @@ import { useCallback, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -19,7 +20,7 @@ import { useTheme } from '@/hooks/useTheme';
 
 export default function LoginScreen() {
   const router = useRouter();
-  const { login } = useAuth();
+  const { enterGuestMode, login } = useAuth();
   const { theme } = useTheme();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -33,6 +34,11 @@ export default function LoginScreen() {
   const handleGoogleError = useCallback((message: string) => {
     setError(message);
   }, []);
+
+  function handleGuestMode() {
+    enterGuestMode();
+    router.replace('/(app)');
+  }
 
   async function handleLogin() {
     const normalizedEmail = email.trim().toLowerCase();
@@ -132,6 +138,16 @@ export default function LoginScreen() {
 
           <GoogleSignInButton onError={handleGoogleError} onSuccess={handleSuccess} />
 
+          <Pressable
+            accessibilityRole="button"
+            onPress={handleGuestMode}
+            style={styles.guestButton}
+          >
+            <Text style={[styles.guestText, { color: theme.textSecondary }]}>
+              Continue as guest
+            </Text>
+          </Pressable>
+
           <Text style={[styles.footer, { color: theme.textSecondary }]}>
             New to TravelElite?{' '}
             <Link href="/(auth)/signup" style={[styles.link, { color: theme.primary }]}>
@@ -173,6 +189,8 @@ const styles = StyleSheet.create({
   dividerRow: { alignItems: 'center', flexDirection: 'row', gap: 12, marginVertical: 24 },
   dividerLine: { flex: 1, height: 1 },
   dividerText: { fontSize: 12, fontWeight: '700', letterSpacing: 1 },
+  guestButton: { alignSelf: 'center', marginTop: 14, padding: 8 },
+  guestText: { fontSize: 14, fontWeight: '700' },
   footer: { fontSize: 15, lineHeight: 22, marginTop: 28, textAlign: 'center' },
   link: { fontWeight: '800' },
 });
